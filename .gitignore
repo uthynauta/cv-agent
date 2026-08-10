@@ -5,4 +5,3 @@ wiki/raw/**
 !wiki/raw/
 !wiki/raw/**/
 !wiki/raw/**/*.tex
-!wiki/raw/**/.gitkeep
