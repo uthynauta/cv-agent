@@ -12,17 +12,23 @@ SPANISH_STOPWORDS = {
     "a", "al", "algo", "como", "con", "cual", "cuando", "de", "del", "donde",
     "el", "ella", "en", "entre", "era", "es", "esta", "este", "fue", "ha", "hace",
     "hizo", "la", "las", "lo", "los", "mas", "para", "por", "que", "quien", "se",
-    "sin", "sobre", "su", "sus", "un", "una", "y",
+    "sin", "sobre", "su", "sus", "tiene", "un", "una", "y",
 }
 QUERY_SYNONYMS = {
     "agente": ["agent", "agentic", "agents"],
     "agent": ["agentic", "agents"],
+    "doctorado": ["phd", "doctor"],
+    "educacion": ["education", "degree", "phd", "msc", "engineering"],
     "experiencia": ["experience", "experienced"],
+    "formal": ["degree", "education"],
     "ia": ["ai"],
+    "maestria": ["msc", "master"],
     "perfil": ["profile", "summary"],
+    "posee": ["has"],
     "profesional": ["professional"],
     "resumen": ["summary"],
 }
+EDUCATION_TERMS = {"educacion", "education", "degree", "phd", "msc", "doctorado", "maestria"}
 SHORT_SIGNAL_TERMS = {"ia", "ai"}
 
 
@@ -57,7 +63,8 @@ class WikiSearch:
                 )
                 title_score = _score(page.title, terms) * 0.35
                 metadata_score = _score(" ".join(map(str, page.metadata.values())), terms) * 0.1
-                score = passage_score + title_score + metadata_score
+                category_score = _category_score(page.path, page.metadata, terms)
+                score = passage_score + title_score + metadata_score + category_score
                 if score > 0:
                     hits.append(SearchHit(page.path, page.title, _excerpt(best_passage), score))
             results = sorted(hits, key=lambda hit: (-hit.score, hit.title.casefold()))[:limit]
@@ -88,6 +95,17 @@ def _score(text: str, terms: list[str]) -> float:
     frequency = sum(min(counts[term], 3) for term in set(terms))
     coverage = matched / len(set(terms))
     return float(frequency + coverage * 8)
+
+
+def _category_score(path: Path, metadata: dict[str, object], terms: list[str]) -> float:
+    term_set = set(terms)
+    if not (term_set & EDUCATION_TERMS):
+        return 0.0
+    kind = str(metadata.get("kind", "")).casefold()
+    path_parts = {part.casefold() for part in path.parts}
+    if kind == "education" or "education" in path_parts:
+        return 8.0
+    return 0.0
 
 
 def _tokens(text: str) -> list[str]:

@@ -72,6 +72,25 @@ def test_agent_accepts_spanish_answer_with_retrieved_citation(tmp_path: Path):
     assert service.answer("¿Qué experiencia tiene con FastAPI?") == expected
 
 
+def test_agent_accepts_spanish_formal_education_answer(tmp_path: Path):
+    repo = WikiRepository(tmp_path)
+    repo.write_page(
+        "entities/education.md",
+        "Education and Publications",
+        {"kind": "entity"},
+        "Othon has a PhD in Advanced Technology, MSc in Advanced Technology, and BEng in Aeronautical Engineering.",
+    )
+    expected = (
+        "Othón posee formación formal de doctorado, maestría e ingeniería aeronáutica.\n"
+        "Fuentes: [[Education and Publications]]"
+    )
+    service = AgentService(
+        Settings(openai_api_key="test-key"), WikiSearch(repo), FakeTextClient(expected)
+    )
+
+    assert service.answer("¿Qué educación formal posee Othón?") == expected
+
+
 def test_spanish_source_title_does_not_make_english_answer_valid(tmp_path: Path):
     repo = WikiRepository(tmp_path)
     repo.write_page(
