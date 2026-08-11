@@ -23,3 +23,14 @@ def test_bearer_rejects_wrong_key():
 
     response = TestClient(app).get("/protected", headers={"Authorization": "Bearer wrong"})
     assert response.status_code == 401
+
+
+def test_bearer_allows_correct_key():
+    app = FastAPI()
+
+    @app.get("/protected")
+    def protected(_: None = require_bearer("secret")):
+        return {"ok": True}
+
+    response = TestClient(app).get("/protected", headers={"Authorization": "Bearer secret"})
+    assert response.status_code == 200

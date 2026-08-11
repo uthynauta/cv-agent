@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from banorte_agent.agent.openai_client import OpenAITextClient
 from banorte_agent.agent.service import AgentService
 from banorte_agent.api.admin import build_admin_router
-from banorte_agent.api.health import router as health_router
+from banorte_agent.api.health import build_health_router
 from banorte_agent.api.responses import build_responses_router
 from banorte_agent.config import Settings, get_settings
 from banorte_agent.wiki.ingest import IngestionService
@@ -20,7 +20,7 @@ def create_app(
 ) -> FastAPI:
     settings = settings or get_settings()
     app = FastAPI(title="Banorte CV Agent", version="0.1.0")
-    app.include_router(health_router)
+    app.include_router(build_health_router(settings))
     repository = WikiRepository(Path(settings.wiki_dir))
     if agent_answerer is None:
         def agent_answerer(text: str, instructions: str | None = None) -> str:
