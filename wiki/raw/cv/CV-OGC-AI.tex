@@ -1,0 +1,362 @@
+\documentclass[10pt]{article}
+
+\usepackage[margin=0.58in]{geometry}
+\usepackage[default]{sourcesanspro}
+\usepackage[T1]{fontenc}
+\usepackage[hidelinks]{hyperref}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{microtype}
+
+\pagestyle{empty}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0pt}
+
+\setlist[itemize]{
+    leftmargin=1.15em,
+    topsep=2pt,
+    itemsep=2.5pt,
+    parsep=0pt,
+    partopsep=0pt
+}
+
+\titleformat{\section}
+  {\large\bfseries}
+  {}
+  {0pt}
+  {}
+  [\vspace{-5pt}\rule{\textwidth}{0.4pt}]
+
+\titlespacing*{\section}{0pt}{7pt}{4pt}
+
+\begin{document}
+
+% ============================================================
+% HEADER
+% ============================================================
+
+\begin{center}
+    {\LARGE\textbf{Oth\'on Gonz\'alez}}\\[3pt]
+    {\large Senior AI / LLM Engineer}\\[5pt]
+
+    Mexico City, Mexico
+    \enspace|\enspace
+    \href{mailto:othon.gonzalezc@gmail.com}
+    {othon.gonzalezc@gmail.com}
+    \enspace|\enspace
+    +52 55 3332 8699
+    \\[2pt]
+    \href{https://www.linkedin.com/in/thongc/}
+    {linkedin.com/in/othongc}
+    \enspace|\enspace
+    \href{https://github.com/uthynauta}
+    {github.com/uthynauta}
+\end{center}
+
+% ============================================================
+% SUMMARY
+% ============================================================
+
+\section*{Professional Summary}
+
+Senior AI / LLM Engineer with a PhD in Advanced Technology and experience
+building production-oriented enterprise generative AI platforms, agentic
+workflows, Retrieval-Augmented Generation systems, evaluation pipelines,
+backend services, and LLM observability capabilities.
+
+Strong background in Python, FastAPI, LangGraph, OpenTelemetry,
+PostgreSQL/pgvector, Docker, Kubernetes, PyTorch, Transformers, and
+Hugging Face. Experienced in designing systems that capture model usage,
+cost, latency, tool execution, errors, execution paths, and agent outcomes
+to improve debugging, evaluation, governance, reproducibility, and
+model-routing decisions.
+
+Previous experience in automotive perception, computer vision, NLP,
+multimodal systems, and safety-critical engineering brings rigorous
+experimentation, validation, and systems thinking to production AI
+development.
+
+% ============================================================
+% CORE SKILLS
+% ============================================================
+
+\section*{Core Skills}
+
+\textbf{Generative AI and Agents:}
+Large Language Models, Agentic AI, LangGraph, tool calling, reusable agent
+skills, Model Context Protocol (MCP), prompt orchestration, model routing,
+Retrieval-Augmented Generation, retrievers, embeddings, vector search
+
+\textbf{LLM Evaluation and Observability:}
+OpenTelemetry, distributed tracing, token and cost tracking, latency analysis,
+execution-path tracing, tool-call telemetry, error analysis, DeepEval,
+evaluation datasets, agent outcome analysis, AI provenance
+
+\textbf{Backend and Data:}
+Python, FastAPI, PostgreSQL, pgvector, SQL, REST APIs, asynchronous workflows,
+data pipelines, structured event models, JSON-based telemetry
+
+\textbf{Infrastructure and Operations:}
+Docker, Docker Compose, Kubernetes, Linux, Bash, Grafana, Prometheus, Loki,
+containerized services, cloud-native development
+
+\textbf{Machine Learning:}
+PyTorch, Transformers, Hugging Face, TensorFlow, NLP, computer vision,
+image captioning, multimodal learning, model evaluation
+
+\textbf{Additional Engineering Experience:}
+ADAS, radar perception, camera and LiDAR validation, multi-sensor systems,
+safety-critical engineering, MATLAB, C++
+
+\textbf{Languages:}
+Spanish --- Native
+\enspace|\enspace
+English --- Professional working proficiency
+
+% ============================================================
+% EXPERIENCE
+% ============================================================
+
+\section*{Professional Experience}
+
+\textbf{Teradata}
+\hfill
+\textit{Dic 2025 -- Jul 2026}
+
+\textit{AI Engineer / Agentic AI Platform Engineer}
+
+\begin{itemize}
+    \item Developed core capabilities for an internal enterprise Agentic AI
+    platform deployed to production for internal use, supporting agent
+    development, execution, evaluation, observability, and reusable skill
+    integration.
+
+    \item Engineered LLM-based workflows using LangGraph, structured tool
+    execution, reusable agent skills, MCP-based integrations, and
+    Retrieval-Augmented Generation.
+
+    \item Contributed to a scalable platform architecture initially supporting
+    five production agents, designed to enable the onboarding, deployment,
+    versioning, and operation of additional agents and reusable skills.
+
+    \item Designed an OpenTelemetry-based observability architecture that
+    standardized the capture of token usage, model cost, latency, errors,
+    model metadata, tool calls, execution paths, and agent outcomes across
+    multi-step workflows.
+
+    \item Integrated telemetry and monitoring components using Grafana,
+    Prometheus, Loki, and distributed tracing pipelines to support debugging,
+    performance analysis, operational visibility, and AI FinOps.
+
+    \item Built structured evaluation and analytics pipelines using
+    PostgreSQL, pgvector, and DeepEval, enabling agent assessment, dataset
+    generation, failure analysis, and performance-informed model-routing
+    decisions.
+
+    \item Defined telemetry schemas and event models for recording agent,
+    graph, model, prompt, tool, and skill metadata while supporting
+    redaction and controlled storage of sensitive information.
+
+    \item Developed backend services and integration endpoints using Python
+    and FastAPI for agent execution, platform services, and internal
+    system interoperability.
+
+    \item Developed containerized multi-service environments using Docker
+    Compose and Kubernetes to support local development, integration testing,
+    and production deployment.
+
+    \item Collaborated on architecture decisions involving agent interfaces,
+    skill discovery, model access, observability, evaluation, reproducibility,
+    deployment patterns, and production readiness.
+\end{itemize}
+
+\textbf{Continental Autonomous Mobility}
+\hfill
+\textit{Jul 2022 -- Nov 2025}
+
+\textit{Algorithms Test / Data Engineer --- ADAS}
+
+\begin{itemize}
+    \item Developed AI-assisted testing and data-processing tools for radar
+    and multi-sensor perception systems, improving the efficiency and
+    repeatability of model-validation workflows.
+
+    \item Generated and curated simulated radar datasets in dSPACE for training and evaluating radar-virtualization models under controlled and reproducible scenarios.
+
+    \item Built automated engineering workflows for test-data processing,
+    validation activities, and repetitive analysis tasks using Python and
+    workflow-automation tooling.
+
+    \item Designed and executed validation strategies for radar, camera, and
+    LiDAR perception pipelines, supporting system reliability in
+    safety-critical automotive environments.
+
+    \item Applied computer vision models and tooling including DETR, YOLO,
+    Segment Anything, and CVAT in perception-data and validation workflows.
+
+    \item Supported cross-functional collaboration among algorithm,
+    validation, data, simulation, and systems-engineering teams.
+
+    \item Contributed to a strategic cooperation agreement with the National
+    Polytechnic Institute, enabling joint research and development
+    opportunities.
+\end{itemize}
+
+\textbf{CentroGeo}
+\hfill
+\textit{Jul 2021 -- Jul 2023}
+
+\textit{Postdoctoral Researcher}
+
+\begin{itemize}
+    \item Researched and developed NLP and multimodal deep-learning models
+    for generative tasks, with emphasis on automatic image and video
+    captioning.
+
+    \item Architected and trained models based on recurrent neural networks,
+    LSTMs, attention mechanisms, and Transformers for vision-language
+    research problems.
+
+    \item Designed experimental workflows for evaluating caption-generation
+    systems and analyzing whether commonly used metrics reflected semantic
+    and perceptual output quality.
+
+    \item Used PyTorch, Transformers, and Hugging Face tools for model
+    development, experimentation, training, and inference.
+
+    \item Managed datasets and computational workflows for model training,
+    inference, comparison, and reproducible experimentation.
+
+    \item Evaluated generative-image technologies including DALL-E and
+    Stable Diffusion for research-oriented applications.
+
+    \item Co-authored peer-reviewed publications on video captioning,
+    multimodal-model evaluation, and computer vision.
+\end{itemize}
+
+% ============================================================
+% EARLIER LEADERSHIP EXPERIENCE
+% ============================================================
+
+\section*{Earlier Engineering and Leadership Experience}
+
+\textbf{External Consultant}
+\hfill
+\textit{Feb 2016 -- Jun 2018}
+
+\textit{Safety Manager}
+
+\begin{itemize}
+    \item Led operational-safety and compliance initiatives for a Mexican
+    ground-handling services provider operating in a regulated aviation
+    environment.
+
+    \item Supported certification of the Toluca station under IS-BAH
+    Safety Stages 1 and 2.
+
+    \item Coordinated with Mexican authorities to resolve a critical permit
+    renewal and prevent operational disruption.
+\end{itemize}
+
+\textbf{Aerom\'exico}
+\hfill
+\textit{Feb 2012 -- Oct 2013}
+
+\textit{Regional Airports Chief and Processes Analyst}
+
+\begin{itemize}
+    \item Served as liaison between regional airport operations and corporate
+    headquarters, coordinating process alignment and operational follow-up.
+
+    \item Owned and improved a national KPI for baggage irregularities,
+    applying data analysis to strengthen tracking and operational control.
+
+    \item Supported ISAGO certification renewal and participated in
+    regulatory and operational audits.
+\end{itemize}
+
+\textbf{ITESM, UVM and CentroGeo}
+\hfill
+\textit{2019 -- 2022}
+
+\textit{Adjunct Professor}
+
+\begin{itemize}
+    \item Developed and taught undergraduate and graduate courses in
+    statistics, physics, aerodynamics, engineering, and specialized
+    aeronautical subjects.
+\end{itemize}
+
+\newpage
+
+% ============================================================
+% EDUCATION
+% ============================================================
+
+\section*{Education}
+
+\textbf{PhD in Advanced Technology}
+\hfill
+\textit{CICATA Quer\'etaro, Instituto Polit\'ecnico Nacional, 2020}
+
+Research focus: Computer Vision and Remote Sensing
+
+Thesis: \textit{Precise Remote Measurement of Thermal Radiance Dynamics
+Using Unmanned Aerial Vehicles}
+
+Final grade: 9.0/10
+
+\vspace{4pt}
+
+\textbf{MSc in Advanced Technology}
+\hfill
+\textit{CICATA Quer\'etaro, Instituto Polit\'ecnico Nacional, 2016}
+
+Research focus: Aerodynamic Optimization and Morphing Systems
+
+Thesis: \textit{Data-Driven Morphable Wing for Tracking and Mapping
+Using Small Unmanned Aerial Vehicles}
+
+Final grade: 9.5/10
+\enspace|\enspace
+\textit{Cum Laude}
+
+\vspace{4pt}
+
+\textbf{BEng in Aeronautical Engineering}
+\hfill
+\textit{ESIME Ticom\'an, Instituto Polit\'ecnico Nacional, 2010}
+
+Thesis: \textit{Software Tool to Determine the Capacity of Different
+Runway Systems}
+
+Final grade: 9.4/10
+\enspace|\enspace
+\textit{Cum Laude}
+
+% ============================================================
+% PUBLICATIONS
+% ============================================================
+
+\section*{Selected Publications}
+
+\begin{itemize}
+    \item Gonz\'alez-Ch\'avez, O., et al.
+    ``Are Metrics Measuring What They Should? Evaluation of Image
+    Captioning Task Metrics.''
+    \textit{Signal Processing: Image Communication}, Vol. 120, 2024.
+
+    \item Moctezuma, D., et al.
+    ``Video Captioning: A Comparative Review.''
+    \textit{Computer Vision and Image Understanding}, Vol. 231, 2023.
+
+    \item Gonz\'alez-Ch\'avez, O., et al.
+    ``Radiometric Calibration of Infrared Thermal Cameras.''
+    \textit{IEEE Transactions on Instrumentation and Measurement}, 2019.
+
+    \item Gonz\'alez-Ch\'avez, O., et al.
+    ``Thermal Radiation Dynamics of Soil Surfaces with UAVs.''
+    \textit{Mexican Conference on Pattern Recognition}, 2019.
+\end{itemize}
+
+\end{document}

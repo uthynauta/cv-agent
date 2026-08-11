@@ -41,6 +41,7 @@ Main components:
 - `ingestion`: local CLI and protected HTTP endpoint that convert raw `.tex`, `.pdf`, and `.md` files into wiki pages.
 - `search`: simple lexical search over committed Markdown wiki pages using frontmatter, headings, and body text.
 - `observability`: structured logs, request IDs, latency/error metrics, and health/readiness checks.
+- `tracing`: optional OpenTelemetry spans exported over OTLP/gRPC for Grafana Tempo or compatible collectors.
 - `evals`: repeatable checks for answer language, citations, grounding behavior, and response shape.
 
 High-level data flow:
@@ -70,6 +71,8 @@ Authorization is optional by environment:
 - If `AGENT_API_KEY` is set, the endpoint requires `Authorization: Bearer <AGENT_API_KEY>`.
 - If `AGENT_API_KEY` is empty or unset, the endpoint is public.
 - `OPENAI_API_KEY` is always required for live model calls and must only be supplied through environment variables.
+- `input` is limited to 4,000 characters and `instructions` to 1,000 characters.
+- Responses return the canonical configured `AGENT_MODEL_NAME`; arbitrary client model strings are not echoed.
 
 Supported request body:
 
@@ -112,7 +115,7 @@ Additional endpoints:
 - `GET /metrics`: Prometheus-style metrics.
 - `POST /admin/ingest`: protected ingestion endpoint for later automation.
 
-`POST /admin/ingest` requires `ADMIN_API_KEY` when enabled. The local CLI remains the preferred ingestion path.
+`POST /admin/ingest` is disabled when `ADMIN_API_KEY` is empty. When configured, the endpoint requires that bearer token. The local CLI remains the preferred ingestion path.
 
 ## Conversation State
 
@@ -158,6 +161,11 @@ Environment variables:
 - `GROUNDING_MODE`: `strict` or `inference`; default `inference`.
 - `AGENT_API_KEY`: optional public endpoint bearer token.
 - `ADMIN_API_KEY`: optional admin endpoint bearer token.
+- `OTEL_ENABLED`: optional tracing toggle; default `false`.
+- `OTEL_SERVICE_NAME`: OpenTelemetry service name; default `banorte-cv-agent`.
+- `OTEL_EXPORTER_OTLP_ENDPOINT`: OTLP/gRPC endpoint, for example `http://tempo:4317`.
+- `OTEL_EXPORTER_OTLP_INSECURE`: set `true` for local plaintext OTLP.
+- `OTEL_RESOURCE_ATTRIBUTES`: optional OpenTelemetry resource attributes.
 
 The agent prompt includes:
 
@@ -215,6 +223,8 @@ Git policy:
 
 This keeps the LaTeX CV versioned while avoiding accidental commits of PDFs, full private documents, or large raw files.
 
+Generated pages from non-LaTeX sources contain metadata and bounded snippets only by default. Full extracted text is allowed only for committed LaTeX CV sources.
+
 ## Ingestion Design
 
 Supported source extensions:
@@ -247,7 +257,7 @@ Ingestion should be deterministic where practical:
 
 ## Search Design
 
-MVP search is simple lexical search over generated Markdown wiki pages.
+MVP search is lexical search over generated Markdown wiki pages. It normalizes case and accents, removes Spanish stopwords, matches token boundaries, and scores sections/passages so excerpts favor local evidence over generic page summaries.
 
 Search uses:
 
@@ -288,8 +298,22 @@ Metrics:
 Operational endpoints:
 
 - `/healthz`: alive if the process is running.
-- `/readyz`: ready if wiki/index is readable and required config is present.
+- `/readyz`: ready if wiki/index is readable, at least one generated page is usable, and required config is present.
 - `/metrics`: Prometheus text format.
+
+Tracing:
+
+- OpenTelemetry is optional and disabled by default.
+- When `OTEL_ENABLED=true`, the service exports spans through OTLP/gRPC.
+- The default target is compatible with Grafana Tempo, OpenTelemetry Collector, and other OTLP/gRPC backends.
+- Span attributes must be low-cardinality and secret-safe.
+- Do not put full prompts, raw source text, retrieved context, API keys, bearer tokens, or document contents into spans.
+- Required spans:
+  - HTTP request spans from FastAPI instrumentation.
+  - agent response span around retrieval plus OpenAI generation.
+  - wiki search span with query length, result count, and top page titles only.
+  - OpenAI call span with model, success/error, and latency.
+  - ingestion span with source extension, `needs_ocr`, success/error, and generated page count.
 
 ## Deployment
 

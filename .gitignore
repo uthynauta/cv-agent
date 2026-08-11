@@ -1,1 +1,14 @@
 .worktrees/
+.env
+.venv/
+__pycache__/
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+*.egg-info/
+
+wiki/raw/**
+!wiki/raw/
+!wiki/raw/**/
+!wiki/raw/**/*.tex

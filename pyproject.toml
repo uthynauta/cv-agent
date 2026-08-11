@@ -1,0 +1,38 @@
+[project]
+name = "banorte-agent"
+version = "0.1.0"
+description = "Open Responses-compatible CV agent for the Banorte AI challenge"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.116.0",
+  "uvicorn[standard]>=0.35.0",
+  "pydantic-settings>=2.10.0",
+  "openai>=1.99.0",
+  "pypdf>=5.9.0",
+  "PyYAML>=6.0.2",
+  "prometheus-client>=0.22.0",
+  "opentelemetry-api>=1.36.0",
+  "opentelemetry-sdk>=1.36.0",
+  "opentelemetry-exporter-otlp-proto-grpc>=1.36.0",
+  "opentelemetry-instrumentation-fastapi>=0.57b0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.4.0",
+  "httpx>=0.28.0",
+  "pytest-cov>=6.2.0",
+  "httpx2>=2.10.0",
+]
+
+[project.scripts]
+banorte-agent = "banorte_agent.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-q"

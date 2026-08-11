@@ -1,0 +1,12 @@
+.git
+.env
+.venv
+__pycache__
+.pytest_cache
+htmlcov
+dist
+*.egg-info
+wiki/raw/**/*.pdf
+wiki/raw/**/*.docx
+wiki/raw/**/*.png
+wiki/raw/**/*.jpg
