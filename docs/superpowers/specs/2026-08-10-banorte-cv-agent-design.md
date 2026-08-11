@@ -71,6 +71,8 @@ Authorization is optional by environment:
 - If `AGENT_API_KEY` is set, the endpoint requires `Authorization: Bearer <AGENT_API_KEY>`.
 - If `AGENT_API_KEY` is empty or unset, the endpoint is public.
 - `OPENAI_API_KEY` is always required for live model calls and must only be supplied through environment variables.
+- `input` is limited to 4,000 characters and `instructions` to 1,000 characters.
+- Responses return the canonical configured `AGENT_MODEL_NAME`; arbitrary client model strings are not echoed.
 
 Supported request body:
 
@@ -113,7 +115,7 @@ Additional endpoints:
 - `GET /metrics`: Prometheus-style metrics.
 - `POST /admin/ingest`: protected ingestion endpoint for later automation.
 
-`POST /admin/ingest` requires `ADMIN_API_KEY` when enabled. The local CLI remains the preferred ingestion path.
+`POST /admin/ingest` is disabled when `ADMIN_API_KEY` is empty. When configured, the endpoint requires that bearer token. The local CLI remains the preferred ingestion path.
 
 ## Conversation State
 
@@ -221,6 +223,8 @@ Git policy:
 
 This keeps the LaTeX CV versioned while avoiding accidental commits of PDFs, full private documents, or large raw files.
 
+Generated pages from non-LaTeX sources contain metadata and bounded snippets only by default. Full extracted text is allowed only for committed LaTeX CV sources.
+
 ## Ingestion Design
 
 Supported source extensions:
@@ -253,7 +257,7 @@ Ingestion should be deterministic where practical:
 
 ## Search Design
 
-MVP search is simple lexical search over generated Markdown wiki pages.
+MVP search is lexical search over generated Markdown wiki pages. It normalizes case and accents, removes Spanish stopwords, matches token boundaries, and scores sections/passages so excerpts favor local evidence over generic page summaries.
 
 Search uses:
 
@@ -294,7 +298,7 @@ Metrics:
 Operational endpoints:
 
 - `/healthz`: alive if the process is running.
-- `/readyz`: ready if wiki/index is readable and required config is present.
+- `/readyz`: ready if wiki/index is readable, at least one generated page is usable, and required config is present.
 - `/metrics`: Prometheus text format.
 
 Tracing:

@@ -29,26 +29,16 @@ class IngestionService:
                 slug = _slugify(path.stem)
                 metadata = {
                     "kind": "source",
-                    "source_file": str(path),
+                    "source_file": self._source_reference(path),
                     "source_type": extracted.kind,
                     "sha256": extracted.sha256,
                     "needs_ocr": extracted.needs_ocr,
+                    "content_policy": "full_text" if extracted.kind == "latex" else "snippet_only",
+                    "extracted_characters": len(extracted.text),
                     "ingested_at": datetime.now(UTC).date().isoformat(),
                     "tags": ["source", extracted.kind],
                 }
-                body = "\n".join(
-                    [
-                        f"# {path.stem}",
-                        "",
-                        "## Summary",
-                        "",
-                        extracted.text[:2000].strip() or "No selectable text extracted.",
-                        "",
-                        "## Extracted Text",
-                        "",
-                        extracted.text.strip() or "No selectable text extracted.",
-                    ]
-                )
+                body = _source_page_body(path, extracted.kind, extracted.text)
                 source_page = self.repository.write_page(f"sources/{slug}.md", path.stem, metadata, body)
                 self._append_log(path)
                 self._ensure_index()
@@ -58,6 +48,12 @@ class IngestionService:
             except Exception:
                 INGEST_EVENTS.labels("error").inc()
                 raise
+
+    def _source_reference(self, path: Path) -> str:
+        try:
+            return str(path.resolve().relative_to(self.repository.root.resolve()))
+        except ValueError:
+            return path.name
 
     def ingest_directory(self, root: Path) -> list[IngestResult]:
         results: list[IngestResult] = []
@@ -84,3 +80,20 @@ class IngestionService:
 def _slugify(value: str) -> str:
     value = re.sub(r"[^a-zA-Z0-9]+", "-", value.lower()).strip("-")
     return value or "source"
+
+
+def _source_page_body(path: Path, kind: str, text: str) -> str:
+    extracted = text.strip() or "No selectable text extracted."
+    parts = [f"# {path.stem}", "", "## Summary", ""]
+    if kind == "latex":
+        parts.extend([extracted[:2000].rstrip(), "", "## Extracted Text", "", extracted])
+    else:
+        snippet = re.sub(r"\s+", " ", extracted)[:600].strip()
+        parts.extend(
+            [
+                snippet,
+                "",
+                "Full extracted text is intentionally omitted for non-LaTeX sources.",
+            ]
+        )
+    return "\n".join(parts)

@@ -63,3 +63,18 @@ def test_admin_ingest_requires_admin_key(tmp_path):
     response = TestClient(app).post("/admin/ingest", json={"path": str(source)})
 
     assert response.status_code == 401
+
+
+def test_admin_ingest_is_disabled_without_configured_key(tmp_path):
+    raw_dir = tmp_path / "raw"
+    raw_dir.mkdir()
+    source = raw_dir / "cv.md"
+    source.write_text("# CV", encoding="utf-8")
+    settings = Settings(wiki_dir=str(tmp_path), admin_api_key=None)
+
+    response = TestClient(
+        create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
+    ).post("/admin/ingest", json={"path": str(source)})
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "admin ingest is disabled"

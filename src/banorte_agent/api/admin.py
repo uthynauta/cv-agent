@@ -1,15 +1,24 @@
 from pathlib import Path
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 
-from banorte_agent.api.auth import require_bearer
 from banorte_agent.api.models import IngestRequest
 from banorte_agent.config import Settings
 from banorte_agent.wiki.ingest import IngestionService
 
 
 def build_admin_router(settings: Settings, ingestion: IngestionService) -> APIRouter:
-    router = APIRouter(dependencies=[require_bearer(settings.admin_api_key)])
+    def require_admin_key(authorization: Annotated[str | None, Header()] = None) -> None:
+        if not settings.admin_api_key:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="admin ingest is disabled",
+            )
+        if authorization != f"Bearer {settings.admin_api_key}":
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid bearer token")
+
+    router = APIRouter(dependencies=[Depends(require_admin_key)])
     raw_root = (Path(settings.wiki_dir) / "raw").resolve()
 
     @router.post("/admin/ingest")

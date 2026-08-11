@@ -1,3 +1,5 @@
+from urllib.parse import unquote
+
 from fastapi import FastAPI
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
@@ -16,7 +18,7 @@ def tracing_enabled(settings: Settings) -> bool:
 def configure_tracing(app: FastAPI, settings: Settings) -> None:
     if not tracing_enabled(settings):
         return
-    resource = Resource.create({"service.name": settings.otel_service_name})
+    resource = Resource.create(resource_attributes(settings))
     provider = TracerProvider(resource=resource)
     exporter = OTLPSpanExporter(
         endpoint=settings.otel_exporter_otlp_endpoint,
@@ -29,6 +31,20 @@ def configure_tracing(app: FastAPI, settings: Settings) -> None:
 
 def get_tracer():
     return trace.get_tracer("banorte_agent")
+
+
+def resource_attributes(settings: Settings) -> dict[str, str]:
+    attributes: dict[str, str] = {}
+    for pair in (settings.otel_resource_attributes or "").split(","):
+        if "=" not in pair:
+            continue
+        key, value = pair.split("=", 1)
+        key = unquote(key.strip())
+        value = unquote(value.strip())
+        if key and value:
+            attributes[key] = value
+    attributes["service.name"] = settings.otel_service_name
+    return attributes
 
 
 def safe_count_attribute(name: str, value: str) -> tuple[str, int]:

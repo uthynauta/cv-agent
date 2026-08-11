@@ -7,12 +7,13 @@ WORKDIR /app
 
 RUN pip install --no-cache-dir uv
 
-COPY pyproject.toml ./
-COPY README.md ./
+COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
 COPY wiki ./wiki
 
-RUN uv pip install --system .
+RUN uv sync --frozen --no-dev
+
+ENV PATH="/app/.venv/bin:$PATH"
 
 EXPOSE 8000
 

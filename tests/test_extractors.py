@@ -6,6 +6,9 @@ import banorte_agent.wiki.extractors as extractors
 from banorte_agent.wiki.extractors import extract_source
 
 
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
 def test_extract_markdown(tmp_path: Path):
     path = tmp_path / "profile.md"
     path.write_text("# Perfil\n\nExperiencia con agentes de IA.", encoding="utf-8")
@@ -32,6 +35,18 @@ def test_extract_latex_preserves_escaped_percent(tmp_path: Path):
     result = extract_source(path)
     assert "80% growth" in result.text
     assert "remove this comment" not in result.text
+
+
+@pytest.mark.parametrize("fixture_name", ["cv-header-ai.tex", "cv-header-ats.tex"])
+def test_extract_actual_cv_headers_preserves_name_and_removes_layout_debris(fixture_name: str):
+    result = extract_source(FIXTURES / fixture_name)
+
+    assert "Othón González" in result.text
+    assert "Professional Summary" in result.text
+    assert "0pt" not in result.text
+    assert "LARGE" not in result.text
+    assert "textwidth" not in result.text
+    assert "center" not in result.text
 
 
 def test_extract_latex_double_backslash_before_percent_starts_comment(tmp_path: Path):

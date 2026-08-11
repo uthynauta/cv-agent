@@ -1,3 +1,3 @@
 # Sample Transcript
 
-Run `uv run python evals/run_eval.py --base-url http://localhost:8000` after starting the service to refresh this transcript.
+No live transcript is committed because no real OpenAI key is available. After configuring one, run `uv run python evals/run_eval.py --base-url http://localhost:8000` to generate local results.

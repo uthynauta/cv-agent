@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 import re
+import unicodedata
 
 from pypdf import PdfReader
 
@@ -31,12 +32,51 @@ def extract_source(path: Path) -> ExtractedSource:
 
 def _clean_latex(text: str) -> str:
     text = _strip_latex_comments(text)
-    text = text.replace(r"\%", "%")
-    text = re.sub(r"\\(section|subsection|subsubsection|textbf|emph)\{([^}]*)\}", r"\2\n", text)
-    text = re.sub(r"\\[a-zA-Z]+(\[[^]]*\])?(\{[^}]*\})?", " ", text)
+    document = re.search(r"\\begin\s*\{document\}(.*?)\\end\s*\{document\}", text, re.DOTALL)
+    if document:
+        text = document.group(1)
+
+    text = _replace_accents(text)
+    text = re.sub(
+        r"\\href\s*\{[^{}]*\}\s*\{([^{}]*)\}",
+        r"\1",
+        text,
+        flags=re.DOTALL,
+    )
+    text = re.sub(r"\\subsubsection\*?\s*\{([^{}]*)\}", r"\n#### \1\n", text)
+    text = re.sub(r"\\subsection\*?\s*\{([^{}]*)\}", r"\n### \1\n", text)
+    text = re.sub(r"\\section\*?\s*\{([^{}]*)\}", r"\n## \1\n", text)
+    text = re.sub(r"\\(?:textbf|textit|emph)\s*\{([^{}]*)\}", r" \1", text)
+    text = re.sub(r"\\(?:begin|end)\s*\{[^{}]*\}", "\n", text)
+    text = re.sub(r"\\\\(?:\[[^]]*\])?", "\n", text)
+    text = re.sub(r"\\item\b", "\n- ", text)
+    text = re.sub(r"\\(?:vspace|hspace)\*?\s*\{[^{}]*\}", " ", text)
+    text = re.sub(r"\\rule\s*\{[^{}]*\}\s*\{[^{}]*\}", " ", text)
+    text = re.sub(r"\\setlength\s*\{[^{}]*\}\s*\{[^{}]*\}", " ", text)
+    text = re.sub(
+        r"\\(?:LARGE|Large|large|normalsize|small|bfseries|raggedright|hfill|enspace|"
+        r"noindent|par|newpage|today)\b",
+        " ",
+        text,
+    )
+    text = re.sub(r"\\[a-zA-Z@]+\*?", " ", text)
+    text = text.replace(r"\&", "&").replace(r"\_", "_").replace(r"\#", "#")
     text = text.replace("{", " ").replace("}", " ")
-    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"(?<!\w)[+-]?\d+(?:\.\d+)?(?:pt|em|in|cm|mm)\b", " ", text)
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r" *\n *", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
+
+
+def _replace_accents(text: str) -> str:
+    combining = {"'": "\u0301", "`": "\u0300", "^": "\u0302", '"': "\u0308", "~": "\u0303"}
+
+    def replace(match: re.Match[str]) -> str:
+        return unicodedata.normalize("NFC", match.group(2) + combining[match.group(1)])
+
+    text = re.sub(r"\\(['`^\"~])\{?([A-Za-z])\}?", replace, text)
+    return text.replace(r"\%", "%")
 
 
 def _strip_latex_comments(text: str) -> str:
