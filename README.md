@@ -19,6 +19,11 @@ Retrieval is local over generated Markdown pages and supports two modes:
 
 This project intentionally does not use OpenAI File Search for runtime retrieval yet. Keeping retrieval over the local wiki preserves the wiki as a Git-versioned, auditable artifact. LLM reranking can improve semantic matching without uploading the wiki to a hosted vector store.
 
+Context assembly is page-aware by default:
+
+- `CONTEXT_MODE=page`: expand selected hits to full generated wiki pages, deduplicated by path and capped by `MAX_CONTEXT_CHARS`.
+- `CONTEXT_MODE=excerpt`: send only the matched excerpts, useful for lower token usage or debugging.
+
 See [architecture](docs/architecture.md), [deployment](docs/deployment.md), [demo guide](docs/demo.md), and [sample transcript](docs/sample-transcript.md).
 
 ## Local Development
@@ -42,7 +47,7 @@ docker compose down
 
 ## Call The API
 
-Retrieval configuration is environment-driven. `RETRIEVAL_MODE=lexical` uses only local lexical search. `RETRIEVAL_MODE=llm_rerank` uses `RERANK_TOP_K` candidates from local search, selects `ANSWER_TOP_K` passages, and uses `RERANK_MODEL` when set or `OPENAI_MODEL` when empty.
+Retrieval configuration is environment-driven. `RETRIEVAL_MODE=lexical` uses only local lexical search. `RETRIEVAL_MODE=llm_rerank` uses `RERANK_TOP_K` candidates from local search, selects `ANSWER_TOP_K` passages, and uses `RERANK_MODEL` when set or `OPENAI_MODEL` when empty. `CONTEXT_MODE=page` then expands selected hits to full wiki pages within `MAX_CONTEXT_CHARS`.
 
 Without public bearer auth, leave `AGENT_API_KEY` empty:
 
