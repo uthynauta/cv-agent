@@ -12,6 +12,13 @@ Request flow: optional public bearer auth -> bounded request validation -> norma
 
 Raw `.tex`, `.pdf`, and `.md` sources are ingested from `wiki/raw/`. Committed LaTeX CV sources may generate full-text pages. Git-ignored PDF and Markdown sources generate metadata and a bounded snippet only, so their full extracted text is not copied into committed Markdown by default.
 
+Retrieval is local over generated Markdown pages and supports two modes:
+
+- `RETRIEVAL_MODE=lexical`: no extra model call, lowest latency and cost.
+- `RETRIEVAL_MODE=llm_rerank`: retrieve a wider local candidate set, ask a small/configured OpenAI model to select the most relevant passages, then answer using only those selected passages.
+
+This project intentionally does not use OpenAI File Search for runtime retrieval yet. Keeping retrieval over the local wiki preserves the wiki as a Git-versioned, auditable artifact. LLM reranking can improve semantic matching without uploading the wiki to a hosted vector store.
+
 See [architecture](docs/architecture.md), [deployment](docs/deployment.md), [demo guide](docs/demo.md), and [sample transcript](docs/sample-transcript.md).
 
 ## Local Development
@@ -34,6 +41,8 @@ docker compose down
 ```
 
 ## Call The API
+
+Retrieval configuration is environment-driven. `RETRIEVAL_MODE=lexical` uses only local lexical search. `RETRIEVAL_MODE=llm_rerank` uses `RERANK_TOP_K` candidates from local search, selects `ANSWER_TOP_K` passages, and uses `RERANK_MODEL` when set or `OPENAI_MODEL` when empty.
 
 Without public bearer auth, leave `AGENT_API_KEY` empty:
 

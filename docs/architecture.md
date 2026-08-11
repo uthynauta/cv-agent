@@ -7,10 +7,11 @@ The Banorte CV Agent is one Dockerized FastAPI service. It exposes an Open Respo
 1. FastAPI validates the 4,000-character `input` and optional 1,000-character `instructions`.
 2. `AGENT_API_KEY`, when set, protects the public endpoint.
 3. Wiki search normalizes case and accents, removes Spanish stopwords, matches token boundaries, and ranks the best sections/passages rather than whole pages.
-4. The agent sends bounded retrieved excerpts and an isolated, untrusted reviewer question to the configured OpenAI model.
-5. Post-generation checks require Spanish-like output and a final `Fuentes:` line whose Obsidian links match retrieved page titles.
-6. Failed validation returns a safe Spanish fallback listing only available retrieved sources.
-7. The API returns the canonical `AGENT_MODEL_NAME` in the response.
+4. With `RETRIEVAL_MODE=llm_rerank`, the agent sends a wider local candidate set to a rerank model and keeps only selected passages.
+5. The agent sends bounded retrieved excerpts and an isolated, untrusted reviewer question to the configured OpenAI model.
+6. Post-generation checks require Spanish-like output and a final `Fuentes:` line whose Obsidian links match retrieved page titles.
+7. Failed validation returns a safe Spanish fallback listing only available retrieved sources.
+8. The API returns the canonical `AGENT_MODEL_NAME` in the response.
 
 ## Knowledge And Ingestion
 
@@ -26,4 +27,4 @@ Request logs are JSON and use generated or propagated request IDs. Prometheus la
 
 `/healthz` checks process liveness. `/readyz` requires an OpenAI key, a readable non-empty `wiki/index.md`, and at least one usable generated wiki page. `/metrics` exposes Prometheus text.
 
-MVP retrieval remains lexical and transparent; no vector database or conversation database is present.
+MVP retrieval remains local and transparent. `RETRIEVAL_MODE=lexical` performs one local search before answering. `RETRIEVAL_MODE=llm_rerank` performs local over-retrieval, asks OpenAI to select relevant paths, and answers only from those selected passages. No vector database, OpenAI File Search, or conversation database is present.

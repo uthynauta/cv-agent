@@ -8,6 +8,8 @@ Copy `.env.example` to `.env` before serving model requests. Configure these val
 - `AGENT_API_KEY` enables bearer authentication for the public endpoint.
 - `ADMIN_API_KEY` enables and protects `POST /admin/ingest`; an empty value disables it with HTTP 503.
 - `GROUNDING_MODE=inference`, `INGESTION_MODE=openai`, and `OPENAI_MODEL=gpt-5.6` are current defaults. Set `OPENAI_MODEL=gpt-5.6-luna` when running the current agent model.
+- `RETRIEVAL_MODE=lexical` is the lowest-latency default. Set `RETRIEVAL_MODE=llm_rerank` to add an OpenAI rerank pass over `RERANK_TOP_K` local candidates before answering from `ANSWER_TOP_K` selected passages.
+- `RERANK_MODEL` is optional; when empty, reranking uses `OPENAI_MODEL`.
 - `AGENT_MODEL_NAME=banorte-cv-agent` is the canonical model name returned to clients.
 
 The `.env` file is optional for Compose validation and startup. Do not send model requests without a real key. For OpenTelemetry export, set `OTEL_ENABLED=true`, `OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_ENDPOINT`, and optional comma-separated `OTEL_RESOURCE_ATTRIBUTES`. The default OTLP endpoint assumes a `tempo` service is available on the Compose network; this repository does not define that service.

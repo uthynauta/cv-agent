@@ -7,6 +7,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 GroundingMode = Literal["strict", "inference"]
 IngestionMode = Literal["openai", "deterministic"]
+RetrievalMode = Literal["lexical", "llm_rerank"]
 
 
 class Settings(BaseSettings):
@@ -16,6 +17,10 @@ class Settings(BaseSettings):
     openai_model: str = Field(default="gpt-5.6", alias="OPENAI_MODEL")
     grounding_mode: GroundingMode = Field(default="inference", alias="GROUNDING_MODE")
     ingestion_mode: IngestionMode = Field(default="openai", alias="INGESTION_MODE")
+    retrieval_mode: RetrievalMode = Field(default="lexical", alias="RETRIEVAL_MODE")
+    rerank_model: str | None = Field(default=None, alias="RERANK_MODEL")
+    rerank_top_k: int = Field(default=20, gt=0, alias="RERANK_TOP_K")
+    answer_top_k: int = Field(default=5, gt=0, alias="ANSWER_TOP_K")
     agent_api_key: str | None = Field(default=None, alias="AGENT_API_KEY")
     admin_api_key: str | None = Field(default=None, alias="ADMIN_API_KEY")
     agent_model_name: str = Field(default="banorte-cv-agent", alias="AGENT_MODEL_NAME")
@@ -41,6 +46,20 @@ class Settings(BaseSettings):
     def validate_ingestion_mode(cls, value: str) -> str:
         if value not in {"openai", "deterministic"}:
             raise ValueError("ingestion_mode must be 'openai' or 'deterministic'")
+        return value
+
+    @field_validator("retrieval_mode", mode="before")
+    @classmethod
+    def validate_retrieval_mode(cls, value: str) -> str:
+        if value not in {"lexical", "llm_rerank"}:
+            raise ValueError("retrieval_mode must be 'lexical' or 'llm_rerank'")
+        return value
+
+    @field_validator("rerank_model", mode="before")
+    @classmethod
+    def normalize_rerank_model(cls, value: str | None) -> str | None:
+        if value is None or value == "":
+            return None
         return value
 
 

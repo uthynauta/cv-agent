@@ -13,17 +13,39 @@ class TextClient(Protocol):
         ...
 
 
+class HitReranker(Protocol):
+    def rerank(self, question: str, hits: list[object]) -> list[object]:
+        ...
+
+
 class AgentService:
-    def __init__(self, settings: Settings, search: WikiSearch, text_client: TextClient) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        search: WikiSearch,
+        text_client: TextClient,
+        reranker: HitReranker | None = None,
+    ) -> None:
         self.settings = settings
         self.search = search
         self.text_client = text_client
+        self.reranker = reranker
 
     def answer(self, input_text: str, extra_instructions: str | None = None) -> str:
         with get_tracer().start_as_current_span("agent.answer") as span:
             span.set_attribute("grounding_mode", self.settings.grounding_mode)
+            span.set_attribute("retrieval_mode", self.settings.retrieval_mode)
             span.set_attribute(*safe_count_attribute("input.length", input_text))
-            hits = self.search.search(input_text)
+            search_limit = (
+                self.settings.rerank_top_k
+                if self.settings.retrieval_mode == "llm_rerank"
+                else self.settings.answer_top_k
+            )
+            hits = self.search.search(input_text, limit=search_limit)
+            if self.settings.retrieval_mode == "llm_rerank" and self.reranker:
+                hits = self.reranker.rerank(input_text, hits)
+            else:
+                hits = hits[: self.settings.answer_top_k]
             span.set_attribute("search.hit_count", len(hits))
             context = "\n\n".join(
                 f"Source: [[{hit.title}]]\nPath: {hit.path}\nExcerpt: {hit.excerpt}" for hit in hits
