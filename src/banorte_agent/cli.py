@@ -16,7 +16,7 @@ def main() -> None:
     if args.command == "ingest":
         settings = get_settings()
         repo = WikiRepository(Path(settings.wiki_dir))
-        service = IngestionService(repo)
+        service = IngestionService(repo, settings)
         target = Path(args.path)
         results = service.ingest_directory(target) if target.is_dir() else [service.ingest_file(target)]
         for result in results:

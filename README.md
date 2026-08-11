@@ -4,7 +4,7 @@ Dockerized FastAPI CV agent for the Banorte challenge. It retrieves evidence fro
 
 ## Current Status
 
-The service is currently local-only at `http://localhost:8000`. No Banorte platform URL or registration contract has been provided, and this repository has no live `OPENAI_API_KEY`. Health, tests, ingestion, and container builds work without live model calls; `/v1/responses` needs a real key when using the built-in OpenAI client.
+The service is currently local-only at `http://localhost:8000`. No Banorte platform URL or registration contract has been provided, and this repository has no live `OPENAI_API_KEY`. Health, tests, deterministic ingestion, and container builds work without live model calls; `/v1/responses` and default OpenAI ingestion need a real key when using the built-in OpenAI client.
 
 ## Architecture
 
@@ -56,10 +56,23 @@ curl -sS http://localhost:8000/v1/responses \
 
 ## Ingestion
 
-Local CLI is preferred:
+Ingestion reads only from `wiki/raw`. Default mode is `INGESTION_MODE=openai`, which uses `OPENAI_API_KEY` and the same `OPENAI_MODEL` as the chat agent. To run the current agent model, set for example:
+
+```bash
+OPENAI_MODEL=gpt-5.6-luna
+INGESTION_MODE=openai
+```
+
+Local CLI is preferred for initial wiki builds:
 
 ```bash
 uv run banorte-agent ingest wiki/raw
+```
+
+For offline or repeatable extraction without model synthesis:
+
+```bash
+INGESTION_MODE=deterministic uv run banorte-agent ingest wiki/raw
 ```
 
 `POST /admin/ingest` is disabled with HTTP 503 unless `ADMIN_API_KEY` is configured. When enabled, it requires that bearer token and accepts only paths inside `wiki/raw`:

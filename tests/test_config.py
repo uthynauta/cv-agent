@@ -5,6 +5,7 @@ def test_settings_defaults():
     settings = Settings(_env_file=None, openai_api_key="test-key")
     assert settings.openai_model == "gpt-5.6"
     assert settings.grounding_mode == "inference"
+    assert settings.ingestion_mode == "openai"
     assert settings.agent_model_name == "banorte-cv-agent"
     assert settings.wiki_dir == "wiki"
 
@@ -16,3 +17,12 @@ def test_grounding_mode_rejects_invalid_value():
         assert "grounding_mode" in str(exc)
     else:
         raise AssertionError("invalid grounding mode was accepted")
+
+
+def test_ingestion_mode_rejects_invalid_value():
+    try:
+        Settings(_env_file=None, openai_api_key="test-key", ingestion_mode="manual")
+    except ValueError as exc:
+        assert "ingestion_mode" in str(exc)
+    else:
+        raise AssertionError("invalid ingestion mode was accepted")

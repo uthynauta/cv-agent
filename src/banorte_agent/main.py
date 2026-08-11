@@ -38,7 +38,7 @@ def create_app(
             agent = AgentService(settings, WikiSearch(repository), OpenAITextClient(settings))
             return agent.answer(text, instructions)
     app.include_router(build_responses_router(settings, agent_answerer))
-    app.include_router(build_admin_router(settings, IngestionService(repository)))
+    app.include_router(build_admin_router(settings, IngestionService(repository, settings)))
     return app
 
 

@@ -16,7 +16,9 @@ The Banorte CV Agent is one Dockerized FastAPI service. It exposes an Open Respo
 
 `WikiRepository` reads generated Markdown under `wiki/`; raw content under `wiki/raw/` is excluded from runtime search. LaTeX extraction preserves document text and headings while removing layout commands. PDF extraction uses selectable text and marks short results `needs_ocr: true`.
 
-LaTeX CV files may be committed and their generated source pages may include full extracted text. PDF and Markdown raw files are Git-ignored; their generated pages contain source metadata and a bounded snippet, never the full extracted text by default. The local CLI is the preferred ingestion interface. HTTP ingestion is disabled unless `ADMIN_API_KEY` is set and is confined to `wiki/raw`.
+LaTeX CV files may be committed and their generated source pages may include full extracted text. PDF and Markdown raw files are Git-ignored; deterministic generated pages contain source metadata and a bounded snippet, never the full extracted text by default. The local CLI is the preferred ingestion interface. HTTP ingestion is disabled unless `ADMIN_API_KEY` is set and is confined to `wiki/raw`.
+
+`INGESTION_MODE=openai` is the default and uses the configured `OPENAI_MODEL` to synthesize Obsidian-style `sources/`, `entities/`, `concepts/`, `projects/`, `skills/`, `questions/`, and `syntheses/` pages from extracted raw text. `INGESTION_MODE=deterministic` skips model calls and produces basic source pages, `index.md`, and `log.md`.
 
 ## Operations
 

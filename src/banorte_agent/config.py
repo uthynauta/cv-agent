@@ -6,6 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 GroundingMode = Literal["strict", "inference"]
+IngestionMode = Literal["openai", "deterministic"]
 
 
 class Settings(BaseSettings):
@@ -14,6 +15,7 @@ class Settings(BaseSettings):
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
     openai_model: str = Field(default="gpt-5.6", alias="OPENAI_MODEL")
     grounding_mode: GroundingMode = Field(default="inference", alias="GROUNDING_MODE")
+    ingestion_mode: IngestionMode = Field(default="openai", alias="INGESTION_MODE")
     agent_api_key: str | None = Field(default=None, alias="AGENT_API_KEY")
     admin_api_key: str | None = Field(default=None, alias="ADMIN_API_KEY")
     agent_model_name: str = Field(default="banorte-cv-agent", alias="AGENT_MODEL_NAME")
@@ -32,6 +34,13 @@ class Settings(BaseSettings):
     def validate_grounding_mode(cls, value: str) -> str:
         if value not in {"strict", "inference"}:
             raise ValueError("grounding_mode must be 'strict' or 'inference'")
+        return value
+
+    @field_validator("ingestion_mode", mode="before")
+    @classmethod
+    def validate_ingestion_mode(cls, value: str) -> str:
+        if value not in {"openai", "deterministic"}:
+            raise ValueError("ingestion_mode must be 'openai' or 'deterministic'")
         return value
 
 
