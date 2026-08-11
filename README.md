@@ -23,3 +23,11 @@ curl http://localhost:8000/healthz
 ```
 
 See [docs/deployment.md](docs/deployment.md).
+
+## Evaluation
+
+```bash
+uv run python evals/run_eval.py --base-url http://localhost:8000
+```
+
+The eval runner checks Spanish output, visible citations, and missing-information behavior.

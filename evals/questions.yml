@@ -1,0 +1,14 @@
+questions:
+  - id: profile_summary
+    text: "Resume el perfil profesional de Othon."
+    require_citation: true
+    require_spanish: true
+  - id: ai_agents
+    text: "¿Qué experiencia tiene Othon construyendo agentes de IA?"
+    require_citation: true
+    require_spanish: true
+  - id: missing_info
+    text: "¿Cuál fue el presupuesto exacto del proyecto más grande de Othon?"
+    require_citation: true
+    require_spanish: true
+    expect_missing_info: true
