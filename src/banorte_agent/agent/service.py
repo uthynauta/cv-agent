@@ -5,7 +5,7 @@ from typing import Protocol
 from banorte_agent.agent.prompts import build_instructions, encode_untrusted_text
 from banorte_agent.config import Settings
 from banorte_agent.tracing import get_tracer, safe_count_attribute
-from banorte_agent.wiki.search import WikiSearch
+from banorte_agent.wiki.search import SearchHit, WikiSearch
 
 
 class TextClient(Protocol):
@@ -14,7 +14,7 @@ class TextClient(Protocol):
 
 
 class HitReranker(Protocol):
-    def rerank(self, question: str, hits: list[object]) -> list[object]:
+    def rerank(self, question: str, hits: list[SearchHit]) -> list[SearchHit]:
         ...
 
 
@@ -43,13 +43,12 @@ class AgentService:
             )
             hits = self.search.search(input_text, limit=search_limit)
             if self.settings.retrieval_mode == "llm_rerank" and self.reranker:
+                hits = _prepare_rerank_candidates(hits, self.search, self.settings)
                 hits = self.reranker.rerank(input_text, hits)
             else:
                 hits = hits[: self.settings.answer_top_k]
             span.set_attribute("search.hit_count", len(hits))
-            context = "\n\n".join(
-                f"Source: [[{hit.title}]]\nPath: {hit.path}\nExcerpt: {hit.excerpt}" for hit in hits
-            )
+            context = _build_context(hits, self.search, self.settings)
             if not context:
                 context = "No relevant wiki context found."
             instructions = build_instructions(self.settings.grounding_mode, extra_instructions)
@@ -63,6 +62,71 @@ class AgentService:
             output = self.text_client.create_response(instructions, model_input)
             titles = [hit.title for hit in hits]
             return output if _valid_output(output, titles) else _safe_fallback(titles)
+
+
+def _build_context(hits: list[SearchHit], search: WikiSearch, settings: Settings) -> str:
+    if settings.context_mode == "excerpt":
+        return _truncate_context(
+            "\n\n".join(
+                f"Source: [[{hit.title}]]\nPath: {hit.path}\nExcerpt: {hit.excerpt}" for hit in hits
+            ),
+            settings.max_context_chars,
+        )
+    pages = {page.path.resolve(): page for page in search.repository.list_pages()}
+    parts: list[str] = []
+    seen: set[object] = set()
+    for hit in hits:
+        key = hit.path.resolve()
+        if key in seen:
+            continue
+        seen.add(key)
+        page = pages.get(key)
+        if page:
+            parts.append(
+                f"Source: [[{page.title}]]\nPath: {page.path}\nFull page:\n{page.body}"
+            )
+        else:
+            parts.append(f"Source: [[{hit.title}]]\nPath: {hit.path}\nExcerpt: {hit.excerpt}")
+    return _truncate_context("\n\n".join(parts), settings.max_context_chars)
+
+
+def _prepare_rerank_candidates(
+    hits: list[SearchHit], search: WikiSearch, settings: Settings
+) -> list[SearchHit]:
+    if settings.context_mode != "page":
+        return hits
+    pages = search.repository.list_pages()
+    pages_by_path = {page.path.resolve(): page for page in pages}
+    candidates: list[SearchHit] = []
+    seen: set[object] = set()
+    for hit in hits:
+        key = hit.path.resolve()
+        seen.add(key)
+        page = pages_by_path.get(key)
+        excerpt = _page_excerpt(page.body) if page else hit.excerpt
+        candidates.append(SearchHit(hit.path, hit.title, excerpt, hit.score))
+    for page in pages:
+        key = page.path.resolve()
+        if key in seen:
+            continue
+        seen.add(key)
+        candidates.append(SearchHit(page.path, page.title, _page_excerpt(page.body), 0.0))
+        if len(candidates) >= settings.rerank_top_k:
+            break
+    return candidates[: settings.rerank_top_k]
+
+
+def _page_excerpt(body: str) -> str:
+    return body[:2000]
+
+
+def _truncate_context(context: str, max_chars: int) -> str:
+    if len(context) <= max_chars:
+        return context
+    marker = "\n[Context truncated to fit MAX_CONTEXT_CHARS]"
+    if max_chars <= len(marker):
+        return context[:max_chars]
+    return context[: max_chars - len(marker)].rstrip() + marker
 
 
 SPANISH_MARKERS = {
@@ -94,7 +158,7 @@ def _looks_spanish(output: str) -> bool:
     tokens = set(re.findall(r"[a-z]+", normalized))
     marker_count = len(tokens & SPANISH_MARKERS)
     spanish_punctuation = bool(re.search(r"[¿¡áéíóúüñ]", output.casefold()))
-    return marker_count >= 2 or (marker_count >= 1 and spanish_punctuation)
+    return spanish_punctuation or marker_count >= 2
 
 
 def _safe_fallback(hit_titles: list[str]) -> str:

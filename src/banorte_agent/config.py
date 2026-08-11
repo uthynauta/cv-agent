@@ -8,6 +8,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 GroundingMode = Literal["strict", "inference"]
 IngestionMode = Literal["openai", "deterministic"]
 RetrievalMode = Literal["lexical", "llm_rerank"]
+ContextMode = Literal["excerpt", "page"]
 
 
 class Settings(BaseSettings):
@@ -21,6 +22,8 @@ class Settings(BaseSettings):
     rerank_model: str | None = Field(default=None, alias="RERANK_MODEL")
     rerank_top_k: int = Field(default=20, gt=0, alias="RERANK_TOP_K")
     answer_top_k: int = Field(default=5, gt=0, alias="ANSWER_TOP_K")
+    context_mode: ContextMode = Field(default="page", alias="CONTEXT_MODE")
+    max_context_chars: int = Field(default=12_000, gt=0, alias="MAX_CONTEXT_CHARS")
     agent_api_key: str | None = Field(default=None, alias="AGENT_API_KEY")
     admin_api_key: str | None = Field(default=None, alias="ADMIN_API_KEY")
     agent_model_name: str = Field(default="banorte-cv-agent", alias="AGENT_MODEL_NAME")
@@ -53,6 +56,13 @@ class Settings(BaseSettings):
     def validate_retrieval_mode(cls, value: str) -> str:
         if value not in {"lexical", "llm_rerank"}:
             raise ValueError("retrieval_mode must be 'lexical' or 'llm_rerank'")
+        return value
+
+    @field_validator("context_mode", mode="before")
+    @classmethod
+    def validate_context_mode(cls, value: str) -> str:
+        if value not in {"excerpt", "page"}:
+            raise ValueError("context_mode must be 'excerpt' or 'page'")
         return value
 
     @field_validator("rerank_model", mode="before")
