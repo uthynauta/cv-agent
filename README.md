@@ -4,13 +4,20 @@ Dockerized FastAPI CV agent for the Banorte challenge. It retrieves evidence fro
 
 ## Current Status
 
-The service is currently local-only at `http://localhost:8000`. No Banorte platform URL or registration contract has been provided, and this repository has no live `OPENAI_API_KEY`. Health, tests, ingestion, and container builds work without live model calls; `/v1/responses` needs a real key when using the built-in OpenAI client.
+The service is currently local-only at `http://localhost:8000`. No Banorte platform URL or registration contract has been provided, and this repository has no live `OPENAI_API_KEY`. Health, tests, deterministic ingestion, and container builds work without live model calls; `/v1/responses` and default OpenAI ingestion need a real key when using the built-in OpenAI client.
 
 ## Architecture
 
 Request flow: optional public bearer auth -> bounded request validation -> normalized passage-level wiki search -> OpenAI Responses API -> Spanish/citation validation -> Open Responses-like response. Invalid generated output is replaced with a safe Spanish answer citing only retrieved pages.
 
 Raw `.tex`, `.pdf`, and `.md` sources are ingested from `wiki/raw/`. Committed LaTeX CV sources may generate full-text pages. Git-ignored PDF and Markdown sources generate metadata and a bounded snippet only, so their full extracted text is not copied into committed Markdown by default.
+
+Retrieval is local over generated Markdown pages and supports two modes:
+
+- `RETRIEVAL_MODE=lexical`: no extra model call, lowest latency and cost.
+- `RETRIEVAL_MODE=llm_rerank`: retrieve a wider local candidate set, ask a small/configured OpenAI model to select the most relevant passages, then answer using only those selected passages.
+
+This project intentionally does not use OpenAI File Search for runtime retrieval yet. Keeping retrieval over the local wiki preserves the wiki as a Git-versioned, auditable artifact. LLM reranking can improve semantic matching without uploading the wiki to a hosted vector store.
 
 See [architecture](docs/architecture.md), [deployment](docs/deployment.md), [demo guide](docs/demo.md), and [sample transcript](docs/sample-transcript.md).
 
@@ -35,6 +42,8 @@ docker compose down
 
 ## Call The API
 
+Retrieval configuration is environment-driven. `RETRIEVAL_MODE=lexical` uses only local lexical search. `RETRIEVAL_MODE=llm_rerank` uses `RERANK_TOP_K` candidates from local search, selects `ANSWER_TOP_K` passages, and uses `RERANK_MODEL` when set or `OPENAI_MODEL` when empty.
+
 Without public bearer auth, leave `AGENT_API_KEY` empty:
 
 ```bash
@@ -56,10 +65,23 @@ curl -sS http://localhost:8000/v1/responses \
 
 ## Ingestion
 
-Local CLI is preferred:
+Ingestion reads only from `wiki/raw`. Default mode is `INGESTION_MODE=openai`, which uses `OPENAI_API_KEY` and the same `OPENAI_MODEL` as the chat agent. To run the current agent model, set for example:
+
+```bash
+OPENAI_MODEL=gpt-5.6-luna
+INGESTION_MODE=openai
+```
+
+Local CLI is preferred for initial wiki builds:
 
 ```bash
 uv run banorte-agent ingest wiki/raw
+```
+
+For offline or repeatable extraction without model synthesis:
+
+```bash
+INGESTION_MODE=deterministic uv run banorte-agent ingest wiki/raw
 ```
 
 `POST /admin/ingest` is disabled with HTTP 503 unless `ADMIN_API_KEY` is configured. When enabled, it requires that bearer token and accepts only paths inside `wiki/raw`:

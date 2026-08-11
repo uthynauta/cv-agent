@@ -18,6 +18,17 @@ class FakeTextClient:
         return self.output
 
 
+class FakeReranker:
+    def __init__(self) -> None:
+        self.question = ""
+        self.seen_titles = []
+
+    def rerank(self, question, hits):
+        self.question = question
+        self.seen_titles = [hit.title for hit in hits]
+        return [hit for hit in hits if hit.title == "Cloud"]
+
+
 def test_agent_builds_spanish_grounded_prompt(tmp_path: Path):
     repo = WikiRepository(tmp_path)
     repo.write_page("skills/python.md", "Python", {"kind": "skill"}, "Othon used FastAPI for AI agents.")
@@ -70,6 +81,46 @@ def test_agent_accepts_spanish_answer_with_retrieved_citation(tmp_path: Path):
     )
 
     assert service.answer("¿Qué experiencia tiene con FastAPI?") == expected
+
+
+def test_agent_accepts_spanish_formal_education_answer(tmp_path: Path):
+    repo = WikiRepository(tmp_path)
+    repo.write_page(
+        "entities/education.md",
+        "Education and Publications",
+        {"kind": "entity"},
+        "Othon has a PhD in Advanced Technology, MSc in Advanced Technology, and BEng in Aeronautical Engineering.",
+    )
+    expected = (
+        "Othón posee formación formal de doctorado, maestría e ingeniería aeronáutica.\n"
+        "Fuentes: [[Education and Publications]]"
+    )
+    service = AgentService(
+        Settings(openai_api_key="test-key"), WikiSearch(repo), FakeTextClient(expected)
+    )
+
+    assert service.answer("¿Qué educación formal posee Othón?") == expected
+
+
+def test_agent_uses_llm_reranker_when_enabled(tmp_path: Path):
+    repo = WikiRepository(tmp_path)
+    repo.write_page("skills/python.md", "Python", {"kind": "skill"}, "Othon usó FastAPI.")
+    repo.write_page("concepts/cloud.md", "Cloud", {"kind": "concept"}, "Othon usó Docker Compose.")
+    expected = "Othon usó Docker Compose.\nFuentes: [[Cloud]]"
+    fake_client = FakeTextClient(expected)
+    fake_reranker = FakeReranker()
+    settings = Settings(
+        openai_api_key="test-key",
+        retrieval_mode="llm_rerank",
+        rerank_top_k=20,
+        answer_top_k=1,
+    )
+    service = AgentService(settings, WikiSearch(repo), fake_client, fake_reranker)
+
+    assert service.answer("¿Qué usó Othon?") == expected
+    assert fake_reranker.question == "¿Qué usó Othon?"
+    assert "Cloud" in fake_client.input_text
+    assert "Python" not in fake_client.input_text
 
 
 def test_spanish_source_title_does_not_make_english_answer_valid(tmp_path: Path):

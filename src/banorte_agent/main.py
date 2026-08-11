@@ -4,6 +4,7 @@ from pathlib import Path
 from fastapi import FastAPI
 
 from banorte_agent.agent.openai_client import OpenAITextClient
+from banorte_agent.agent.rerank import LLMReranker
 from banorte_agent.agent.service import AgentService
 from banorte_agent.api.admin import build_admin_router
 from banorte_agent.api.health import build_health_router
@@ -35,10 +36,17 @@ def create_app(
     repository = WikiRepository(Path(settings.wiki_dir))
     if agent_answerer is None:
         def agent_answerer(text: str, instructions: str | None = None) -> str:
-            agent = AgentService(settings, WikiSearch(repository), OpenAITextClient(settings))
+            answer_client = OpenAITextClient(settings)
+            reranker = None
+            if settings.retrieval_mode == "llm_rerank":
+                rerank_settings = settings.model_copy(
+                    update={"openai_model": settings.rerank_model or settings.openai_model}
+                )
+                reranker = LLMReranker(OpenAITextClient(rerank_settings), settings.answer_top_k)
+            agent = AgentService(settings, WikiSearch(repository), answer_client, reranker)
             return agent.answer(text, instructions)
     app.include_router(build_responses_router(settings, agent_answerer))
-    app.include_router(build_admin_router(settings, IngestionService(repository)))
+    app.include_router(build_admin_router(settings, IngestionService(repository, settings)))
     return app
 
 

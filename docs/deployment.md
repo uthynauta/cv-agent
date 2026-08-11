@@ -4,10 +4,12 @@
 
 Copy `.env.example` to `.env` before serving model requests. Configure these values as needed:
 
-- `OPENAI_API_KEY` is required for live calls to `POST /v1/responses`.
+- `OPENAI_API_KEY` is required for live calls to `POST /v1/responses` and default OpenAI ingestion.
 - `AGENT_API_KEY` enables bearer authentication for the public endpoint.
 - `ADMIN_API_KEY` enables and protects `POST /admin/ingest`; an empty value disables it with HTTP 503.
-- `GROUNDING_MODE=inference` and `OPENAI_MODEL=gpt-5.6` are current defaults.
+- `GROUNDING_MODE=inference`, `INGESTION_MODE=openai`, and `OPENAI_MODEL=gpt-5.6` are current defaults. Set `OPENAI_MODEL=gpt-5.6-luna` when running the current agent model.
+- `RETRIEVAL_MODE=lexical` is the lowest-latency default. Set `RETRIEVAL_MODE=llm_rerank` to add an OpenAI rerank pass over `RERANK_TOP_K` local candidates before answering from `ANSWER_TOP_K` selected passages.
+- `RERANK_MODEL` is optional; when empty, reranking uses `OPENAI_MODEL`.
 - `AGENT_MODEL_NAME=banorte-cv-agent` is the canonical model name returned to clients.
 
 The `.env` file is optional for Compose validation and startup. Do not send model requests without a real key. For OpenTelemetry export, set `OTEL_ENABLED=true`, `OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_ENDPOINT`, and optional comma-separated `OTEL_RESOURCE_ATTRIBUTES`. The default OTLP endpoint assumes a `tempo` service is available on the Compose network; this repository does not define that service.
@@ -50,7 +52,7 @@ curl -sS http://localhost:8000/v1/responses \
 
 Requests accept at most 4,000 `input` characters and 1,000 `instructions` characters. OpenAI output is capped at 1,200 tokens.
 
-With `ADMIN_API_KEY` configured, ingestion paths must resolve inside the mounted `/app/wiki/raw` tree:
+With `ADMIN_API_KEY` configured, ingestion paths must resolve inside the mounted `/app/wiki/raw` tree. Default ingestion uses OpenAI synthesis; set `INGESTION_MODE=deterministic` for offline extraction:
 
 ```bash
 curl -sS http://localhost:8000/admin/ingest \
