@@ -142,7 +142,7 @@ def _valid_output(output: str, hit_titles: list[str]) -> bool:
     if not hit_titles:
         return False
     lines = [line.strip() for line in output.strip().splitlines() if line.strip()]
-    if not lines or not lines[-1].startswith("Fuentes:"):
+    if not lines or not _is_sources_line(lines[-1]):
         return False
     if not _looks_spanish(" ".join(lines[:-1])):
         return False
@@ -150,6 +150,13 @@ def _valid_output(output: str, hit_titles: list[str]) -> bool:
     all_citations = CITATION_RE.findall(output)
     allowed = set(hit_titles)
     return bool(source_citations) and all(citation in allowed for citation in all_citations)
+
+
+def _is_sources_line(line: str) -> bool:
+    normalized = line.strip()
+    normalized = re.sub(r"^\*{1,2}\s*", "", normalized)
+    normalized = re.sub(r"\s*\*{1,2}\s*:", ":", normalized)
+    return normalized.startswith("Fuentes:")
 
 
 def _looks_spanish(output: str) -> bool:

@@ -132,6 +132,25 @@ def test_agent_accepts_spanish_publications_answer_without_marker_words(tmp_path
     assert service.answer("¿Qué publicaciones científicas ha realizado Othón?") == expected
 
 
+def test_agent_accepts_bold_sources_label(tmp_path: Path):
+    repo = WikiRepository(tmp_path)
+    repo.write_page(
+        "entities/publications.md",
+        "Education and Publications",
+        {"kind": "entity"},
+        "Publicaciones científicas sobre image captioning metrics and video captioning reviews.",
+    )
+    expected = (
+        "Othón ha coautorado publicaciones científicas.\n"
+        "**Fuentes:** [[Education and Publications]]"
+    )
+    service = AgentService(
+        Settings(openai_api_key="test-key"), WikiSearch(repo), FakeTextClient(expected)
+    )
+
+    assert service.answer("¿Qué publicaciones científicas ha realizado Othón?") == expected
+
+
 def test_agent_uses_llm_reranker_when_enabled(tmp_path: Path):
     repo = WikiRepository(tmp_path)
     repo.write_page("skills/python.md", "Python", {"kind": "skill"}, "Othon usó FastAPI.")
