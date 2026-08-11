@@ -81,11 +81,14 @@ class IngestionService:
                     "ingested_at": datetime.now(UTC).date().isoformat(),
                     **metadata,
                 }
+                body = _openai_source_page_body(path, extracted.kind, extracted.text, str(page["body"]))
+            else:
+                body = str(page["body"])
             written = self.repository.write_page(
                 relative_path,
                 str(page["title"]),
                 metadata,
-                str(page["body"]),
+                body,
             )
             if written.parent.name == "sources" and source_page is None:
                 source_page = written
@@ -129,7 +132,13 @@ class IngestionService:
             relative = page.path.relative_to(self.repository.root).with_suffix("")
             if page.path.name in {"index.md", "log.md"}:
                 continue
-            lines.append(f"- [[{relative.as_posix()}|{page.title}]]")
+            kind = str(page.metadata.get("kind", "page"))
+            tags = page.metadata.get("tags", [])
+            tag_text = ", ".join(map(str, tags)) if isinstance(tags, list) else str(tags)
+            summary = _one_line_summary(page.body)
+            lines.append(
+                f"- [[{relative.as_posix()}|{page.title}]] — kind: {kind}; tags: {tag_text}; {summary}"
+            )
         index_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 
 
@@ -153,3 +162,31 @@ def _source_page_body(path: Path, kind: str, text: str) -> str:
             ]
         )
     return "\n".join(parts)
+
+
+def _openai_source_page_body(path: Path, kind: str, text: str, synthesis: str) -> str:
+    if kind != "latex":
+        return synthesis
+    extracted = text.strip() or "No selectable text extracted."
+    return "\n".join(
+        [
+            f"# {path.stem}",
+            "",
+            "## LLM Summary",
+            "",
+            synthesis.strip(),
+            "",
+            "## Extracted Text",
+            "",
+            extracted,
+        ]
+    )
+
+
+def _one_line_summary(body: str) -> str:
+    for raw_line in body.splitlines():
+        line = raw_line.strip().lstrip("- ").strip()
+        if not line or line.startswith("#"):
+            continue
+        return re.sub(r"\s+", " ", line)[:180]
+    return "No summary available."

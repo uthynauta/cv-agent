@@ -35,7 +35,11 @@ class ContentAwareFakeReranker:
 
     def rerank(self, question, hits):
         self.seen_excerpts = [hit.excerpt for hit in hits]
-        return [hit for hit in hits if "Selected publications" in hit.excerpt]
+        return [
+            hit
+            for hit in hits
+            if "Selected publications" in hit.excerpt or "taught undergraduate" in hit.excerpt
+        ]
 
 
 def test_agent_builds_spanish_grounded_prompt(tmp_path: Path):
@@ -199,6 +203,35 @@ def test_page_context_expands_candidates_before_llm_rerank(tmp_path: Path):
 
     assert service.answer("¿Qué publicaciones científicas tiene Othon?") == expected
     assert any("Selected publications" in excerpt for excerpt in fake_reranker.seen_excerpts)
+
+
+def test_page_context_rerank_fallback_includes_later_wiki_pages(tmp_path: Path):
+    repo = WikiRepository(tmp_path)
+    for index in range(4):
+        repo.write_page(
+            f"concepts/noise-{index}.md",
+            f"Noise {index}",
+            {"kind": "concept"},
+            "Othon general profile.",
+        )
+    repo.write_page(
+        "experience/teaching.md",
+        "Teaching Experience",
+        {"kind": "experience"},
+        "Developed and taught undergraduate and graduate courses.",
+    )
+    fake_client = FakeTextClient("Othón trabajó como docente.\nFuentes: [[Teaching Experience]]")
+    fake_reranker = ContentAwareFakeReranker()
+    settings = Settings(
+        openai_api_key="test-key",
+        retrieval_mode="llm_rerank",
+        context_mode="page",
+        rerank_top_k=2,
+    )
+    service = AgentService(settings, WikiSearch(repo), fake_client, fake_reranker)
+
+    assert service.answer("¿Othón ha trabajado como docente?") == fake_client.output
+    assert any("taught undergraduate" in excerpt for excerpt in fake_reranker.seen_excerpts)
 
 
 def test_agent_page_context_includes_full_selected_page(tmp_path: Path):

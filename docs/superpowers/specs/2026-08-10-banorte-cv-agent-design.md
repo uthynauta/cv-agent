@@ -48,7 +48,7 @@ High-level data flow:
 
 1. Source files are added under `wiki/raw/`.
 2. Ingestion extracts text and metadata from raw files.
-3. Ingestion writes or updates generated Markdown pages under `wiki/sources/`, `wiki/entities/`, `wiki/concepts/`, `wiki/projects/`, `wiki/skills/`, and `wiki/questions/`.
+3. Ingestion writes or updates generated Markdown pages under `wiki/sources/`, `wiki/entities/`, `wiki/concepts/`, `wiki/education/`, `wiki/credentials/`, `wiki/experience/`, `wiki/projects/`, `wiki/publications/`, `wiki/skills/`, and `wiki/questions/`.
 4. Ingestion updates `wiki/index.md` and appends to `wiki/log.md`.
 5. A reviewer sends a request to `POST /v1/responses`.
 6. The API authenticates the request if `AGENT_API_KEY` is set.
@@ -189,7 +189,11 @@ wiki/
   sources/
   entities/
   concepts/
+  education/
+  credentials/
+  experience/
   projects/
+  publications/
   skills/
   questions/
   index.md
@@ -204,7 +208,11 @@ Conventions:
 - `sources/` contains one page per ingested source.
 - `entities/` contains people, organizations, roles, companies, schools, and similar entities.
 - `concepts/` contains technical themes and knowledge areas.
+- `education/` contains formal degrees and academic background.
+- `credentials/` contains courses, certifications, workshops, and training evidence that may be added later.
+- `experience/` contains employment, consulting, teaching, research, and other professional roles.
 - `projects/` contains portfolio or project pages.
+- `publications/` contains scientific papers, patents, talks, and authored technical outputs.
 - `skills/` contains skill pages with evidence links.
 - `questions/` contains saved high-value Q&A/eval answers.
 - `index.md` is the content-oriented catalog.
@@ -240,7 +248,7 @@ Input location:
 Outputs:
 
 - Source summary page in `wiki/sources/`.
-- Updated pages in `wiki/entities/`, `wiki/concepts/`, `wiki/projects/`, `wiki/skills/`, or `wiki/questions/` when applicable.
+- Updated pages in `wiki/entities/`, `wiki/concepts/`, `wiki/education/`, `wiki/credentials/`, `wiki/experience/`, `wiki/projects/`, `wiki/publications/`, `wiki/skills/`, or `wiki/questions/` when applicable.
 - Updated `wiki/index.md`.
 - Appended `wiki/log.md` entry.
 
@@ -275,6 +283,8 @@ Search returns:
 - score
 
 Vector search and embeddings are intentionally deferred. The search module should have a small interface so embeddings can be added later without rewriting the agent.
+
+When `RETRIEVAL_MODE=llm_rerank` and `CONTEXT_MODE=page`, `RERANK_TOP_K` controls only the initial lexical over-retrieval. The rerank pool also includes generated wiki pages that did not match lexically, using bounded page excerpts. This prevents new categories such as courses, credentials, teaching, publications, or later training documents from becoming unrecoverable just because no fixed synonym list matched the reviewer question.
 
 ## Observability
 

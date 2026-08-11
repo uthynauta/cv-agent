@@ -4,12 +4,14 @@ kind: entity
 tags:
 - entity
 - person
+- ai
 - cv
 ---
 
 # Othón González
-- Senior AI Engineer with a background spanning enterprise AI, autonomous mobility, aerospace systems, and academic research.
-- Holds a PhD in Computer Vision, an MSc in Aerodynamic Optimization, and an Engineering degree in Aeronautics from IPN institutions.
-- Professional experience includes [[entities/teradata]], [[entities/continental-autonomous-mobility]], [[entities/centrogeo]], Aeroméxico, and safety consulting.
-- Research publications cover thermal imaging, UAVs, video captioning, and evaluation metrics.
-- Languages: Spanish native; English professional working proficiency.
+- Senior AI / LLM Engineer with experience building production-oriented enterprise generative AI platforms, agentic workflows, RAG systems, evaluation pipelines, backend services, and LLM observability capabilities.
+- Technical focus includes Python, FastAPI, LangGraph, OpenTelemetry, PostgreSQL/pgvector, Docker, Kubernetes, PyTorch, Transformers, and Hugging Face.
+- Previous work spans automotive perception, computer vision, NLP, multimodal systems, and safety-critical engineering.
+- Based in Mexico City, Mexico.
+- Languages: Spanish (native); English (professional working proficiency).
+- See [[skills/ai-and-platform-skills]], [[experience/teradata-agentic-ai]], and [[education/academic-background]].

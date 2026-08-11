@@ -51,12 +51,16 @@ def test_openai_ingest_writes_structured_wiki_pages(tmp_path: Path):
     raw = tmp_path / "raw" / "cv"
     raw.mkdir(parents=True)
     source = raw / "othon.tex"
-    source.write_text(r"\section{Experience} Teradata Agentic AI platform", encoding="utf-8")
+    source.write_text(
+        r"\section{Experience} Teradata Agentic AI platform \section{Teaching} Developed and taught undergraduate and graduate courses",
+        encoding="utf-8",
+    )
 
     class FakeTextClient:
         def create_response(self, instructions: str, input_text: str) -> str:
             assert "Return strict JSON" in instructions
             assert "Teradata Agentic AI platform" in input_text
+            assert "Developed and taught undergraduate and graduate courses" in input_text
             return """
             {
               "pages": [
@@ -80,6 +84,24 @@ def test_openai_ingest_writes_structured_wiki_pages(tmp_path: Path):
                   "title": "Advanced Technology Degree",
                   "metadata": {"kind": "education", "tags": ["education"]},
                   "body_lines": ["## Summary", "PhD in Advanced Technology."]
+                },
+                {
+                  "path": "experience/teaching.md",
+                  "title": "Teaching Experience",
+                  "metadata": {"kind": "experience", "tags": ["experience", "teaching"]},
+                  "body_lines": ["## Summary", "Developed and taught undergraduate and graduate courses."]
+                },
+                {
+                  "path": "credentials/llm-course.md",
+                  "title": "LLM Course",
+                  "metadata": {"kind": "credential", "tags": ["credential", "llm"]},
+                  "body_lines": ["## Summary", "Completed LLM coursework."]
+                },
+                {
+                  "path": "publications/image-captioning-metrics.md",
+                  "title": "Image Captioning Metrics Paper",
+                  "metadata": {"kind": "publication", "tags": ["publication"]},
+                  "body_lines": ["## Summary", "Peer-reviewed publication."]
                 }
               ]
             }
@@ -95,10 +117,19 @@ def test_openai_ingest_writes_structured_wiki_pages(tmp_path: Path):
 
     assert result.source_page == tmp_path / "sources" / "othon.md"
     assert not (tmp_path / "sources" / "model-picked-wrong-slug.md").exists()
-    assert "Teradata Agentic AI Platform" in result.source_page.read_text(encoding="utf-8")
+    source_text = result.source_page.read_text(encoding="utf-8")
+    assert "Teradata Agentic AI Platform" in source_text
+    assert "## Extracted Text" in source_text
+    assert "Developed and taught undergraduate and graduate courses" in source_text
     assert (tmp_path / "projects" / "teradata-agentic-ai-platform.md").exists()
     assert (tmp_path / "education" / "advanced-technology-degree.md").exists()
-    assert "[[sources/othon|Othon CV]]" in (tmp_path / "index.md").read_text(encoding="utf-8")
+    assert (tmp_path / "experience" / "teaching.md").exists()
+    assert (tmp_path / "credentials" / "llm-course.md").exists()
+    assert (tmp_path / "publications" / "image-captioning-metrics.md").exists()
+    index_text = (tmp_path / "index.md").read_text(encoding="utf-8")
+    assert "[[sources/othon|Othon CV]]" in index_text
+    assert "kind: source" in index_text
+    assert "tags: source, cv" in index_text
     assert "mode: openai" in (tmp_path / "log.md").read_text(encoding="utf-8")
 
 
