@@ -9,6 +9,8 @@ from banorte_agent.api.admin import build_admin_router
 from banorte_agent.api.health import build_health_router
 from banorte_agent.api.responses import build_responses_router
 from banorte_agent.config import Settings, get_settings
+from banorte_agent.logging import configure_logging, request_observability_middleware
+from banorte_agent.tracing import configure_tracing
 from banorte_agent.wiki.ingest import IngestionService
 from banorte_agent.wiki.repository import WikiRepository
 from banorte_agent.wiki.search import WikiSearch
@@ -20,6 +22,9 @@ def create_app(
 ) -> FastAPI:
     settings = settings or get_settings()
     app = FastAPI(title="Banorte CV Agent", version="0.1.0")
+    configure_logging()
+    configure_tracing(app, settings)
+    app.middleware("http")(request_observability_middleware)
     app.include_router(build_health_router(settings))
     repository = WikiRepository(Path(settings.wiki_dir))
     if agent_answerer is None:

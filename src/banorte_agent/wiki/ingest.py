@@ -4,7 +4,9 @@ from pathlib import Path
 import re
 
 from banorte_agent.wiki.extractors import extract_source
+from banorte_agent.metrics import INGEST_EVENTS
 from banorte_agent.wiki.repository import WikiRepository
+from banorte_agent.tracing import get_tracer
 
 
 @dataclass(frozen=True)
@@ -19,34 +21,43 @@ class IngestionService:
         self.repository = repository
 
     def ingest_file(self, path: Path) -> IngestResult:
-        extracted = extract_source(path)
-        slug = _slugify(path.stem)
-        metadata = {
-            "kind": "source",
-            "source_file": str(path),
-            "source_type": extracted.kind,
-            "sha256": extracted.sha256,
-            "needs_ocr": extracted.needs_ocr,
-            "ingested_at": datetime.now(UTC).date().isoformat(),
-            "tags": ["source", extracted.kind],
-        }
-        body = "\n".join(
-            [
-                f"# {path.stem}",
-                "",
-                "## Summary",
-                "",
-                extracted.text[:2000].strip() or "No selectable text extracted.",
-                "",
-                "## Extracted Text",
-                "",
-                extracted.text.strip() or "No selectable text extracted.",
-            ]
-        )
-        source_page = self.repository.write_page(f"sources/{slug}.md", path.stem, metadata, body)
-        self._append_log(path)
-        self._ensure_index()
-        return IngestResult(path, source_page, extracted.needs_ocr)
+        with get_tracer().start_as_current_span("wiki.ingest_file") as span:
+            span.set_attribute("source.extension", path.suffix.lower())
+            try:
+                extracted = extract_source(path)
+                span.set_attribute("source.needs_ocr", extracted.needs_ocr)
+                slug = _slugify(path.stem)
+                metadata = {
+                    "kind": "source",
+                    "source_file": str(path),
+                    "source_type": extracted.kind,
+                    "sha256": extracted.sha256,
+                    "needs_ocr": extracted.needs_ocr,
+                    "ingested_at": datetime.now(UTC).date().isoformat(),
+                    "tags": ["source", extracted.kind],
+                }
+                body = "\n".join(
+                    [
+                        f"# {path.stem}",
+                        "",
+                        "## Summary",
+                        "",
+                        extracted.text[:2000].strip() or "No selectable text extracted.",
+                        "",
+                        "## Extracted Text",
+                        "",
+                        extracted.text.strip() or "No selectable text extracted.",
+                    ]
+                )
+                source_page = self.repository.write_page(f"sources/{slug}.md", path.stem, metadata, body)
+                self._append_log(path)
+                self._ensure_index()
+                span.set_attribute("source.page", str(source_page))
+                INGEST_EVENTS.labels("success").inc()
+                return IngestResult(path, source_page, extracted.needs_ocr)
+            except Exception:
+                INGEST_EVENTS.labels("error").inc()
+                raise
 
     def ingest_directory(self, root: Path) -> list[IngestResult]:
         results: list[IngestResult] = []

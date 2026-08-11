@@ -1,8 +1,10 @@
 from pathlib import Path
 
 from fastapi import APIRouter, Response, status
+from fastapi.responses import PlainTextResponse
 
 from banorte_agent.config import Settings, get_settings
+from banorte_agent.metrics import render_metrics
 
 
 
@@ -25,6 +27,10 @@ def build_health_router(settings: Settings) -> APIRouter:
             response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
             return {"status": "not_ready", "missing": missing}
         return {"status": "ready", "missing": []}
+
+    @router.get("/metrics")
+    def metrics() -> PlainTextResponse:
+        return PlainTextResponse(render_metrics().decode("utf-8"), media_type="text/plain; version=0.0.4")
 
     return router
 

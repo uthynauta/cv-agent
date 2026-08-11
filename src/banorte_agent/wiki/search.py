@@ -3,6 +3,7 @@ from pathlib import Path
 import re
 
 from banorte_agent.wiki.repository import WikiRepository
+from banorte_agent.tracing import get_tracer, safe_count_attribute
 
 
 @dataclass(frozen=True)
@@ -18,16 +19,23 @@ class WikiSearch:
         self.repository = repository
 
     def search(self, query: str, limit: int = 5) -> list[SearchHit]:
-        terms = _terms(query)
-        if not terms:
-            return []
-        hits: list[SearchHit] = []
-        for page in self.repository.list_pages():
-            haystack = " ".join([page.title, str(page.metadata), page.body])
-            score = _score(haystack, terms)
-            if score > 0:
-                hits.append(SearchHit(page.path, page.title, _excerpt(page.body, terms), score))
-        return sorted(hits, key=lambda hit: hit.score, reverse=True)[:limit]
+        with get_tracer().start_as_current_span("wiki.search") as span:
+            span.set_attribute(*safe_count_attribute("query.length", query))
+            terms = _terms(query)
+            if not terms:
+                span.set_attribute("result.count", 0)
+                span.set_attribute("result.titles", "")
+                return []
+            hits: list[SearchHit] = []
+            for page in self.repository.list_pages():
+                haystack = " ".join([page.title, str(page.metadata), page.body])
+                score = _score(haystack, terms)
+                if score > 0:
+                    hits.append(SearchHit(page.path, page.title, _excerpt(page.body, terms), score))
+            results = sorted(hits, key=lambda hit: hit.score, reverse=True)[:limit]
+            span.set_attribute("result.count", len(results))
+            span.set_attribute("result.titles", ", ".join(hit.title for hit in results)[:200])
+            return results
 
 
 def _terms(query: str) -> list[str]:
