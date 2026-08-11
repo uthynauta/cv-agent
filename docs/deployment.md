@@ -8,7 +8,7 @@ Copy `.env.example` to `.env` before serving model requests. Configure these val
 - `AGENT_API_KEY` enables bearer authentication for the public endpoint.
 - `ADMIN_API_KEY` enables and protects `POST /admin/ingest`; an empty value disables it with HTTP 503.
 - `GROUNDING_MODE=inference`, `INGESTION_MODE=openai`, and `OPENAI_MODEL=gpt-5.6` are current defaults. Set `OPENAI_MODEL=gpt-5.6-luna` when running the current agent model.
-- `RETRIEVAL_MODE=lexical` is the lowest-latency default. Set `RETRIEVAL_MODE=llm_rerank` to add an OpenAI rerank pass over `RERANK_TOP_K` local candidates before answering from `ANSWER_TOP_K` selected passages.
+- `RETRIEVAL_MODE=lexical` is the lowest-latency default. Set `RETRIEVAL_MODE=llm_rerank` to add an OpenAI rerank pass. `RERANK_TOP_K` controls lexical over-retrieval; with `CONTEXT_MODE=page`, generated wiki pages not found lexically are also sent as fallback candidates before answering from `ANSWER_TOP_K` selected pages/passages.
 - `RERANK_MODEL` is optional; when empty, reranking uses `OPENAI_MODEL`.
 - `CONTEXT_MODE=page` expands selected hits to full generated wiki pages within `MAX_CONTEXT_CHARS`; `CONTEXT_MODE=excerpt` sends only matched excerpts.
 - `AGENT_MODEL_NAME=banorte-cv-agent` is the canonical model name returned to clients.

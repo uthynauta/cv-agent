@@ -111,13 +111,11 @@ def _prepare_rerank_candidates(
             continue
         seen.add(key)
         candidates.append(SearchHit(page.path, page.title, _page_excerpt(page.body), 0.0))
-        if len(candidates) >= settings.rerank_top_k:
-            break
-    return candidates[: settings.rerank_top_k]
+    return candidates
 
 
 def _page_excerpt(body: str) -> str:
-    return body[:2000]
+    return body[:1200]
 
 
 def _truncate_context(context: str, max_chars: int) -> str:

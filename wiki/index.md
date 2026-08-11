@@ -1,40 +1,59 @@
 # Wiki Index
 
-- [[concepts/agent-observability|Agent Observability]]
-- [[concepts/agentic-ai-evaluation|Agentic AI Evaluation]]
-- [[concepts/llm-observability-and-evaluation|LLM Observability and Evaluation]]
-- [[concepts/llm-observability|LLM Observability]]
-- [[concepts/retrieval-augmented-generation|Retrieval-Augmented Generation]]
-- [[education/advanced-technology-phd|PhD in Advanced Technology]]
-- [[education/engineering-aeronautics|Engineering in Aeronautics]]
-- [[education/msc-aerodynamic-optimization|MSc in Aerodynamic Optimization]]
-- [[education/phd-computer-vision|PhD in Computer Vision]]
-- [[entities/centrogeo|CentroGEO]]
-- [[entities/continental-autonomous-mobility|Continental Autonomous Mobility]]
-- [[entities/education-and-publications|Education and Publications]]
-- [[entities/othon-gonzalez-education|Othón González — Education and Research]]
-- [[entities/othon-gonzalez|Othón González]]
-- [[entities/teradata|Teradata]]
-- [[projects/adas-perception-validation|ADAS Perception Validation]]
-- [[projects/agentic-ai-platform|Enterprise Agentic AI Platform]]
-- [[projects/automotive-perception-validation|Automotive Perception Validation]]
-- [[projects/centrogeo-multimodal-research|CentroGeo Multimodal Research]]
-- [[projects/continental-adas-validation|Continental ADAS Validation]]
-- [[projects/enterprise-agentic-ai-platform|Enterprise Agentic AI Platform]]
-- [[projects/multimodal-captioning-research|Multimodal Captioning Research]]
-- [[projects/teradata-agentic-ai-platform|Teradata Agentic AI Platform]]
-- [[projects/uav-computer-vision-research|UAV and Computer Vision Research]]
-- [[skills/adas-and-aerospace-systems|ADAS and Aerospace Systems Skills]]
-- [[skills/agentic-ai|Agentic AI]]
-- [[skills/ai-and-ml|AI and ML Skills]]
-- [[skills/ai-engineering-stack|AI Engineering Stack]]
-- [[skills/ai-platform-engineering|AI Platform Engineering Skills]]
-- [[skills/computer-vision-and-multimodal-ml|Computer Vision and Multimodal Machine Learning]]
-- [[skills/computer-vision-and-perception|Computer Vision and Perception]]
-- [[skills/data-infrastructure|Data and Infrastructure Skills]]
-- [[skills/llm-agent-workflows|LLM Agent Workflows]]
-- [[skills/llm-observability|LLM Evaluation and Observability]]
-- [[skills/observability-and-telemetry|Observability and Telemetry]]
-- [[skills/production-ai-engineering|Production AI Engineering]]
-- [[sources/cv-ogc-ai|Othón González — CV]]
-- [[sources/cv-ogc-ats|CV - Othón González]]
+- [[concepts/adas-perception|ADAS Perception]] — kind: concept; tags: concept, adas, computer-vision; Automotive perception work involving Radar, Camera, and LiDAR systems.
+- [[concepts/agent-observability|Agent Observability]] — kind: concept; tags: concept, agentic-ai, observability; The CV describes observability for LLM-based agents as the collection and analysis of execution telemetry and distributed traces.
+- [[concepts/agentic-ai-evaluation|Agentic AI Evaluation]] — kind: concept; tags: concept, agentic-ai, evaluation, deepeval, rag; Built structured evaluation and analytics pipelines using PostgreSQL, pgvector, and DeepEval.
+- [[concepts/agentic-ai-platforms|Agentic AI Platforms]] — kind: concept; tags: concept, agentic-ai, llm; Enterprise platforms for deploying, consuming, evaluating, and observing AI agents.
+- [[concepts/computer-vision-research|Computer Vision Research]] — kind: concept; tags: concept, computer-vision, research; Research background includes thermal radiance measurement with UAVs, image captioning, generative image models, and deep learning architectures.
+- [[concepts/llm-observability-and-evaluation|LLM Observability and Agent Evaluation]] — kind: concept; tags: concept, llm, observability, evaluation; The CV describes an observability architecture for multi-step agent workflows that captures token usage, model cost, latency, errors, model metadata, tool calls, execution paths, a
+- [[concepts/llm-observability|LLM Observability]] — kind: concept; tags: concept, llm, observability, opentelemetry; The CV describes an OpenTelemetry-based architecture for standardizing telemetry across multi-step LLM and agent workflows.
+- [[concepts/observability-and-agent-evaluation|Observability and Agent Evaluation]] — kind: concept; tags: concept, observability, evaluation; The CV describes telemetry for token usage, latency, cost, errors, model metadata, tool calls, execution paths, and agent outcomes.
+- [[concepts/retrieval-augmented-generation|Retrieval-Augmented Generation]] — kind: concept; tags: concept, ai, llm, rag; The CV identifies Retrieval-Augmented Generation (RAG) as part of the LLM workflow engineering performed on an enterprise Agentic AI platform.
+- [[education/academic-background|Academic Background]] — kind: education; tags: education, phd, engineering, computer-vision; **PhD in Advanced Technology**, CICATA Querétaro, Instituto Politécnico Nacional, 2020. Research focus: computer vision and remote sensing. Thesis: “Precise Remote Measurement of T
+- [[education/academic-degrees|Academic Degrees]] — kind: education; tags: education, computer-vision, aeronautics; [[PhD in Computer Vision]] — CICATA Querétaro, IPN, January 2020; thesis: precise remote measurement of thermal radiance dynamics using UAVs; final grade 9.0/10.
+- [[education/advanced-technology-phd|PhD in Advanced Technology]] — kind: education; tags: education, phd, computer-vision, remote-sensing; Institution: CICATA Querétaro, Instituto Politécnico Nacional.
+- [[education/engineering-aeronautics|Engineering in Aeronautics]] — kind: education; tags: education, aerospace; Institution: ESIME Ticomán, IPN.
+- [[education/msc-aerodynamic-optimization|MSc in Aerodynamic Optimization]] — kind: education; tags: education, msc, aerodynamics; Institution: CICATA Querétaro, IPN
+- [[education/phd-computer-vision|PhD in Computer Vision]] — kind: education; tags: education, phd, computer-vision; Institution: CICATA Querétaro, IPN
+- [[entities/centrogeo|CentroGEO]] — kind: entity; tags: entity, employer, research; Othón González served as Postdoctoral Project Assistant from Jul 2021 to Jul 2023.
+- [[entities/continental-autonomous-mobility|Continental Autonomous Mobility]] — kind: entity; tags: entity, company, adas, cv; Othón González worked as an Algorithms Test / Data Engineer from July 2022 to November 2025.
+- [[entities/education-and-publications|Education and Publications]] — kind: entity; tags: entity, education, research, publications; **PhD in Advanced Technology**, CICATA Querétaro, Instituto Politécnico Nacional, 2020. Research focus: computer vision and remote sensing. Thesis: *Precise Remote Measurement of T
+- [[entities/othon-gonzalez-education|Othón González — Education and Research]] — kind: entity; tags: entity, education, research, computer-vision; PhD research focused on computer vision and remote sensing; thesis: “Precise Remote Measurement of Thermal Radiance Dynamics Using Unmanned Aerial Vehicles.”
+- [[entities/othon-gonzalez|Othón González]] — kind: entity; tags: entity, person, ai, cv; Senior AI / LLM Engineer with experience building production-oriented enterprise generative AI platforms, agentic workflows, RAG systems, evaluation pipelines, backend services, an
+- [[entities/teradata|Teradata]] — kind: entity; tags: entity, company, cv; Othón González worked as an AI Engineer / Agentic AI Platform Engineer from December 2025 to July 2026.
+- [[experience/aviation-safety-and-operations|Aviation Safety and Airport Operations Experience]] — kind: experience; tags: experience, aviation, safety; As an External Consultant and Safety Manager, led operational safety initiatives for a Mexican ground handling services provider from February 2016 to June 2018.
+- [[experience/centrogeo-postdoctoral-research|CentroGEO — Postdoctoral Computer Vision and NLP Research]] — kind: experience; tags: experience, centrogeo, research; Role: Postdoctoral Project Assistant
+- [[experience/centrogeo-research|CentroGeo — NLP and Multimodal Research]] — kind: experience; tags: experience, research, nlp, multimodal; **Dates:** July 2021 – July 2023
+- [[experience/continental-adas|Continental Autonomous Mobility — ADAS Algorithms Testing]] — kind: experience; tags: experience, continental, adas; Role: Algorithms Test / Data Engineer (ADAS)
+- [[experience/earlier-engineering-and-teaching|Earlier Engineering, Safety, and Teaching Experience]] — kind: experience; tags: experience, aviation, teaching, safety; **External Consultant — Safety Manager:** February 2016 – June 2018. Led operational-safety and compliance initiatives for a Mexican ground-handling services provider; supported To
+- [[experience/teradata-agentic-ai-platform|Teradata — AI and Agentic AI Platform Engineering]] — kind: experience; tags: experience, teradata, agentic-ai; Role: AI Engineer / Agentic AI Platform Engineer
+- [[experience/teradata-agentic-ai|Teradata — Agentic AI Platform Engineering]] — kind: experience; tags: experience, teradata, agentic-ai, llm; **Dates:** December 2025 – July 2026
+- [[projects/adas-perception-validation|ADAS Perception Validation]] — kind: project; tags: project, adas, computer-vision, testing; Developed AI-driven testing tools for radar perception systems at [[entities/continental-autonomous-mobility]].
+- [[projects/agentic-ai-platform|Enterprise Agentic AI Platform]] — kind: project; tags: project, agentic-ai, llm, teradata; An internal enterprise Agentic AI platform developed for production use at Teradata. The platform supports agent development, execution, evaluation, observability, and reusable ski
+- [[projects/automotive-perception-validation|Automotive Perception Validation]] — kind: project; tags: project, automotive, adas, computer-vision, validation; Role: Algorithms Test / Data Engineer — ADAS at Continental Autonomous Mobility.
+- [[projects/centrogeo-multimodal-research|CentroGeo Multimodal Research]] — kind: project; tags: project, research, multimodal-learning, nlp; Postdoctoral Researcher at CentroGeo, Jul 2021–Jul 2023.
+- [[projects/continental-adas-validation|Continental ADAS Validation]] — kind: project; tags: project, adas, computer-vision, radar; Role: Algorithms Test / Data Engineer (ADAS).
+- [[projects/enterprise-agentic-ai-platform|Enterprise Agentic AI Platform]] — kind: project; tags: project, agentic-ai, llm, observability; Internal enterprise platform for deploying, consuming, evaluating, and observing AI agents at [[entities/teradata]].
+- [[projects/multimodal-captioning-research|Multimodal Captioning Research]] — kind: project; tags: project, research, multimodal, nlp, computer-vision; Role: Postdoctoral Researcher at CentroGeo, July 2021 – July 2023.
+- [[projects/teradata-agentic-ai-platform|Teradata Agentic AI Platform]] — kind: project; tags: project, ai, agentic-ai, teradata; Role: AI Engineer / Agentic AI Platform Engineer.
+- [[projects/uav-computer-vision-research|UAV and Computer Vision Research]] — kind: project; tags: project, research, computer-vision, uav; Othón González completed a PhD in Computer Vision at CICATA Querétaro, IPN, in January 2020.
+- [[publications/othon-gonzalez-publications|Othón González Publications]] — kind: publication; tags: publication, research, computer-vision; 2019 — González-Chávez, O., et al. “Radiometric Calibration of Infrared Thermal Cameras.” IEEE Transactions on Instrumentation and Measurement.
+- [[publications/selected-publications|Selected Publications]] — kind: publications; tags: publications, research, computer-vision; González-Chávez, O., et al. “Are Metrics Measuring What They Should? Evaluation of Image Captioning Task Metrics.” *Signal Processing: Image Communication*, vol. 120, 2024.
+- [[questions/cv-follow-up-questions|CV Follow-up Questions]] — kind: question; tags: question, cv; The Teradata role is dated December 2025–July 2026; should these dates be verified?
+- [[skills/adas-and-aerospace-systems|ADAS and Aerospace Systems Skills]] — kind: skill; tags: skill, adas, aerospace, safety-critical; Radar virtualization and radar systems.
+- [[skills/agentic-ai|Agentic AI]] — kind: skill; tags: skill, agentic-ai, llm; LLM-based workflows and agentic AI platforms.
+- [[skills/ai-and-ml|AI and ML Skills]] — kind: skill; tags: skill, ai, machine-learning; Large Language Models (LLMs).
+- [[skills/ai-and-platform-skills|AI and Platform Skills]] — kind: skills; tags: skills, ai, llm, platform-engineering; **Generative AI:** Large language models, agentic AI, LangGraph, tool calling, reusable agent skills, MCP, prompt orchestration, model routing, RAG, retrievers, embeddings, and vec
+- [[skills/ai-engineering-stack|AI Engineering Stack]] — kind: skill; tags: skill, python, generative-ai, infrastructure; Generative AI and agents: large language models, agentic AI, LangGraph, tool calling, reusable agent skills, MCP, prompt orchestration, model routing, RAG, retrievers, embeddings,
+- [[skills/ai-platform-engineering|AI Platform Engineering Skills]] — kind: skill; tags: skill, python, fastapi, kubernetes, llm; Languages and backend: Python, FastAPI, SQL, REST APIs, asynchronous workflows, and JSON-based telemetry.
+- [[skills/computer-vision-and-multimodal-ml|Computer Vision and Multimodal Machine Learning]] — kind: skill; tags: skill, computer-vision, multimodal-ml, research; Developed image and video captioning models using RNNs, LSTMs, attention mechanisms, and Transformers.
+- [[skills/computer-vision-and-perception|Computer Vision and Perception]] — kind: skill; tags: skill, computer-vision, adas, research; Computer vision, radar perception, camera systems, LiDAR systems, and multi-sensor validation.
+- [[skills/data-infrastructure|Data and Infrastructure Skills]] — kind: skill; tags: skill, data, infrastructure, cloud; PostgreSQL and vector retrieval with pgvector.
+- [[skills/llm-agent-workflows|LLM Agent Workflows]] — kind: skill; tags: skill, llm, agents, langgraph; Engineered LangGraph workflows with structured tool execution and reusable agent skills.
+- [[skills/llm-observability|LLM Evaluation and Observability]] — kind: skill; tags: skill, llm, observability, evaluation; The CV describes experience designing systems that capture and analyze model and agent behavior for debugging, evaluation, governance, reproducibility, and model-routing decisions.
+- [[skills/observability-and-telemetry|Observability and Telemetry]] — kind: skill; tags: skill, observability, infrastructure; OpenTelemetry and distributed tracing for AI agent workflows.
+- [[skills/production-ai-engineering|Production AI Engineering]] — kind: skill; tags: skill, python, backend, infrastructure, ai; Othón González’s production engineering profile combines generative AI, backend development, data systems, and containerized operations.
+- [[skills/technical-skills|Technical Skills]] — kind: skill; tags: skill, ai, engineering; AI/ML: LLMs, Agentic AI workflows, tool calling, agent evaluation, RAG, computer vision, PyTorch, TensorFlow, and AI-assisted testing.
+- [[sources/cv-ogc-ai|CV — Othón González]] — kind: source; tags: source, cv; **Source path:** `wiki/raw/cv/CV-OGC-AI.tex`
+- [[sources/cv-ogc-ats|Othón González CV]] — kind: source; tags: source, cv; Source path: `wiki/raw/cv/CV-OGC-ATS.tex`
+- [[syntheses/othon-gonzalez-profile|Othón González Professional Profile]] — kind: synthesis; tags: cv, profile, ai; Senior AI Engineer with experience spanning [[Agentic AI Platforms]], [[ADAS Perception]], [[Computer Vision Research]], and [[Aerospace Systems]].

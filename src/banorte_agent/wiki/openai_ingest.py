@@ -12,8 +12,11 @@ ALLOWED_PAGE_ROOTS = {
     "sources",
     "entities",
     "education",
+    "credentials",
     "concepts",
+    "experience",
     "projects",
+    "publications",
     "skills",
     "questions",
     "syntheses",
@@ -69,7 +72,7 @@ Rules:
 - Write in English because backend wiki material is internal implementation context.
 - Use concise, source-grounded claims only.
 - Include at least one source page under sources/.
-- Create useful pages under projects/, concepts/, entities/, education/, skills/, questions/, or syntheses/ when supported.
+- Create useful pages under projects/, concepts/, entities/, education/, credentials/, experience/, publications/, skills/, questions/, or syntheses/ when supported.
 - Use Obsidian links between pages.
 - Put page Markdown in body_lines, one Markdown line per array item. Do not use a long escaped body string.
 - Do not include raw PDF or Markdown full text. LaTeX source can be summarized more richly.
