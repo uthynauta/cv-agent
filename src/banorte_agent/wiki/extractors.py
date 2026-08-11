@@ -30,7 +30,8 @@ def extract_source(path: Path) -> ExtractedSource:
 
 
 def _clean_latex(text: str) -> str:
-    text = re.sub(r"%.*", "", text)
+    text = re.sub(r"(?<!\\)%.*", "", text)
+    text = text.replace(r"\%", "%")
     text = re.sub(r"\\(section|subsection|subsubsection|textbf|emph)\{([^}]*)\}", r"\2\n", text)
     text = re.sub(r"\\[a-zA-Z]+(\[[^]]*\])?(\{[^}]*\})?", " ", text)
     text = text.replace("{", " ").replace("}", " ")

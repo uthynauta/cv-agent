@@ -2,6 +2,9 @@
 
 ## Sources
 
+- [[sources/cv-ogc-ai]]
+- [[sources/cv-ogc-ats]]
+
 ## Entities
 
 ## Concepts
