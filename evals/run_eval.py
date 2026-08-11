@@ -1,5 +1,6 @@
 from pathlib import Path
 import argparse
+import os
 import sys
 
 import httpx
@@ -13,16 +14,19 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default="http://localhost:8000")
     parser.add_argument("--output", default="docs/sample-transcript.md")
+    parser.add_argument("--api-key", default=os.environ.get("AGENT_API_KEY"))
     args = parser.parse_args()
 
     questions = yaml.safe_load(Path("evals/questions.yml").read_text(encoding="utf-8"))["questions"]
     transcript: list[str] = ["# Sample Transcript", ""]
     failures: list[str] = []
+    headers = {"Authorization": f"Bearer {args.api_key}"} if args.api_key else {}
     with httpx.Client(timeout=60) as client:
         for item in questions:
             response = client.post(
                 f"{args.base_url.rstrip('/')}/v1/responses",
                 json={"model": "banorte-cv-agent", "input": item["text"]},
+                headers=headers,
             )
             if response.status_code != 200:
                 failures.append(f"{item['id']}: status {response.status_code}")

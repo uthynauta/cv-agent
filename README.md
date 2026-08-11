@@ -30,4 +30,4 @@ See [docs/deployment.md](docs/deployment.md).
 uv run python evals/run_eval.py --base-url http://localhost:8000
 ```
 
-The eval runner checks Spanish output, visible citations, and missing-information behavior.
+The eval runner checks Spanish output, visible citations, and missing-information behavior. If `AGENT_API_KEY` is configured, the runner reads it from the environment and sends it as a bearer token. An explicit `--api-key` value overrides the environment value.
