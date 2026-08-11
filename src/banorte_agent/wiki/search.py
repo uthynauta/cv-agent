@@ -14,6 +14,16 @@ SPANISH_STOPWORDS = {
     "hizo", "la", "las", "lo", "los", "mas", "para", "por", "que", "quien", "se",
     "sin", "sobre", "su", "sus", "un", "una", "y",
 }
+QUERY_SYNONYMS = {
+    "agente": ["agent", "agentic", "agents"],
+    "agent": ["agentic", "agents"],
+    "experiencia": ["experience", "experienced"],
+    "ia": ["ai"],
+    "perfil": ["profile", "summary"],
+    "profesional": ["professional"],
+    "resumen": ["summary"],
+}
+SHORT_SIGNAL_TERMS = {"ia", "ai"}
 
 
 @dataclass(frozen=True)
@@ -58,7 +68,15 @@ class WikiSearch:
 
 
 def _terms(query: str) -> list[str]:
-    return [token for token in _tokens(query) if len(token) > 2 and token not in SPANISH_STOPWORDS]
+    terms: list[str] = []
+    for token in _tokens(query):
+        if token in SPANISH_STOPWORDS:
+            continue
+        if len(token) <= 2 and token not in SHORT_SIGNAL_TERMS:
+            continue
+        terms.append(token)
+        terms.extend(QUERY_SYNONYMS.get(token, []))
+    return list(dict.fromkeys(terms))
 
 
 def _score(text: str, terms: list[str]) -> float:

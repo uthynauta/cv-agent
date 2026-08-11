@@ -59,3 +59,16 @@ def test_real_cv_query_prefers_continental_radar_evidence():
     assert hits
     assert "continental" in hits[0].excerpt.lower()
     assert "radar" in hits[0].excerpt.lower()
+
+
+def test_real_cv_spanish_agent_query_retrieves_ai_agent_evidence():
+    wiki_root = Path(__file__).resolve().parents[1] / "wiki"
+
+    hits = WikiSearch(WikiRepository(wiki_root)).search(
+        "¿Qué experiencia tiene Othon con agentes de IA?"
+    )
+
+    assert hits
+    combined = " ".join(hit.excerpt.lower() for hit in hits[:2])
+    assert "agent" in combined
+    assert "llm" in combined or "ai" in combined

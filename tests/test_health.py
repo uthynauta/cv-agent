@@ -15,7 +15,7 @@ def test_healthz_returns_alive():
 
 def test_readyz_reports_missing_openai_key(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    client = TestClient(create_app())
+    client = TestClient(create_app(settings=Settings(_env_file=None)))
     response = client.get("/readyz")
     assert response.status_code == 503
     assert response.json()["status"] == "not_ready"
@@ -26,7 +26,7 @@ def test_readyz_uses_injected_settings(tmp_path):
     (tmp_path / "index.md").write_text("# Wiki", encoding="utf-8")
     (tmp_path / "sources").mkdir()
     (tmp_path / "sources" / "cv.md").write_text("# CV\n\nUsable content", encoding="utf-8")
-    settings = Settings(openai_api_key="injected-key", wiki_dir=str(tmp_path))
+    settings = Settings(_env_file=None, openai_api_key="injected-key", wiki_dir=str(tmp_path))
 
     response = TestClient(create_app(settings=settings)).get("/readyz")
 
@@ -36,7 +36,7 @@ def test_readyz_uses_injected_settings(tmp_path):
 
 def test_readyz_requires_usable_generated_pages(tmp_path):
     (tmp_path / "index.md").write_text("# Wiki", encoding="utf-8")
-    settings = Settings(openai_api_key="injected-key", wiki_dir=str(tmp_path))
+    settings = Settings(_env_file=None, openai_api_key="injected-key", wiki_dir=str(tmp_path))
 
     response = TestClient(create_app(settings=settings)).get("/readyz")
 
@@ -48,7 +48,7 @@ def test_readyz_requires_readable_index_file(tmp_path):
     (tmp_path / "index.md").mkdir()
     (tmp_path / "sources").mkdir()
     (tmp_path / "sources" / "cv.md").write_text("# CV\n\nUsable content", encoding="utf-8")
-    settings = Settings(openai_api_key="injected-key", wiki_dir=str(tmp_path))
+    settings = Settings(_env_file=None, openai_api_key="injected-key", wiki_dir=str(tmp_path))
 
     response = TestClient(create_app(settings=settings)).get("/readyz")
 
