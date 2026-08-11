@@ -14,3 +14,12 @@ uv run uvicorn banorte_agent.main:app --reload
 ```
 
 Runtime configuration is read from environment variables. Start from `.env.example` and keep real `.env` files out of Git.
+
+## Docker
+
+```bash
+docker compose up -d --build
+curl http://localhost:8000/healthz
+```
+
+See [docs/deployment.md](docs/deployment.md).
