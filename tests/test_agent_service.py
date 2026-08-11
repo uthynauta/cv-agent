@@ -234,6 +234,25 @@ def test_page_context_rerank_fallback_includes_later_wiki_pages(tmp_path: Path):
     assert any("taught undergraduate" in excerpt for excerpt in fake_reranker.seen_excerpts)
 
 
+def test_agent_rejects_unknown_third_party_subject_before_generation(tmp_path: Path):
+    repo = WikiRepository(tmp_path)
+    repo.write_page(
+        "experience/teaching.md",
+        "Teaching Experience",
+        {"kind": "experience"},
+        "Othon developed and taught undergraduate and graduate courses as docente.",
+    )
+    fake_client = FakeTextClient("Sí. Juanita trabajó como docente.\nFuentes: [[Teaching Experience]]")
+    service = AgentService(Settings(openai_api_key="test-key"), WikiSearch(repo), fake_client)
+
+    answer = service.answer("¿Juanita ha trabajado como docente?")
+
+    assert "No hay información respaldada sobre Juanita" in answer
+    assert "Sí. Juanita" not in answer
+    assert "Fuentes: [[Teaching Experience]]" in answer
+    assert fake_client.input_text == ""
+
+
 def test_agent_page_context_includes_full_selected_page(tmp_path: Path):
     repo = WikiRepository(tmp_path)
     repo.write_page(
