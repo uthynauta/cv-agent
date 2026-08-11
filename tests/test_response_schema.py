@@ -30,6 +30,36 @@ def test_responses_endpoint_returns_canonical_model_name():
     assert response.json()["model"] == "banorte-cv-agent"
 
 
+def test_responses_endpoint_rejects_overlong_model():
+    app = create_app(
+        settings=__import__("banorte_agent.config", fromlist=["Settings"]).Settings(
+            openai_api_key="test-key"
+        ),
+        agent_answerer=lambda text, instructions=None: "Respuesta",
+    )
+
+    response = TestClient(app).post(
+        "/v1/responses", json={"model": "x" * 129, "input": "hola"}
+    )
+
+    assert response.status_code == 422
+
+
+def test_responses_endpoint_rejects_oversized_request_body():
+    app = create_app(
+        settings=__import__("banorte_agent.config", fromlist=["Settings"]).Settings(
+            openai_api_key="test-key"
+        ),
+        agent_answerer=lambda text, instructions=None: "Respuesta",
+    )
+
+    response = TestClient(app).post(
+        "/v1/responses", json={"input": "hola", "padding": "x" * 17_000}
+    )
+
+    assert response.status_code == 413
+
+
 def test_responses_endpoint_limits_public_input_size():
     app = create_app(
         settings=__import__("banorte_agent.config", fromlist=["Settings"]).Settings(

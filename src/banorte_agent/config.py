@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     agent_api_key: str | None = Field(default=None, alias="AGENT_API_KEY")
     admin_api_key: str | None = Field(default=None, alias="ADMIN_API_KEY")
     agent_model_name: str = Field(default="banorte-cv-agent", alias="AGENT_MODEL_NAME")
+    public_request_body_limit_bytes: int = Field(
+        default=16 * 1024, gt=0, alias="PUBLIC_REQUEST_BODY_LIMIT_BYTES"
+    )
     wiki_dir: str = Field(default="wiki", alias="WIKI_DIR")
     otel_enabled: bool = Field(default=False, alias="OTEL_ENABLED")
     otel_service_name: str = Field(default="banorte-cv-agent", alias="OTEL_SERVICE_NAME")

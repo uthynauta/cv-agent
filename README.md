@@ -52,7 +52,7 @@ curl -sS http://localhost:8000/v1/responses \
   -d '{"input":"¿Qué experiencia tiene Othon con agentes de IA?","instructions":"Responde brevemente."}'
 ```
 
-`input` is limited to 4,000 characters and `instructions` to 1,000. `instructions` are treated as untrusted preferences and cannot override grounding, Spanish, or citation policy. Responses always identify the canonical configured model (`AGENT_MODEL_NAME`, default `banorte-cv-agent`) rather than echoing a client model string.
+`/v1/responses` rejects HTTP request bodies larger than 16 KiB by default with `413`; configure the ceiling with `PUBLIC_REQUEST_BODY_LIMIT_BYTES`. `input` is limited to 4,000 characters, `instructions` to 1,000, and the optional client `model` to 128 characters; field violations return `422`. `instructions` are treated as untrusted preferences and cannot override grounding, Spanish, or citation policy. Responses always identify the canonical configured model (`AGENT_MODEL_NAME`, default `banorte-cv-agent`) rather than echoing a client model string.
 
 ## Ingestion
 
