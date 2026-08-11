@@ -6,7 +6,7 @@
 
 **Architecture:** One Python FastAPI service exposes `/v1/responses`, operational endpoints, and a protected ingest endpoint. The agent searches committed Markdown wiki pages, calls OpenAI with English internal prompts, and returns Spanish cited answers. A local CLI ingests `.tex`, `.pdf`, and `.md` files from `wiki/raw/` into generated Obsidian-style Markdown pages.
 
-**Tech Stack:** Python 3.12, FastAPI, Pydantic Settings, OpenAI Python SDK, PyPDF, PyYAML, prometheus-client, pytest, httpx, uv, Docker, Docker Compose.
+**Tech Stack:** Python 3.12, FastAPI, Pydantic Settings, OpenAI Python SDK, PyPDF, PyYAML, prometheus-client, OpenTelemetry OTLP/gRPC, pytest, httpx, uv, Docker, Docker Compose.
 
 ## Global Constraints
 
@@ -27,6 +27,9 @@
 - No Kubernetes for MVP.
 - Scanned PDFs are marked with `needs_ocr: true` when text extraction is too short.
 - Logs must not include API keys or full secret-bearing headers.
+- Optional tracing uses OpenTelemetry and is disabled by default with `OTEL_ENABLED=false`.
+- OTLP/gRPC tracing must be compatible with Grafana Tempo or an OpenTelemetry Collector.
+- Traces must not include API keys, bearer tokens, full prompts, raw documents, or full retrieved context.
 
 ---
 
@@ -111,6 +114,7 @@ Responsibility summary:
 - `config.py`: environment parsing and settings defaults.
 - `logging.py`: JSON logging setup and request ID helpers.
 - `metrics.py`: Prometheus counters and histograms.
+- `tracing.py`: optional OpenTelemetry setup and safe span helpers.
 - `api/*`: HTTP routing, auth, request/response models.
 - `agent/*`: prompt assembly, OpenAI client adapter, response generation.
 - `wiki/*`: paths, Markdown page model, raw text extraction, ingestion, search.
@@ -1475,19 +1479,31 @@ git commit -m "feat: add Open Responses API"
 
 ---
 
-### Task 7: Observability And Metrics
+### Task 7: Observability, Metrics, And Optional Tracing
 
 **Files:**
 - Create: `src/banorte_agent/logging.py`
 - Create: `src/banorte_agent/metrics.py`
+- Create: `src/banorte_agent/tracing.py`
 - Modify: `src/banorte_agent/main.py`
 - Modify: `src/banorte_agent/api/health.py`
+- Modify: `src/banorte_agent/agent/service.py`
+- Modify: `src/banorte_agent/agent/openai_client.py`
+- Modify: `src/banorte_agent/wiki/search.py`
+- Modify: `src/banorte_agent/wiki/ingest.py`
 - Create: `tests/test_metrics.py`
+- Create: `tests/test_tracing.py`
+- Modify: `pyproject.toml`
+- Modify: `.env.example`
 
 **Interfaces:**
 - Produces: `GET /metrics`
 - Produces: request log middleware with `x-request-id`
 - Produces: Prometheus metrics text containing `banorte_http_requests_total`
+- Produces: `configure_tracing(app: FastAPI, settings: Settings) -> None`
+- Produces: optional OTLP/gRPC tracing when `OTEL_ENABLED=true`
+- Produces: no-op tracing setup when `OTEL_ENABLED=false`
+- Produces: safe spans for agent answer, OpenAI call, wiki search, and ingestion
 
 - [ ] **Step 1: Write metrics test**
 
@@ -1517,6 +1533,33 @@ def test_request_id_header_is_returned(monkeypatch):
     assert response.headers["x-request-id"] == "req-test"
 ```
 
+Create `tests/test_tracing.py`:
+
+```python
+from fastapi import FastAPI
+
+from banorte_agent.config import Settings
+from banorte_agent.tracing import configure_tracing, tracing_enabled
+
+
+def test_tracing_disabled_by_default():
+    settings = Settings(openai_api_key="test-key")
+    assert tracing_enabled(settings) is False
+
+
+def test_configure_tracing_noops_when_disabled():
+    app = FastAPI()
+    settings = Settings(openai_api_key="test-key", otel_enabled=False)
+    configure_tracing(app, settings)
+    assert app.title == "FastAPI"
+
+
+def test_safe_span_attributes_exclude_text_payloads():
+    from banorte_agent.tracing import safe_count_attribute
+
+    assert safe_count_attribute("query_length", "secret prompt text") == ("query_length", 18)
+```
+
 - [ ] **Step 2: Run test to verify failure**
 
 Run:
@@ -1525,7 +1568,7 @@ Run:
 uv run --extra dev pytest tests/test_metrics.py -q
 ```
 
-Expected: FAIL because `/metrics` and request ID middleware do not exist.
+Expected: FAIL because `/metrics`, request ID middleware, and tracing module do not exist.
 
 - [ ] **Step 3: Implement metrics**
 
@@ -1550,6 +1593,46 @@ INGEST_EVENTS = Counter("banorte_ingest_events_total", "Ingest events", ["status
 
 def render_metrics() -> bytes:
     return generate_latest()
+```
+
+Create `src/banorte_agent/tracing.py`:
+
+```python
+from fastapi import FastAPI
+from opentelemetry import trace
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+from banorte_agent.config import Settings
+
+
+def tracing_enabled(settings: Settings) -> bool:
+    return settings.otel_enabled
+
+
+def configure_tracing(app: FastAPI, settings: Settings) -> None:
+    if not tracing_enabled(settings):
+        return
+    resource = Resource.create({"service.name": settings.otel_service_name})
+    provider = TracerProvider(resource=resource)
+    exporter = OTLPSpanExporter(
+        endpoint=settings.otel_exporter_otlp_endpoint,
+        insecure=settings.otel_exporter_otlp_insecure,
+    )
+    provider.add_span_processor(BatchSpanProcessor(exporter))
+    trace.set_tracer_provider(provider)
+    FastAPIInstrumentor.instrument_app(app, tracer_provider=provider)
+
+
+def get_tracer():
+    return trace.get_tracer("banorte_agent")
+
+
+def safe_count_attribute(name: str, value: str) -> tuple[str, int]:
+    return name, len(value)
 ```
 
 Create `src/banorte_agent/logging.py`:
@@ -1592,6 +1675,35 @@ async def request_observability_middleware(request: Request, call_next):
         )
     )
     return response
+```
+
+Modify `src/banorte_agent/config.py` to add:
+
+```python
+    otel_enabled: bool = Field(default=False, alias="OTEL_ENABLED")
+    otel_service_name: str = Field(default="banorte-cv-agent", alias="OTEL_SERVICE_NAME")
+    otel_exporter_otlp_endpoint: str = Field(default="http://tempo:4317", alias="OTEL_EXPORTER_OTLP_ENDPOINT")
+    otel_exporter_otlp_insecure: bool = Field(default=True, alias="OTEL_EXPORTER_OTLP_INSECURE")
+    otel_resource_attributes: str | None = Field(default=None, alias="OTEL_RESOURCE_ATTRIBUTES")
+```
+
+Modify `pyproject.toml` dependencies to include:
+
+```toml
+  "opentelemetry-api>=1.36.0",
+  "opentelemetry-sdk>=1.36.0",
+  "opentelemetry-exporter-otlp-proto-grpc>=1.36.0",
+  "opentelemetry-instrumentation-fastapi>=0.57b0",
+```
+
+Modify `.env.example` to include:
+
+```dotenv
+OTEL_ENABLED=false
+OTEL_SERVICE_NAME=banorte-cv-agent
+OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4317
+OTEL_EXPORTER_OTLP_INSECURE=true
+OTEL_RESOURCE_ATTRIBUTES=
 ```
 
 - [ ] **Step 4: Wire middleware and metrics endpoint**
@@ -1639,19 +1751,28 @@ Modify `src/banorte_agent/main.py` to call:
 
 ```python
 from banorte_agent.logging import configure_logging, request_observability_middleware
+from banorte_agent.tracing import configure_tracing
 
 configure_logging()
+configure_tracing(app, settings)
 app.middleware("http")(request_observability_middleware)
 ```
 
 inside `create_app()` before routers are included.
+
+Add safe manual spans:
+
+- In `AgentService.answer`, create span `agent.answer`; set `grounding_mode`, `search.hit_count`, and `input.length`. Do not put full user input, prompt, context, or answer in attributes.
+- In `WikiSearch.search`, create span `wiki.search`; set `query.length`, `result.count`, and `result.titles` with only the top titles joined and capped to 200 characters.
+- In `OpenAITextClient.create_response`, create span `openai.responses.create`; set `openai.model` and `input.length`; record exception and status on errors; do not put prompt/input text in attributes.
+- In `IngestionService.ingest_file`, create span `wiki.ingest_file`; set `source.extension`, `source.needs_ocr`, and `source.page`; do not put raw extracted text in attributes.
 
 - [ ] **Step 5: Run tests**
 
 Run:
 
 ```bash
-uv run --extra dev pytest tests/test_metrics.py -q
+uv run --extra dev pytest tests/test_metrics.py tests/test_tracing.py -q
 ```
 
 Expected: PASS.
@@ -1659,7 +1780,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/banorte_agent/logging.py src/banorte_agent/metrics.py src/banorte_agent/main.py src/banorte_agent/api/health.py tests/test_metrics.py
+git add pyproject.toml .env.example src/banorte_agent/logging.py src/banorte_agent/metrics.py src/banorte_agent/tracing.py src/banorte_agent/main.py src/banorte_agent/api/health.py tests/test_metrics.py tests/test_tracing.py
 git commit -m "feat: add service observability"
 ```
 

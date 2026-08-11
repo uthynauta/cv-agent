@@ -41,6 +41,7 @@ Main components:
 - `ingestion`: local CLI and protected HTTP endpoint that convert raw `.tex`, `.pdf`, and `.md` files into wiki pages.
 - `search`: simple lexical search over committed Markdown wiki pages using frontmatter, headings, and body text.
 - `observability`: structured logs, request IDs, latency/error metrics, and health/readiness checks.
+- `tracing`: optional OpenTelemetry spans exported over OTLP/gRPC for Grafana Tempo or compatible collectors.
 - `evals`: repeatable checks for answer language, citations, grounding behavior, and response shape.
 
 High-level data flow:
@@ -158,6 +159,11 @@ Environment variables:
 - `GROUNDING_MODE`: `strict` or `inference`; default `inference`.
 - `AGENT_API_KEY`: optional public endpoint bearer token.
 - `ADMIN_API_KEY`: optional admin endpoint bearer token.
+- `OTEL_ENABLED`: optional tracing toggle; default `false`.
+- `OTEL_SERVICE_NAME`: OpenTelemetry service name; default `banorte-cv-agent`.
+- `OTEL_EXPORTER_OTLP_ENDPOINT`: OTLP/gRPC endpoint, for example `http://tempo:4317`.
+- `OTEL_EXPORTER_OTLP_INSECURE`: set `true` for local plaintext OTLP.
+- `OTEL_RESOURCE_ATTRIBUTES`: optional OpenTelemetry resource attributes.
 
 The agent prompt includes:
 
@@ -290,6 +296,20 @@ Operational endpoints:
 - `/healthz`: alive if the process is running.
 - `/readyz`: ready if wiki/index is readable and required config is present.
 - `/metrics`: Prometheus text format.
+
+Tracing:
+
+- OpenTelemetry is optional and disabled by default.
+- When `OTEL_ENABLED=true`, the service exports spans through OTLP/gRPC.
+- The default target is compatible with Grafana Tempo, OpenTelemetry Collector, and other OTLP/gRPC backends.
+- Span attributes must be low-cardinality and secret-safe.
+- Do not put full prompts, raw source text, retrieved context, API keys, bearer tokens, or document contents into spans.
+- Required spans:
+  - HTTP request spans from FastAPI instrumentation.
+  - agent response span around retrieval plus OpenAI generation.
+  - wiki search span with query length, result count, and top page titles only.
+  - OpenAI call span with model, success/error, and latency.
+  - ingestion span with source extension, `needs_ocr`, success/error, and generated page count.
 
 ## Deployment
 
