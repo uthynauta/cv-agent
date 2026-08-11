@@ -2,7 +2,7 @@
 
 ## Environment
 
-Copy `.env.example` to `.env` on the server and set:
+Copy `.env.example` to `.env` on the server before the first production run and set:
 
 - `OPENAI_API_KEY`
 - `AGENT_API_KEY` if the public endpoint should require bearer auth
@@ -10,7 +10,7 @@ Copy `.env.example` to `.env` on the server and set:
 - `GROUNDING_MODE=inference`
 - `OPENAI_MODEL=gpt-5.6`
 
-The Compose service reads `.env` directly. To export traces to Grafana Tempo or an OpenTelemetry Collector, set `OTEL_ENABLED=true`, `OTEL_SERVICE_NAME`, and `OTEL_EXPORTER_OTLP_ENDPOINT` to the reachable OTLP/gRPC endpoint. The default endpoint `http://tempo:4317` assumes a Tempo service named `tempo` is available on the Compose network; set `OTEL_EXPORTER_OTLP_INSECURE=true` for plaintext local OTLP and use `OTEL_RESOURCE_ATTRIBUTES` for optional resource metadata.
+The `.env` file is optional for Compose validation and clean-checkout startup; if it is absent, the service uses application defaults. Copy `.env.example` and configure the required keys before serving requests. The Compose service reads `.env` when it exists. To export traces to Grafana Tempo or an OpenTelemetry Collector, set `OTEL_ENABLED=true`, `OTEL_SERVICE_NAME`, and `OTEL_EXPORTER_OTLP_ENDPOINT` to the reachable OTLP/gRPC endpoint. The default endpoint `http://tempo:4317` assumes a Tempo service named `tempo` is available on the Compose network; set `OTEL_EXPORTER_OTLP_INSECURE=true` for plaintext local OTLP and use `OTEL_RESOURCE_ATTRIBUTES` for optional resource metadata.
 
 ## Run
 
