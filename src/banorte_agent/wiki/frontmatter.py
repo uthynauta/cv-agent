@@ -13,4 +13,6 @@ def load_frontmatter(text: str) -> tuple[dict[str, Any], str]:
         return {}, text.strip()
     _, yaml_text, body = text.split("---", 2)
     metadata = yaml.safe_load(yaml_text) or {}
+    if not isinstance(metadata, dict):
+        raise ValueError("frontmatter metadata must be a mapping")
     return metadata, body.strip()

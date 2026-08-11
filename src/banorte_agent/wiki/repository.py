@@ -21,7 +21,12 @@ class WikiRepository:
         return pages
 
     def write_page(self, relative_path: str, title: str, metadata: dict[str, object], body: str) -> Path:
-        path = self.root / relative_path
+        root = self.root.resolve()
+        path = (root / relative_path).resolve()
+        try:
+            path.relative_to(root)
+        except ValueError as exc:
+            raise ValueError(f"page path is outside wiki root: {relative_path}") from exc
         path.parent.mkdir(parents=True, exist_ok=True)
         merged = {"title": title, **metadata}
         path.write_text(dump_frontmatter(merged, body), encoding="utf-8")

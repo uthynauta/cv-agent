@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from banorte_agent.wiki.frontmatter import dump_frontmatter, load_frontmatter
 from banorte_agent.wiki.repository import WikiRepository
 
@@ -26,3 +28,17 @@ def test_repository_writes_and_lists_pages(tmp_path: Path):
     assert pages[0].title == "Othon CV"
     assert pages[0].metadata["kind"] == "source"
     assert "[[Python]]" in pages[0].body
+
+
+@pytest.mark.parametrize("relative_path", ["/outside.md", "../outside.md"])
+def test_repository_rejects_paths_outside_root(tmp_path: Path, relative_path: str):
+    repo = WikiRepository(tmp_path / "wiki")
+
+    with pytest.raises(ValueError, match="outside wiki root"):
+        repo.write_page(relative_path, "Outside", {}, "Should not be written")
+
+
+@pytest.mark.parametrize("frontmatter", ["- item\n", "value\n"])
+def test_load_frontmatter_rejects_non_mapping(frontmatter: str):
+    with pytest.raises(ValueError, match="mapping"):
+        load_frontmatter(f"---\n{frontmatter}---\n\nBody")
