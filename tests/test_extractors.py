@@ -34,6 +34,14 @@ def test_extract_latex_preserves_escaped_percent(tmp_path: Path):
     assert "remove this comment" not in result.text
 
 
+def test_extract_latex_double_backslash_before_percent_starts_comment(tmp_path: Path):
+    path = tmp_path / "cv.tex"
+    path.write_text(r"Line break \\% remove this comment", encoding="utf-8")
+    result = extract_source(path)
+    assert "Line break" in result.text
+    assert "remove this comment" not in result.text
+
+
 @pytest.mark.parametrize(
     ("text", "needs_ocr"),
     [("x" * 119, True), ("x" * 120, False)],

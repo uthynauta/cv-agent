@@ -30,13 +30,32 @@ def extract_source(path: Path) -> ExtractedSource:
 
 
 def _clean_latex(text: str) -> str:
-    text = re.sub(r"(?<!\\)%.*", "", text)
+    text = _strip_latex_comments(text)
     text = text.replace(r"\%", "%")
     text = re.sub(r"\\(section|subsection|subsubsection|textbf|emph)\{([^}]*)\}", r"\2\n", text)
     text = re.sub(r"\\[a-zA-Z]+(\[[^]]*\])?(\{[^}]*\})?", " ", text)
     text = text.replace("{", " ").replace("}", " ")
     text = re.sub(r"\s+", " ", text)
     return text.strip()
+
+
+def _strip_latex_comments(text: str) -> str:
+    lines: list[str] = []
+    for line in text.splitlines(keepends=True):
+        comment_start: int | None = None
+        for index, character in enumerate(line):
+            if character != "%":
+                continue
+            backslashes = 0
+            cursor = index - 1
+            while cursor >= 0 and line[cursor] == "\\":
+                backslashes += 1
+                cursor -= 1
+            if backslashes % 2 == 0:
+                comment_start = index
+                break
+        lines.append(line if comment_start is None else line[:comment_start])
+    return "".join(lines)
 
 
 def _extract_pdf_text(path: Path) -> str:
