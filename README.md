@@ -23,7 +23,13 @@ curl http://localhost:8000/healthz
 - `GET /healthz`, `GET /readyz`, and `GET /metrics` provide observability endpoints.
 - `POST /admin/ingest` ingests supported documents from the local wiki source directory when protected with `ADMIN_API_KEY`.
 
-The `wiki/` directory contains the generated Obsidian-style Markdown knowledge base. Use the project CLI to ingest new source material before serving it.
+Put source files under `wiki/raw/`, then generate or update the knowledge base before serving it:
+
+```bash
+uv run banorte-agent ingest wiki/raw
+```
+
+Generated Markdown pages under `wiki/` are committed. Non-LaTeX raw files under `wiki/raw/` are Git-ignored; LaTeX source files may be committed.
 
 ## Docker Compose
 
