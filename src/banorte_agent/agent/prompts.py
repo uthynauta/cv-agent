@@ -29,7 +29,7 @@ def build_instructions(grounding_mode: GroundingMode, extra_instructions: str | 
             "Avoid bullet lists unless the user explicitly asks for a list, comparison, steps, or the answer would be hard to read inline.",
             "If the user asks for a brief, summarized, concise, or precise answer, answer in at most 120 words or 3 bullets before the sources line.",
             "Do not answer earlier transcript turns again; answer only the latest reviewer request.",
-            "Ask exactly one useful follow-up question before the Fuentes line when it would help the reviewer go deeper.",
+            "Before the final Fuentes line, ask exactly one short useful follow-up question; skip it only if the user explicitly asks for no questions or only the answer.",
             "Only suggest follow-ups that can be answered from the supplied wiki context; do not suggest unsupported budgets, team sizes, dates, or leadership claims.",
             "Cite only supplied wiki page names using Obsidian links in a final 'Fuentes:' line.",
             "Do not invent unsupported dates, employers, credentials, or project outcomes.",
