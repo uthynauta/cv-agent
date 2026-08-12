@@ -64,7 +64,7 @@ For the browser admin dashboard, configure:
 - `ADMIN_UI_SESSION_SECRET`: long random signing secret for browser sessions.
 - `ADMIN_UI_SESSION_MAX_AGE_SECONDS=43200`: optional session lifetime.
 
-Use a different value from `ADMIN_API_KEY` so browser access and curl automation can be rotated independently. The browser dashboard shows status, uploads text-retrievable PDFs, and runs manual GitHub publish from the same Render Web Service.
+Use a different value from `ADMIN_API_KEY` so browser access and curl automation can be rotated independently. The browser dashboard shows status, uploads text-retrievable PDFs, and runs manual GitHub publish from the same Render Web Service. It does not expose or edit Render environment variables; manage all secrets in the Render Dashboard.
 
 ## Run
 
@@ -113,13 +113,15 @@ curl -sS http://localhost:8000/admin/ingest \
   -d '{"path":"wiki/raw/cv"}'
 ```
 
-Upload and immediately ingest a text-retrievable PDF:
+Upload and immediately ingest a text-retrievable PDF from curl:
 
 ```bash
 curl -sS http://localhost:8000/admin/documents \
   -H 'Authorization: Bearer YOUR_ADMIN_API_KEY' \
   -F 'file=@/path/to/text-retrievable.pdf'
 ```
+
+The `@` before the local path is required. The upload endpoint accepts one PDF per request, writes it under `wiki/raw/uploads`, extracts selectable text, and ingests the generated Markdown immediately. It rejects non-PDF uploads, unreadable/encrypted PDFs, oversized files, and image-only scanned PDFs that need OCR. The size limit is `ADMIN_UPLOAD_MAX_BYTES`, default `10485760`.
 
 Check admin-only storage and GitHub publishing status:
 
@@ -140,6 +142,15 @@ With `ADMIN_UI_PASSWORD` and `ADMIN_UI_SESSION_SECRET` configured, the same stat
 ```text
 https://banorte-cv-agent.onrender.com/admin/login
 ```
+
+Browser workflow:
+
+1. Log in with `ADMIN_UI_PASSWORD`.
+2. Confirm the storage and GitHub tiles are healthy.
+3. Upload one text-retrievable PDF.
+4. Wait for the upload result to show the saved file and generated source page.
+5. Click publish when pending wiki changes are shown.
+6. Review and merge the GitHub pull request URL returned by the dashboard.
 
 Stop the local Compose deployment when finished:
 

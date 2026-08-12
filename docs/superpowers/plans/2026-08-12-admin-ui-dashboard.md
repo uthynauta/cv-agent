@@ -1015,6 +1015,26 @@ https://banorte-cv-agent.onrender.com/admin/login
 The dashboard shows storage, ingestion, and GitHub publish status, refreshes automatically, supports PDF upload, and can trigger manual wiki publish. The browser UI uses a signed session cookie and does not expose `ADMIN_API_KEY` or `GITHUB_TOKEN`.
 ```
 
+Add these operational details:
+
+```markdown
+To update the wiki from the browser:
+
+1. Open `/admin/login`.
+2. Upload one text-retrievable PDF in the upload form.
+3. Check the upload result for the saved raw path and generated source page.
+4. Use the publish button when status shows pending wiki changes.
+5. Review and merge the GitHub pull request created by the publish action.
+
+Upload restrictions:
+
+- File type: `.pdf` only.
+- Text: the PDF must have selectable/extractable text.
+- Scans: image-only scanned PDFs are rejected and must be OCR-processed before upload.
+- Size: capped by `ADMIN_UPLOAD_MAX_BYTES`, default `10485760` bytes.
+- Persistence: uploaded PDFs and generated wiki updates survive deploys only when `WIKI_DIR` points at persistent storage.
+```
+
 - [ ] **Step 2: Update deployment docs**
 
 In `docs/deployment.md`, add to the admin/GitHub environment section:
@@ -1028,6 +1048,8 @@ For the browser admin dashboard, configure:
 
 Use a different value from `ADMIN_API_KEY` so browser access and curl automation can be rotated independently.
 ```
+
+Also document that Render environment variables and secrets are managed in Render, not through the dashboard. The browser workflow should say: log in, confirm status tiles, upload one text-retrievable PDF, wait for generated source output, publish pending wiki changes, and review the created GitHub pull request.
 
 - [ ] **Step 3: Verify docs references**
 
