@@ -58,6 +58,14 @@ GitHub publishing uses these Render environment variables:
 
 Manage these values in the Render Dashboard. The admin API reports GitHub status but never returns secret values.
 
+For the browser admin dashboard, configure:
+
+- `ADMIN_UI_PASSWORD`: password entered at `/admin/login`.
+- `ADMIN_UI_SESSION_SECRET`: long random signing secret for browser sessions.
+- `ADMIN_UI_SESSION_MAX_AGE_SECONDS=43200`: optional session lifetime.
+
+Use a different value from `ADMIN_API_KEY` so browser access and curl automation can be rotated independently. The browser dashboard shows status, uploads text-retrievable PDFs, and runs manual GitHub publish from the same Render Web Service.
+
 ## Run
 
 ```bash
@@ -125,6 +133,12 @@ After one or more uploads, publish updated wiki files through a manual GitHub pu
 ```bash
 curl -sS -X POST http://localhost:8000/admin/publish \
   -H 'Authorization: Bearer YOUR_ADMIN_API_KEY'
+```
+
+With `ADMIN_UI_PASSWORD` and `ADMIN_UI_SESSION_SECRET` configured, the same status, upload, and publish actions are also available from:
+
+```text
+https://banorte-cv-agent.onrender.com/admin/login
 ```
 
 Stop the local Compose deployment when finished:
