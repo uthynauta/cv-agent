@@ -70,6 +70,59 @@ def test_responses_endpoint_accepts_open_responses_message_array_input():
     assert seen["text"] == "¿Qué experiencia tiene Othon con agentes de IA?"
 
 
+def test_responses_endpoint_uses_latest_user_message_with_light_transcript_context():
+    seen: dict[str, str | None] = {}
+
+    def answerer(text: str, instructions: str | None = None) -> str:
+        seen["text"] = text
+        return "Respuesta en español. Fuentes: [[Othon CV]]"
+
+    app = create_app(
+        settings=__import__("banorte_agent.config", fromlist=["Settings"]).Settings(
+            openai_api_key="test-key"
+        ),
+        agent_answerer=answerer,
+    )
+
+    response = TestClient(app).post(
+        "/v1/responses",
+        json={
+            "input": [
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "Resume la experiencia en IA."}],
+                },
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": "Respuesta anterior muy larga que no debe reusarse.",
+                        }
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": "Y en temas de IA, que proyectos relevantes lideró?",
+                        }
+                    ],
+                },
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert "Conversation context" in (seen["text"] or "")
+    assert "User: Resume la experiencia en IA." in (seen["text"] or "")
+    assert "Assistant: Respuesta anterior muy larga" in (seen["text"] or "")
+    assert "Latest reviewer request:\nY en temas de IA, que proyectos relevantes lideró?" in (
+        seen["text"] or ""
+    )
+
+
 def test_responses_endpoint_accepts_open_responses_content_array_input():
     seen: dict[str, str | None] = {}
 

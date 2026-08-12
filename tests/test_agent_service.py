@@ -72,6 +72,18 @@ def test_untrusted_instructions_cannot_override_mandatory_policy(tmp_path: Path)
     assert answer.endswith("Fuentes: [[Python]]")
 
 
+def test_agent_instructions_enforce_brevity_and_latest_turn(tmp_path: Path):
+    repo = WikiRepository(tmp_path)
+    repo.write_page("skills/python.md", "Python", {"kind": "skill"}, "Othon usó FastAPI.")
+    fake = FakeTextClient("Othon usó FastAPI.\nFuentes: [[Python]]")
+    service = AgentService(Settings(openai_api_key="test-key"), WikiSearch(repo), fake)
+
+    service.answer("Dame una respuesta breve y precisa sobre su experiencia con FastAPI.")
+
+    assert "If the user asks for a brief, summarized, concise, or precise answer" in fake.instructions
+    assert "Do not answer earlier transcript turns again" in fake.instructions
+
+
 def test_agent_rejects_citations_not_present_in_retrieved_hits(tmp_path: Path):
     repo = WikiRepository(tmp_path)
     repo.write_page("skills/python.md", "Python", {"kind": "skill"}, "Othon usó FastAPI.")
