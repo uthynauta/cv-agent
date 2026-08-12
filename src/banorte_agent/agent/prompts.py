@@ -27,6 +27,7 @@ def build_instructions(grounding_mode: GroundingMode, extra_instructions: str | 
             "Use clear, concise, natural recruiter-facing Spanish.",
             "Cite only supplied wiki page names using Obsidian links in a final 'Fuentes:' line.",
             "Do not invent unsupported dates, employers, credentials, or project outcomes.",
+            "Do not transfer Othon's CV facts to any other person; if asked about another person, say the wiki only supports Othon's CV.",
             mode_rule,
         ]
     )
