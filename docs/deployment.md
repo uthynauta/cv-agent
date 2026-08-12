@@ -16,6 +16,26 @@ Copy `.env.example` to `.env` before serving model requests. Configure these val
 
 The `.env` file is optional for Compose validation and startup. Do not send model requests without a real key. For OpenTelemetry export, set `OTEL_ENABLED=true`, `OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_ENDPOINT`, and optional comma-separated `OTEL_RESOURCE_ATTRIBUTES`. The default OTLP endpoint assumes a `tempo` service is available on the Compose network; this repository does not define that service.
 
+## Render
+
+The current public deployment runs as a Render Web Service:
+
+```text
+https://banorte-cv-agent.onrender.com
+```
+
+Recommended Render settings:
+
+- Runtime: Docker.
+- Branch: `main`.
+- Region: keep the default unless latency testing suggests otherwise.
+- Instance: use a paid instance for the Banorte review window to avoid free-tier sleep.
+- Health check path: `/healthz`.
+- Required environment variables: `OPENAI_API_KEY`, `AGENT_PUBLIC_URL=https://banorte-cv-agent.onrender.com`.
+- Optional environment variables: `AGENT_API_KEY`, `ADMIN_API_KEY`, retrieval and observability settings from `.env.example`.
+
+Do not put secrets in the repository. Configure API keys only through Render environment variables.
+
 ## Run
 
 ```bash
@@ -84,3 +104,17 @@ https://banorte-cv-agent.onrender.com/.well-known/agent-card.json
 ```
 
 If `AGENT_API_KEY` is set, register the same value as the endpoint API key in Banorte.
+
+Recommended Banorte options:
+
+- Conversation mode: `reproducir transcripcion (sin estado)`. The service is stateless and already extracts the latest user message plus bounded context from transcript replay.
+- Avoid `previous_response_id` unless server-side state is later implemented.
+- Capability content: choose inline Base64 when available. Use URL fetching only if the runtime must retrieve a capability file from Parley during execution.
+
+Quick public checks after each deploy:
+
+```bash
+curl -sS https://banorte-cv-agent.onrender.com/healthz
+curl -sS https://banorte-cv-agent.onrender.com/readyz
+curl -sS https://banorte-cv-agent.onrender.com/.well-known/agent-card.json
+```

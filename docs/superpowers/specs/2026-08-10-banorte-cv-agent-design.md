@@ -1,6 +1,15 @@
 # Banorte CV Agent Design
 
 Date: 2026-08-10
+Document Version: 1.1.0
+Last Updated: 2026-08-12
+
+## Revision History
+
+| Version | Date | Notes |
+| --- | --- | --- |
+| 1.0.0 | 2026-08-10 | Initial SDD for the Banorte CV agent MVP. |
+| 1.1.0 | 2026-08-12 | Documents Render deployment, A2A agent card, Open Responses terminal shape, transcript replay handling, concise UX, and grounded follow-up behavior. |
 
 ## Challenge Summary
 
@@ -11,14 +20,17 @@ Deadline: Thursday, 2026-08-13.
 ## Goals
 
 - Build a public CV agent endpoint using Python FastAPI.
-- Provide an OpenAI-like `POST /v1/responses` API.
+- Provide an Open Responses-compatible `POST /v1/responses` API.
+- Provide an A2A-style agent card at `/.well-known/agent-card.json`.
 - Use OpenAI API for generation.
 - Answer reviewers in Spanish.
 - Keep backend code, internal prompts, config, and implementation docs in English.
 - Ground answers in an Obsidian-style local Markdown wiki.
 - Support ingestion of LaTeX, PDF, and Markdown sources into the wiki.
 - Package the service with Docker and Docker Compose for a simple cloud VM/container deployment.
+- Deploy publicly on Render for the Banorte review.
 - Include observability, tests, evals, demo documentation, and a sample transcript.
+- Keep reviewer answers concise and conversational, with grounded follow-up questions when useful.
 
 ## Non-Goals For MVP
 
@@ -35,7 +47,7 @@ The project will build one Python FastAPI service packaged as a Docker image.
 
 Main components:
 
-- `api`: HTTP API with Open Responses-like endpoint and operational endpoints.
+- `api`: HTTP API with Open Responses-compatible endpoint, agent card, and operational endpoints.
 - `agent`: constructs prompts, calls OpenAI, formats Spanish answers, and enforces grounding/citation policy.
 - `wiki`: Obsidian-style Markdown knowledge base under `wiki/`.
 - `ingestion`: local CLI and protected HTTP endpoint that convert raw `.tex`, `.pdf`, and `.md` files into wiki pages.
@@ -53,8 +65,9 @@ High-level data flow:
 5. A reviewer sends a request to `POST /v1/responses`.
 6. The API authenticates the request if `AGENT_API_KEY` is set.
 7. Search retrieves relevant wiki pages.
-8. The agent calls OpenAI with the system prompt, grounding mode, retrieved context, and user input.
-9. The API returns an OpenAI-like response object with `output_text`.
+8. Transcript replay requests are reduced to the latest reviewer request plus bounded context for references and short confirmations.
+9. The agent calls OpenAI with the system prompt, grounding mode, retrieved context, and user input.
+10. The API returns a terminal Open Responses-compatible response object with `status: completed` and `output_text`.
 
 ## API Contract
 
@@ -84,17 +97,20 @@ Supported request body:
 }
 ```
 
-Initial response body:
+Response body:
 
 ```json
 {
   "id": "resp_...",
   "object": "response",
   "created_at": 1786370000,
+  "status": "completed",
   "model": "banorte-cv-agent",
   "output": [
     {
+      "id": "msg_...",
       "type": "message",
+      "status": "completed",
       "role": "assistant",
       "content": [
         {
@@ -113,16 +129,20 @@ Additional endpoints:
 - `GET /healthz`: process liveness.
 - `GET /readyz`: wiki readable and required runtime configuration present.
 - `GET /metrics`: Prometheus-style metrics.
+- `GET /.well-known/agent-card.json`: public agent metadata for A2A-style registration.
 - `POST /admin/ingest`: protected ingestion endpoint for later automation.
 
 `POST /admin/ingest` is disabled when `ADMIN_API_KEY` is empty. When configured, the endpoint requires that bearer token. The local CLI remains the preferred ingestion path.
 
 ## Conversation State
 
-The service is stateless for MVP.
+The service is stateless for MVP and should be registered in Banorte with transcript replay/stateless mode.
 
 - No server-side conversation database.
+- No dependency on `previous_response_id`.
 - Each response uses the latest wiki files plus the current request input.
+- When Banorte sends a transcript list, the request adapter extracts the latest user/developer message and keeps bounded recent context only for resolving references.
+- Short confirmations such as `si por favor`, `claro`, or `adelante` are interpreted against the previous assistant follow-up question and previous assistant answer.
 - Request logs include metadata only and must not contain secrets.
 
 ## Agent Behavior
@@ -135,6 +155,11 @@ Reviewer-facing behavior:
 
 - Answers are in Spanish by default.
 - Answers should be clear, concise, natural, and useful for recruiters or technical reviewers.
+- Broad questions should prefer one short paragraph; names and direct answers come before details.
+- Bullet lists should be avoided unless explicitly requested or needed for readability.
+- Brief/concise requests should stay within 120 words or 3 bullets before sources.
+- When useful, ask exactly one short follow-up question before the final sources line.
+- Follow-up questions must be answerable from the supplied wiki context.
 - If the user asks in English, the agent still answers in Spanish unless the request explicitly asks otherwise.
 - Answers visibly cite wiki/source page names.
 
@@ -171,6 +196,9 @@ The agent prompt includes:
 
 - CV agent role and audience.
 - Spanish output requirement.
+- Concise recruiter-facing style rules.
+- Latest-message-only transcript policy.
+- Grounded follow-up question policy.
 - Grounding mode.
 - Retrieved wiki context.
 - Citation requirement.
@@ -329,8 +357,28 @@ Tracing:
 
 Deployment target:
 
-- Cloud VM or simple container service running Docker Compose.
-- No Kubernetes.
+- Render Web Service using Docker from the public GitHub repository.
+- Local Docker Compose remains available for development and validation.
+- No application Kubernetes runtime is required.
+
+Public deployment:
+
+```text
+https://banorte-cv-agent.onrender.com
+```
+
+Banorte registration URLs:
+
+```text
+Open Responses: https://banorte-cv-agent.onrender.com/v1/responses
+Agent Card: https://banorte-cv-agent.onrender.com/.well-known/agent-card.json
+```
+
+Recommended Banorte settings:
+
+- Use transcript replay/stateless conversation mode.
+- Do not use `previous_response_id` unless server-side state is later added.
+- Prefer inline Base64 capability content when offered, so execution does not depend on fetching Parley.
 
 Repository includes:
 
@@ -370,8 +418,8 @@ Demo package:
 
 ## Risks And Mitigations
 
-- Banorte protocol details may differ from the OpenAI-like shape.
-  - Mitigation: keep the API adapter thin and add aliases or fields after testing in the Banorte platform.
+- Banorte protocol details may differ from the Open Responses-compatible shape.
+  - Mitigation: keep the API adapter thin and add aliases or fields after testing in the Banorte platform. Current implementation returns terminal `status: completed` and tolerates common Open Responses input arrays.
 - Raw PDF extraction may fail on scanned documents.
   - Mitigation: mark `needs_ocr: true` and defer OCR unless needed.
 - Wiki may start sparse until the real CV and documents are added.
@@ -383,4 +431,5 @@ Demo package:
 
 ## Open Decisions
 
-- Final Banorte platform protocol quirks after testing with the challenge guide.
+- Whether to introduce server-side conversation state after the challenge. The current design intentionally stays stateless.
+- Whether to use OpenAI File Search or a vector database after the local wiki approach is accepted.
