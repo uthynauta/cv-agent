@@ -123,7 +123,7 @@ def build_admin_ui_router(settings: Settings) -> APIRouter:
     @router.post("/admin/logout")
     async def post_logout() -> RedirectResponse:
         response = RedirectResponse("/admin/login", status_code=status.HTTP_303_SEE_OTHER)
-        response.headers.append("set-cookie", f"{SESSION_COOKIE}=; HttpOnly; Path=/admin; SameSite=lax")
+        response.delete_cookie(SESSION_COOKIE, path="/admin", samesite="lax")
         return response
 
     @router.get("/admin/ui", response_class=HTMLResponse)

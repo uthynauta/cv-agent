@@ -66,4 +66,6 @@ def test_admin_logout_clears_session(tmp_path):
 
     assert response.status_code == 303
     assert response.headers["location"] == "/admin/login"
-    assert response.cookies.get("banorte_admin_session") == ""
+    set_cookie = response.headers["set-cookie"].lower()
+    assert "banorte_admin_session=" in set_cookie
+    assert "max-age=0" in set_cookie or "expires=" in set_cookie
