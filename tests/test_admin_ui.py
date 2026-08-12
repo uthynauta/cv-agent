@@ -128,6 +128,8 @@ def test_dashboard_renders_status_tiles_and_actions(tmp_path):
     assert response.status_code == 200
     assert 'data-status-grid' in response.text
     assert 'data-upload-form' in response.text
+    assert 'accept=".pdf,.md,.tex,application/pdf,text/markdown,text/x-tex,application/x-tex"' in response.text
+    assert "Document file" in response.text
     assert 'data-publish-button' in response.text
     assert 'Last updated' in response.text
 

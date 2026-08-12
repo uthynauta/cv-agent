@@ -18,7 +18,7 @@ These endpoints are useful from curl, but routine document upload and publish fl
 - Add a browser login flow protected by a separate `ADMIN_UI_PASSWORD`.
 - Show status tiles with green, red, yellow, or neutral state.
 - Auto-refresh status and show the last updated time.
-- Let an admin upload a text-retrievable PDF.
+- Let an admin upload a `.pdf`, `.md`, or `.tex` source document.
 - Let an admin trigger manual GitHub publish.
 - Show success, errors, and pull request URLs clearly.
 - Document how admins update the wiki from browser and curl.
@@ -82,7 +82,7 @@ Behavior:
   - Ingestion mode.
   - Last publish result.
 - Upload form:
-  - PDF file input.
+  - Document file input accepting `.pdf`, `.md`, and `.tex`.
   - Upload button.
   - Result area showing saved path and generated source pages.
 - Publish action:
@@ -124,7 +124,7 @@ Upload:
 
 ```text
 Browser session
-  -> multipart PDF upload
+  -> multipart document upload
   -> server reuses existing document upload service/path
   -> browser displays saved path, generated pages, pending publish state
 ```
@@ -132,8 +132,9 @@ Browser session
 Upload restrictions:
 
 - One file per request.
-- Only `.pdf` uploads are accepted.
+- Only `.pdf`, `.md`, and `.tex` uploads are accepted.
 - PDFs must contain selectable/extractable text.
+- Markdown and LaTeX uploads must be readable UTF-8 text.
 - Image-only scans, unreadable/encrypted PDFs, and low-text PDFs are rejected.
 - Oversized uploads are rejected according to `ADMIN_UPLOAD_MAX_BYTES`.
 - Uploaded files are stored under `wiki/raw/uploads`.
@@ -192,7 +193,7 @@ Browser:
 2. Configure `ADMIN_UI_PASSWORD`, `ADMIN_UI_SESSION_SECRET`, `ADMIN_API_KEY`, `GITHUB_TOKEN`, and persistent `WIKI_DIR` in Render.
 3. Open `/admin/login` and authenticate with `ADMIN_UI_PASSWORD`.
 4. Confirm storage and GitHub status tiles are healthy.
-5. Upload a text-retrievable PDF.
+5. Upload a `.pdf`, `.md`, or `.tex` source document.
 6. Confirm the generated wiki page and pending publish status.
 7. Trigger publish.
 8. Review and merge the GitHub pull request.
@@ -202,7 +203,7 @@ Curl:
 ```bash
 curl -sS https://banorte-cv-agent.onrender.com/admin/documents \
   -H 'Authorization: Bearer YOUR_ADMIN_API_KEY' \
-  -F 'file=@/path/to/text-retrievable.pdf'
+  -F 'file=@/path/to/document.md'
 ```
 
 The `@` is required so curl uploads file bytes instead of sending the path string.
@@ -218,7 +219,7 @@ Focused tests cover:
 - Dashboard requires session.
 - Dashboard renders with status tile containers.
 - UI status JSON requires session and does not expose secrets.
-- UI upload requires session and reuses existing PDF upload behavior.
+- UI upload requires session and reuses existing document upload behavior.
 - UI publish requires session and returns redacted publish results.
 - Logout clears session.
 

@@ -250,8 +250,8 @@ button, input {
         <h2>Upload Document</h2>
         <form data-upload-form>
           <label class="field">
-            <span>PDF file</span>
-            <input type="file" name="file" accept="application/pdf">
+            <span>Document file</span>
+            <input type="file" name="file" accept=".pdf,.md,.tex,application/pdf,text/markdown,text/x-tex,application/x-tex">
           </label>
           <div class="form-actions">
             <button class="button primary" type="submit">Upload</button>

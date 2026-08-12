@@ -141,23 +141,23 @@ curl -sS http://localhost:8000/admin/ingest \
   -d '{"path":"wiki/raw/cv"}'
 ```
 
-For runtime PDF uploads from curl, configure `ADMIN_API_KEY` and use the admin documents endpoint:
+For runtime document uploads from curl, configure `ADMIN_API_KEY` and use the admin documents endpoint:
 
 ```bash
 curl -sS http://localhost:8000/admin/documents \
   -H 'Authorization: Bearer YOUR_ADMIN_API_KEY' \
-  -F 'file=@/path/to/text-retrievable.pdf'
+  -F 'file=@/path/to/document.pdf'
 ```
 
-Use `file=@...`; without the `@`, curl sends the path as text instead of uploading the file. The endpoint accepts one PDF at a time, saves it under `wiki/raw/uploads`, and ingests it immediately into generated wiki pages.
+Use `file=@...`; without the `@`, curl sends the path as text instead of uploading the file. The endpoint accepts one `.pdf`, `.md`, or `.tex` document at a time, saves it under `wiki/raw/uploads`, and ingests it immediately into generated wiki pages. Use `/admin/publish` afterward to publish pending wiki changes through the same manual GitHub pull request flow used for PDF uploads.
 
 Upload restrictions:
 
-- File type: `.pdf` only.
-- Text: the PDF must have selectable/extractable text.
+- File type: `.pdf`, `.md`, or `.tex`.
+- Text: PDFs must have selectable/extractable text; Markdown and LaTeX uploads must be UTF-8 text.
 - Scans: image-only scanned PDFs are rejected and must be OCR-processed before upload.
 - Size: capped by `ADMIN_UPLOAD_MAX_BYTES`, default `10485760` bytes.
-- Persistence: uploaded PDFs and generated wiki updates survive deploys only when `WIKI_DIR` points at persistent storage, for example `/app/data/wiki` on a Render Persistent Disk.
+- Persistence: uploaded documents and generated wiki updates survive deploys only when `WIKI_DIR` points at persistent storage, for example `/app/data/wiki` on a Render Persistent Disk.
 
 Admin status is available without exposing secrets:
 
@@ -194,7 +194,7 @@ Log in with `ADMIN_UI_PASSWORD`. The dashboard shows storage, ingestion, and Git
 To update the wiki from the browser:
 
 1. Open `/admin/login`.
-2. Upload one text-retrievable PDF in the upload form.
+2. Upload one `.pdf`, `.md`, or `.tex` document in the upload form.
 3. Check the upload result for the saved raw path and generated source page.
 4. Use the publish button when status shows pending wiki changes.
 5. Review and merge the GitHub pull request created by the publish action.

@@ -4,6 +4,10 @@ import shutil
 import unicodedata
 
 
+SUPPORTED_UPLOAD_EXTENSIONS = {".pdf", ".md", ".tex"}
+SUPPORTED_UPLOAD_EXTENSIONS_MESSAGE = "only .pdf, .md, and .tex uploads are supported"
+
+
 def upload_directory(wiki_dir: str | Path) -> Path:
     return Path(wiki_dir) / "raw" / "uploads"
 
@@ -26,8 +30,8 @@ def safe_upload_filename(filename: str) -> str:
     if not name or name in {".", ".."}:
         raise ValueError("filename is required")
     suffix = Path(name).suffix.lower()
-    if suffix != ".pdf":
-        raise ValueError("only .pdf uploads are supported")
+    if suffix not in SUPPORTED_UPLOAD_EXTENSIONS:
+        raise ValueError(SUPPORTED_UPLOAD_EXTENSIONS_MESSAGE)
 
     stem = Path(name).stem
     normalized = unicodedata.normalize("NFKD", stem).encode("ascii", "ignore").decode("ascii")
@@ -36,4 +40,4 @@ def safe_upload_filename(filename: str) -> str:
     normalized = re.sub(r"^[A-Za-z]{1,2}-", "", normalized)
     if not normalized:
         raise ValueError("filename must contain letters or numbers")
-    return f"{normalized}.pdf"
+    return f"{normalized}{suffix}"

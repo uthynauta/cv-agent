@@ -9,15 +9,15 @@ The Banorte CV Agent already exposes a protected admin ingestion endpoint:
 - Accepts an existing server-side path under `WIKI_DIR/raw`.
 - Runs the current ingestion pipeline over that file or directory.
 
-The ingestion pipeline supports `.pdf`, `.md`, and `.tex` sources. Markdown and LaTeX sources remain Git-managed. Runtime PDF upload, immediate wiki ingestion, admin status, and manual GitHub PR publishing are implemented as protected admin workflows. A browser dashboard is implemented separately and reuses these same service functions.
+The ingestion pipeline supports `.pdf`, `.md`, and `.tex` sources. Runtime document upload, immediate wiki ingestion, admin status, and manual GitHub PR publishing are implemented as protected admin workflows. A browser dashboard is implemented separately and reuses these same service functions.
 
 Render's default filesystem is ephemeral. Runtime uploads must live on a Render Persistent Disk or an external object store to survive restarts and redeploys. Version 1 uses a Render Persistent Disk because it is simpler and fits the single-instance Banorte review deployment.
 
 ## Goals
 
-- Let an admin upload a text-retrievable PDF with curl or the browser dashboard.
-- Save uploaded PDFs under the wiki raw tree.
-- Ingest uploaded PDFs immediately after upload.
+- Let an admin upload a `.pdf`, `.md`, or `.tex` source document with curl or the browser dashboard.
+- Save uploaded source documents under the wiki raw tree.
+- Ingest uploaded documents immediately after upload.
 - Keep GitHub publishing manual, so multiple uploads can be batched into one pull request.
 - Expose admin-only status for upload storage and GitHub connectivity.
 - Keep public readiness focused on the answer-serving agent, not GitHub admin dependencies.
@@ -27,7 +27,6 @@ Render's default filesystem is ephemeral. Runtime uploads must live on a Render 
 
 - Do not add general environment variable or secret mutation endpoints.
 - Do not make GitHub connectivity affect `/readyz`.
-- Do not support Markdown or LaTeX upload in version 1.
 - Do not use Google Drive as persistent runtime storage.
 
 ## Deployment Model
@@ -60,22 +59,22 @@ All endpoints use the existing `ADMIN_API_KEY` bearer-token dependency.
 
 ### `POST /admin/documents`
 
-Uploads and ingests one PDF.
+Uploads and ingests one source document.
 
 Request:
 
 - `multipart/form-data`
 - Field: `file`
-- Accepted content: `.pdf`
+- Accepted content: `.pdf`, `.md`, or `.tex`
 
 Behavior:
 
 1. Authenticate with `Authorization: Bearer <ADMIN_API_KEY>`.
-2. Validate that the uploaded filename is safe and has a `.pdf` extension.
+2. Validate that the uploaded filename is safe and has a supported extension.
 3. Enforce a configured upload size limit.
-4. Save to `WIKI_DIR/raw/uploads/<safe-unique-name>.pdf`.
-5. Extract PDF text using the existing extractor.
-6. Reject encrypted, unreadable, or image-only PDFs. Use the current `needs_ocr` threshold as the text-retrievability gate.
+4. Save to `WIKI_DIR/raw/uploads/<timestamp>-<safe-name>`.
+5. Extract text using the existing extractor.
+6. Reject encrypted, unreadable, or image-only PDFs. Use the current PDF `needs_ocr` threshold as the text-retrievability gate. Reject unreadable Markdown or LaTeX text files.
 7. Run ingestion immediately with the current `INGESTION_MODE`.
 8. Return saved path, ingest count, generated source pages, and whether wiki changes are pending publication.
 
@@ -85,9 +84,9 @@ Response shape:
 {
   "status": "ok",
   "document": {
-    "filename": "example.pdf",
-    "path": "wiki/raw/uploads/example.pdf",
-    "kind": "pdf"
+    "filename": "example.md",
+    "path": "raw/uploads/20260812-190000-example.md",
+    "kind": "markdown"
   },
   "ingestion": {
     "count": 1,
@@ -160,7 +159,7 @@ Upload:
 ```text
 Admin curl/UI
   -> POST /admin/documents
-  -> validate PDF
+  -> validate supported extension
   -> write WIKI_DIR/raw/uploads
   -> extract text
   -> ingest
@@ -184,10 +183,10 @@ Admin curl/UI
 
 - Missing `ADMIN_API_KEY`: existing `503` disabled behavior.
 - Missing or invalid bearer token: existing `401`.
-- Non-PDF upload: `400`.
+- Unsupported extension: `400`.
 - Unsafe filename: `400`.
 - Oversized upload: `413`.
-- Encrypted/unreadable PDF: `400`.
+- Encrypted/unreadable PDF or invalid text upload: `400`.
 - Image-only or low-text PDF: `422`, with a message that OCR is required.
 - Ingestion failure: `500`, with request ID and no raw document text in logs.
 - GitHub not configured: admin status reports unavailable; publish returns `503`.
@@ -197,7 +196,7 @@ Admin curl/UI
 ## Security
 
 - Reuse the existing admin bearer-token dependency.
-- Never log uploaded PDF contents, extracted text, or secrets.
+- Never log uploaded document contents, extracted text, or secrets.
 - Restrict writes to `WIKI_DIR/raw/uploads`.
 - Normalize filenames and add uniqueness to avoid overwrites.
 - Return relative wiki paths where possible.
@@ -209,7 +208,8 @@ Admin curl/UI
 Focused tests cover:
 
 - Upload requires admin auth.
-- Upload rejects non-PDF files.
+- Upload accepts PDF, Markdown, and LaTeX files.
+- Upload rejects unsupported extensions.
 - Upload rejects unsafe filenames.
 - Upload rejects low-text PDFs.
 - Upload saves under `raw/uploads`.
