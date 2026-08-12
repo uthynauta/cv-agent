@@ -4,9 +4,9 @@
 
 **Goal:** Add protected admin APIs for PDF upload+ingest, admin-only storage/GitHub status, and manual PR publishing of updated wiki files.
 
-**Architecture:** Keep the existing FastAPI admin router and `ADMIN_API_KEY` dependency. Add small service modules for durable wiki storage setup and GitHub publishing so API code stays thin. Use Render Persistent Disk by pointing `WIKI_DIR` at `/app/data/wiki`; seed it from bundled `/app/wiki` only when empty.
+**Architecture:** Keep the existing FastAPI admin router and `ADMIN_API_KEY` dependency. Add small service modules for durable wiki storage setup and GitHub API publishing so API code stays thin. Use Render Persistent Disk by pointing `WIKI_DIR` at `/app/data/wiki`; seed it from bundled `/app/wiki` only when empty.
 
-**Tech Stack:** FastAPI, Pydantic Settings, pypdf, stdlib `subprocess`/`urllib.request`, pytest, FastAPI `TestClient`.
+**Tech Stack:** FastAPI, Pydantic Settings, pypdf, stdlib `urllib.request`, pytest, FastAPI `TestClient`.
 
 ---
 
@@ -17,10 +17,10 @@
 - Modify `src/banorte_agent/api/admin.py`: keep existing ingest endpoint, add upload/status/publish endpoints and reusable admin auth.
 - Modify `src/banorte_agent/main.py`: initialize persistent wiki directories before creating repository/search services.
 - Create `src/banorte_agent/wiki/storage.py`: seed persistent `WIKI_DIR`, ensure upload dir, normalize uploaded filenames.
-- Create `src/banorte_agent/admin/github.py`: inspect git state, check GitHub API connectivity, commit/push/wiki PR publish.
+- Create `src/banorte_agent/admin/github.py`: compare local `WIKI_DIR` files with the GitHub base branch wiki tree, create a tree/commit/ref/PR via GitHub API.
 - Modify `tests/test_admin.py`: cover upload, status, publish API behavior with monkeypatched services.
 - Create `tests/test_wiki_storage.py`: cover seeding and filename/path safety.
-- Create `tests/test_admin_github.py`: cover git/GitHub service command/API behavior with mocks.
+- Create `tests/test_admin_github.py`: cover GitHub API status, local wiki comparison, no-op, and publish behavior with mocks.
 - Modify `.env.example`, `README.md`, and `docs/deployment.md`: document Render disk, upload, status, publish, and GitHub env vars.
 
 ## Task 1: Settings And Multipart Dependency
@@ -601,60 +601,108 @@ git commit -m "feat: upload and ingest admin PDFs"
 Create `tests/test_admin_github.py`:
 
 ```python
-from pathlib import Path
-import subprocess
 import urllib.error
+from pathlib import Path
 
 from banorte_agent.admin.github import GitHubAdminService
 from banorte_agent.config import Settings
 
 
 def test_github_status_reports_unconfigured(tmp_path: Path):
-    service = GitHubAdminService(Settings(_env_file=None, github_token=None), repo_root=tmp_path)
+    wiki = tmp_path / "wiki"
+    wiki.mkdir()
+    service = GitHubAdminService(Settings(_env_file=None, github_token=None, wiki_dir=str(wiki)))
 
     status = service.status()
 
     assert status["configured"] is False
     assert status["connected"] is False
-    assert "token" in status["error"]
+    assert "token" in status["error"].lower()
 
 
-def test_wiki_has_changes_uses_git_status(tmp_path: Path, monkeypatch):
-    calls = []
+def test_wiki_has_changes_compares_local_blobs_to_base_tree(tmp_path: Path, monkeypatch):
+    wiki = tmp_path / "wiki"
+    wiki.mkdir()
+    (wiki / "index.md").write_text("# Local", encoding="utf-8")
 
-    def fake_run(args, **kwargs):
-        calls.append(args)
-        return subprocess.CompletedProcess(args, 0, stdout=" M wiki/index.md\n", stderr="")
-
-    monkeypatch.setattr("banorte_agent.admin.github.subprocess.run", fake_run)
-    service = GitHubAdminService(Settings(_env_file=None, github_token="token"), repo_root=tmp_path)
+    service = GitHubAdminService(Settings(_env_file=None, github_token="token", wiki_dir=str(wiki)))
+    monkeypatch.setattr(
+        service,
+        "_base_wiki_blobs",
+        lambda: {"wiki/index.md": "different-sha"},
+    )
 
     assert service.wiki_has_changes() is True
-    assert calls[0][:4] == ["git", "status", "--porcelain", "--"]
+    assert service.changed_wiki_files() == ["wiki/index.md"]
 
 
 def test_publish_noops_without_wiki_changes(tmp_path: Path, monkeypatch):
+    wiki = tmp_path / "wiki"
+    wiki.mkdir()
+    (wiki / "index.md").write_text("# Same", encoding="utf-8")
+    service = GitHubAdminService(Settings(_env_file=None, github_token="token", wiki_dir=str(wiki)))
     monkeypatch.setattr(
-        "banorte_agent.admin.github.subprocess.run",
-        lambda args, **kwargs: subprocess.CompletedProcess(args, 0, stdout="", stderr=""),
+        service,
+        "_base_wiki_blobs",
+        lambda: {"wiki/index.md": service.git_blob_sha((wiki / "index.md").read_bytes())},
     )
-    service = GitHubAdminService(Settings(_env_file=None, github_token="token"), repo_root=tmp_path)
 
     assert service.publish() == {"status": "noop", "changed_files": []}
 
 
 def test_status_redacts_github_error(tmp_path: Path, monkeypatch):
+    wiki = tmp_path / "wiki"
+    wiki.mkdir()
+
     def fake_urlopen(request, timeout):
         raise urllib.error.HTTPError(str(request.full_url), 401, "Bad credentials token-secret", {}, None)
 
     monkeypatch.setattr("banorte_agent.admin.github.urlopen", fake_urlopen)
-    service = GitHubAdminService(Settings(_env_file=None, github_token="token-secret"), repo_root=tmp_path)
+    service = GitHubAdminService(Settings(_env_file=None, github_token="token-secret", wiki_dir=str(wiki)))
 
     status = service.status()
 
     assert status["configured"] is True
     assert status["connected"] is False
     assert "token-secret" not in status["error"]
+
+
+def test_publish_creates_tree_commit_ref_and_pr(tmp_path: Path, monkeypatch):
+    wiki = tmp_path / "wiki"
+    wiki.mkdir()
+    (wiki / "index.md").write_text("# Updated", encoding="utf-8")
+    service = GitHubAdminService(Settings(_env_file=None, github_token="token", wiki_dir=str(wiki)))
+    calls = []
+
+    def fake_github_json(path: str, data=None, method=None):
+        calls.append((path, data, method))
+        if path == "/git/ref/heads/main":
+            return {"object": {"sha": "base-ref-sha"}}
+        if path == "/git/commits/base-ref-sha":
+            return {"tree": {"sha": "base-tree-sha"}}
+        if path == "/git/trees/base-tree-sha?recursive=1":
+            return {"tree": []}
+        if path == "/git/trees":
+            return {"sha": "new-tree-sha"}
+        if path == "/git/commits":
+            return {"sha": "new-commit-sha"}
+        if path == "/git/refs":
+            return {"ref": "refs/heads/wiki/upload-20260812-000000"}
+        if path == "/pulls":
+            return {"html_url": "https://github.com/uthynauta/cv-agent/pull/1"}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(service, "_github_json", fake_github_json)
+    monkeypatch.setattr("banorte_agent.admin.github._branch_suffix", lambda: "20260812-000000")
+
+    result = service.publish()
+
+    assert result["status"] == "ok"
+    assert result["branch"] == "wiki/upload-20260812-000000"
+    assert result["commit"] == "new-commit-sha"
+    assert result["pull_request_url"] == "https://github.com/uthynauta/cv-agent/pull/1"
+    assert result["changed_files"] == ["wiki/index.md"]
+    assert any(call[0] == "/git/trees" for call in calls)
 ```
 
 - [ ] **Step 2: Run failing GitHub service tests**
@@ -678,10 +726,11 @@ Create `src/banorte_agent/admin/__init__.py`:
 Create `src/banorte_agent/admin/github.py`:
 
 ```python
+from base64 import b64encode
 from datetime import UTC, datetime
+from hashlib import sha1
 import json
 from pathlib import Path
-import subprocess
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -692,32 +741,33 @@ class GitHubAdminService:
     def __init__(self, settings: Settings, repo_root: Path | None = None) -> None:
         self.settings = settings
         self.repo_root = repo_root or Path.cwd()
+        self.wiki_dir = Path(settings.wiki_dir)
 
     def status(self) -> dict[str, object]:
-        branch = self.current_branch()
         if not self.settings.github_token:
             return {
                 "configured": False,
                 "connected": False,
-                "branch": branch,
-                "pending_wiki_changes": self.wiki_has_changes(),
+                "base_branch": self.settings.github_base_branch,
+                "pending_wiki_changes": False,
                 "error": "GITHUB_TOKEN is not configured",
             }
         try:
-            self._github_json(f"https://api.github.com/repos/{self.settings.github_repository}")
+            self._github_json("")
+            pending = self.wiki_has_changes()
         except (HTTPError, URLError, OSError) as exc:
             return {
                 "configured": True,
                 "connected": False,
-                "branch": branch,
-                "pending_wiki_changes": self.wiki_has_changes(),
+                "base_branch": self.settings.github_base_branch,
+                "pending_wiki_changes": False,
                 "error": self._redact(str(exc)),
             }
         return {
             "configured": True,
             "connected": True,
-            "branch": branch,
-            "pending_wiki_changes": self.wiki_has_changes(),
+            "base_branch": self.settings.github_base_branch,
+            "pending_wiki_changes": pending,
             "error": None,
         }
 
@@ -725,17 +775,13 @@ class GitHubAdminService:
         return bool(self.changed_wiki_files())
 
     def changed_wiki_files(self) -> list[str]:
-        result = self._run(["git", "status", "--porcelain", "--", "wiki"])
-        files: list[str] = []
-        for line in result.stdout.splitlines():
-            if len(line) > 3:
-                files.append(line[3:])
-        return files
-
-    def current_branch(self) -> str | None:
-        result = self._run(["git", "branch", "--show-current"], check=False)
-        branch = result.stdout.strip()
-        return branch or None
+        base = self._base_wiki_blobs()
+        changed: list[str] = []
+        for relative_path, data in self._local_wiki_files().items():
+            repo_path = f"wiki/{relative_path}"
+            if base.get(repo_path) != self.git_blob_sha(data):
+                changed.append(repo_path)
+        return sorted(changed)
 
     def publish(self) -> dict[str, object]:
         changed_files = self.changed_wiki_files()
@@ -743,23 +789,27 @@ class GitHubAdminService:
             return {"status": "noop", "changed_files": []}
         if not self.settings.github_token:
             raise RuntimeError("GITHUB_TOKEN is not configured")
-        branch = f"wiki/upload-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}"
-        self._run(["git", "checkout", "-b", branch])
-        self._run(["git", "add", "wiki"])
-        self._run(
-            [
-                "git",
-                "-c",
-                f"user.name={self.settings.github_commit_author_name}",
-                "-c",
-                f"user.email={self.settings.github_commit_author_email or 'admin@example.invalid'}",
-                "commit",
-                "-m",
-                "docs: ingest uploaded wiki documents",
-            ]
+        branch = f"wiki/upload-{_branch_suffix()}"
+        base_ref = self._github_json(f"/git/ref/heads/{self.settings.github_base_branch}")
+        base_sha = str(base_ref["object"]["sha"])
+        base_commit = self._github_json(f"/git/commits/{base_sha}")
+        base_tree_sha = str(base_commit["tree"]["sha"])
+        tree_items = self._tree_items(changed_files)
+        tree = self._github_json(
+            "/git/trees",
+            data={"base_tree": base_tree_sha, "tree": tree_items},
         )
-        commit_sha = self._run(["git", "rev-parse", "HEAD"]).stdout.strip()
-        self._run(["git", "push", "origin", branch])
+        commit = self._github_json(
+            "/git/commits",
+            data={
+                "message": "docs: ingest uploaded wiki documents",
+                "tree": tree["sha"],
+                "parents": [base_sha],
+                "author": self._commit_author(),
+            },
+        )
+        commit_sha = str(commit["sha"])
+        self._github_json("/git/refs", data={"ref": f"refs/heads/{branch}", "sha": commit_sha})
         pr = self._create_pull_request(branch)
         return {
             "status": "ok",
@@ -771,7 +821,7 @@ class GitHubAdminService:
 
     def _create_pull_request(self, branch: str) -> dict[str, object]:
         return self._github_json(
-            f"https://api.github.com/repos/{self.settings.github_repository}/pulls",
+            "/pulls",
             data={
                 "title": "Ingest uploaded wiki documents",
                 "head": branch,
@@ -780,8 +830,60 @@ class GitHubAdminService:
             },
         )
 
-    def _github_json(self, url: str, data: dict[str, object] | None = None) -> dict[str, object]:
+    def _base_wiki_blobs(self) -> dict[str, str]:
+        ref = self._github_json(f"/git/ref/heads/{self.settings.github_base_branch}")
+        commit = self._github_json(f"/git/commits/{ref['object']['sha']}")
+        tree = self._github_json(f"/git/trees/{commit['tree']['sha']}?recursive=1")
+        blobs: dict[str, str] = {}
+        for item in tree.get("tree", []):
+            if item.get("type") == "blob" and str(item.get("path", "")).startswith("wiki/"):
+                blobs[str(item["path"])] = str(item["sha"])
+        return blobs
+
+    def _local_wiki_files(self) -> dict[str, bytes]:
+        files: dict[str, bytes] = {}
+        for path in sorted(self.wiki_dir.rglob("*")):
+            if path.is_file():
+                files[path.relative_to(self.wiki_dir).as_posix()] = path.read_bytes()
+        return files
+
+    def _tree_items(self, changed_files: list[str]) -> list[dict[str, object]]:
+        local = self._local_wiki_files()
+        items: list[dict[str, object]] = []
+        for repo_path in changed_files:
+            relative_path = repo_path.removeprefix("wiki/")
+            data = local[relative_path]
+            items.append(
+                {
+                    "path": repo_path,
+                    "mode": "100644",
+                    "type": "blob",
+                    "content": data.decode("utf-8") if self._is_text_file(repo_path, data) else None,
+                    "encoding": None if self._is_text_file(repo_path, data) else "base64",
+                    "content_base64": b64encode(data).decode("ascii")
+                    if not self._is_text_file(repo_path, data)
+                    else None,
+                }
+            )
+        for item in items:
+            if item.get("encoding") == "base64":
+                item["content"] = item.pop("content_base64")
+            else:
+                item.pop("encoding", None)
+                item.pop("content_base64", None)
+        return items
+
+    def _commit_author(self) -> dict[str, str] | None:
+        if not self.settings.github_commit_author_email:
+            return None
+        return {
+            "name": self.settings.github_commit_author_name,
+            "email": self.settings.github_commit_author_email,
+        }
+
+    def _github_json(self, path: str, data: dict[str, object] | None = None) -> dict[str, object]:
         body = None if data is None else json.dumps(data).encode("utf-8")
+        url = f"https://api.github.com/repos/{self.settings.github_repository}{path}"
         request = Request(
             url,
             data=body,
@@ -796,21 +898,28 @@ class GitHubAdminService:
         with urlopen(request, timeout=5) as response:
             return json.loads(response.read().decode("utf-8"))
 
-    def _run(self, args: list[str], check: bool = True) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            args,
-            cwd=self.repo_root,
-            check=check,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-
     def _redact(self, value: str) -> str:
         token = self.settings.github_token
         if token:
             value = value.replace(token, "[redacted]")
         return value
+
+    def _is_text_file(self, repo_path: str, data: bytes) -> bool:
+        if Path(repo_path).suffix.lower() in {".md", ".tex", ".txt", ".yml", ".yaml"}:
+            return True
+        try:
+            data.decode("utf-8")
+        except UnicodeDecodeError:
+            return False
+        return True
+
+    @staticmethod
+    def git_blob_sha(data: bytes) -> str:
+        return sha1(f"blob {len(data)}\0".encode("utf-8") + data).hexdigest()
+
+
+def _branch_suffix() -> str:
+    return datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
 ```
 
 - [ ] **Step 4: Verify GitHub service tests pass**

@@ -113,7 +113,7 @@ Fields:
 - Ingestion mode.
 - GitHub configured.
 - GitHub connected.
-- Current git branch.
+- Configured GitHub base branch.
 - Whether wiki changes are pending publication.
 - Last GitHub/status error, if any, without secrets.
 
@@ -123,15 +123,17 @@ GitHub connection failures should make this endpoint report `github.connected=fa
 
 Publishes generated wiki changes to GitHub through a pull request.
 
+The deployed Docker image must not depend on local `.git` metadata. Runtime wiki files may live on a Render Persistent Disk at `WIKI_DIR=/app/data/wiki`, outside the image's bundled source tree. Therefore publish uses the GitHub API against the configured repository and base branch.
+
 Behavior:
 
 1. Authenticate with `ADMIN_API_KEY`.
 2. Check configured GitHub token, repository, base branch, and commit author settings.
-3. Detect changed `wiki/` files.
+3. Compare local `WIKI_DIR` files to the GitHub base branch's `wiki/` tree.
 4. If no wiki changes exist, return a no-op result.
 5. Create a unique branch, for example `wiki/upload-YYYYMMDD-HHMMSS`.
-6. Commit the changed wiki files.
-7. Push the branch.
+6. Create one Git tree and commit through the GitHub Git Data API.
+7. Create a GitHub ref for the branch.
 8. Open a pull request against the configured base branch.
 9. Return branch name, commit SHA, PR URL, and changed files.
 
@@ -172,10 +174,9 @@ Publish:
 ```text
 Admin curl/UI
   -> POST /admin/publish
-  -> detect changed wiki files
+  -> compare local WIKI_DIR files with GitHub base wiki tree
   -> create branch
-  -> commit
-  -> push
+  -> create GitHub tree and commit
   -> create PR
   -> return PR details
 ```
@@ -191,7 +192,7 @@ Admin curl/UI
 - Image-only or low-text PDF: `422`, with a message that OCR is required.
 - Ingestion failure: `500`, with request ID and no raw document text in logs.
 - GitHub not configured: admin status reports unavailable; publish returns `503`.
-- GitHub push or PR failure: publish returns `502` or `503` with a redacted error.
+- GitHub compare, commit, ref, or PR failure: publish returns `502` or `503` with a redacted error.
 - No wiki changes: publish returns `200` with `"status": "noop"`.
 
 ## Security
@@ -218,8 +219,7 @@ Add focused tests for:
 - Admin status redacts secrets and reports GitHub configuration/connection.
 - Public `/readyz` does not depend on GitHub.
 - Publish no-ops with no wiki changes.
-- Publish creates branch/commit/PR through mocked GitHub integration when wiki changes exist.
+- Publish creates branch/tree/commit/PR through mocked GitHub API integration when wiki changes exist.
 - Publish reports redacted failures when GitHub is unavailable.
 
 Existing admin ingest tests remain valid.
-
