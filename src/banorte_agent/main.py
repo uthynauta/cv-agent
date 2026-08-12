@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from banorte_agent.agent.openai_client import OpenAITextClient
 from banorte_agent.agent.rerank import LLMReranker
 from banorte_agent.agent.service import AgentService
+from banorte_agent.admin.ui import build_admin_ui_router
 from banorte_agent.api.admin import build_admin_router
 from banorte_agent.api.agent_card import build_agent_card_router
 from banorte_agent.api.health import build_health_router
@@ -36,6 +37,7 @@ def create_app(
     app.middleware("http")(request_observability_middleware)
     app.include_router(build_agent_card_router(settings))
     app.include_router(build_health_router(settings))
+    app.include_router(build_admin_ui_router(settings))
     bundled_wiki_dir = Path(__file__).resolve().parents[2] / "wiki"
     ensure_wiki_storage(settings.wiki_dir, bundled_wiki_dir)
     repository = WikiRepository(Path(settings.wiki_dir))
