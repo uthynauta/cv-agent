@@ -80,7 +80,11 @@ def build_admin_ui_router(settings: Settings) -> APIRouter:
         if not token or "." not in token:
             return False
         payload, signature = token.rsplit(".", 1)
-        if not hmac.compare_digest(signature, sign_payload(payload)):
+        try:
+            signature_bytes = signature.encode("ascii")
+        except UnicodeEncodeError:
+            return False
+        if not hmac.compare_digest(signature_bytes, sign_payload(payload).encode("ascii")):
             return False
         parsed = decode_payload(payload)
         if parsed is None:

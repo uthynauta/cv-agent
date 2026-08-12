@@ -68,6 +68,15 @@ def test_valid_admin_login_sets_session_and_redirects(tmp_path):
     assert response.cookies.get("banorte_admin_session")
 
 
+def test_admin_dashboard_rejects_non_ascii_session_cookie(tmp_path):
+    response = TestClient(
+        create_app(settings=ui_settings(tmp_path), agent_answerer=lambda text, instructions=None: "ok")
+    ).get("/admin/ui", headers={"cookie": b"banorte_admin_session=payload.\xc3\xa1"}, follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/admin/login"
+
+
 def test_admin_logout_clears_session(tmp_path):
     client = TestClient(create_app(settings=ui_settings(tmp_path), agent_answerer=lambda text, instructions=None: "ok"))
     client.post("/admin/login", data={"password": "ui-secret"})
