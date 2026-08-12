@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     agent_api_key: str | None = Field(default=None, alias="AGENT_API_KEY")
     admin_api_key: str | None = Field(default=None, alias="ADMIN_API_KEY")
     agent_model_name: str = Field(default="banorte-cv-agent", alias="AGENT_MODEL_NAME")
+    agent_public_url: str = Field(
+        default="https://banorte-cv-agent.onrender.com",
+        alias="AGENT_PUBLIC_URL",
+    )
     public_request_body_limit_bytes: int = Field(
         default=16 * 1024, gt=0, alias="PUBLIC_REQUEST_BODY_LIMIT_BYTES"
     )

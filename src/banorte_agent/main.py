@@ -7,6 +7,7 @@ from banorte_agent.agent.openai_client import OpenAITextClient
 from banorte_agent.agent.rerank import LLMReranker
 from banorte_agent.agent.service import AgentService
 from banorte_agent.api.admin import build_admin_router
+from banorte_agent.api.agent_card import build_agent_card_router
 from banorte_agent.api.health import build_health_router
 from banorte_agent.api.responses import build_responses_router
 from banorte_agent.api.request_limits import public_request_size_middleware
@@ -32,6 +33,7 @@ def create_app(
         )
     )
     app.middleware("http")(request_observability_middleware)
+    app.include_router(build_agent_card_router(settings))
     app.include_router(build_health_router(settings))
     repository = WikiRepository(Path(settings.wiki_dir))
     if agent_answerer is None:
