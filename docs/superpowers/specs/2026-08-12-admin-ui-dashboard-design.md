@@ -21,6 +21,7 @@ These endpoints are useful from curl, but routine document upload and publish fl
 - Let an admin upload a text-retrievable PDF.
 - Let an admin trigger manual GitHub publish.
 - Show success, errors, and pull request URLs clearly.
+- Document how admins update the wiki from browser and curl.
 
 ## Non-Goals
 
@@ -29,6 +30,7 @@ These endpoints are useful from curl, but routine document upload and publish fl
 - Do not expose or edit secrets through the dashboard.
 - Do not replace the existing bearer-token admin API.
 - Do not add document delete/edit workflows in version 1.
+- Do not accept image-only scanned PDFs without OCR.
 
 ## Architecture
 
@@ -127,6 +129,16 @@ Browser session
   -> browser displays saved path, generated pages, pending publish state
 ```
 
+Upload restrictions:
+
+- One file per request.
+- Only `.pdf` uploads are accepted.
+- PDFs must contain selectable/extractable text.
+- Image-only scans, unreadable/encrypted PDFs, and low-text PDFs are rejected.
+- Oversized uploads are rejected according to `ADMIN_UPLOAD_MAX_BYTES`.
+- Uploaded files are stored under `wiki/raw/uploads`.
+- Runtime uploads persist across deploys only when `WIKI_DIR` points at durable storage, for example `/app/data/wiki` on a Render Persistent Disk.
+
 Publish:
 
 ```text
@@ -135,6 +147,13 @@ Browser session
   -> server reuses GitHub publish service
   -> browser displays PR URL or redacted error
 ```
+
+Publish behavior:
+
+- Publish is manual.
+- The app creates a GitHub branch, commit, and pull request for changed wiki files.
+- The app does not merge its own pull request.
+- The admin reviews and merges the pull request in GitHub.
 
 ## Implementation Boundary
 
@@ -163,6 +182,30 @@ Then both the bearer API routes and UI session routes call the same internal fun
 - Use constant-time password comparison.
 - Keep the dashboard under `/admin/*`.
 - Keep all admin actions unavailable when the relevant env vars are unset.
+- Manage Render environment variables and secrets in Render, not through the admin UI.
+
+## Operator Workflow
+
+Browser:
+
+1. Deploy the branch containing the admin UI.
+2. Configure `ADMIN_UI_PASSWORD`, `ADMIN_UI_SESSION_SECRET`, `ADMIN_API_KEY`, `GITHUB_TOKEN`, and persistent `WIKI_DIR` in Render.
+3. Open `/admin/login` and authenticate with `ADMIN_UI_PASSWORD`.
+4. Confirm storage and GitHub status tiles are healthy.
+5. Upload a text-retrievable PDF.
+6. Confirm the generated wiki page and pending publish status.
+7. Trigger publish.
+8. Review and merge the GitHub pull request.
+
+Curl:
+
+```bash
+curl -sS https://banorte-cv-agent.onrender.com/admin/documents \
+  -H 'Authorization: Bearer YOUR_ADMIN_API_KEY' \
+  -F 'file=@/path/to/text-retrievable.pdf'
+```
+
+The `@` is required so curl uploads file bytes instead of sending the path string.
 
 ## Testing
 
@@ -180,4 +223,3 @@ Add focused tests for:
 - Logout clears session.
 
 Existing admin API tests remain valid.
-
