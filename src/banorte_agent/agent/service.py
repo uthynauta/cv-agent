@@ -51,6 +51,9 @@ class AgentService:
             context = _build_context(hits, self.search, self.settings)
             if not context:
                 context = "No relevant wiki context found."
+            third_party_subject = _unknown_initial_subject(input_text, context)
+            if third_party_subject:
+                return _unknown_subject_fallback(third_party_subject, [hit.title for hit in hits])
             instructions = build_instructions(self.settings.grounding_mode, extra_instructions)
             model_input = (
                 f"<wiki_context>\n{context}\n</wiki_context>\n\n"
@@ -134,6 +137,14 @@ SPANISH_MARKERS = {
     "respaldada", "si", "sistemas", "tambien", "tiene", "trabajo", "uso", "y",
 }
 CITATION_RE = re.compile(r"\[\[([^\[\]]+)\]\]")
+INITIAL_SUBJECT_RE = re.compile(
+    r"^[¿¡\s\"']*([A-ZÁÉÍÓÚÑ][A-Za-zÁÉÍÓÚÜÑáéíóúüñ-]{2,})\b"
+)
+QUESTION_WORDS = {
+    "a", "como", "cuando", "cual", "cuales", "cuanta", "cuantas", "cuanto", "cuantos",
+    "donde", "el", "ha", "la", "por", "que", "quien", "quienes", "tiene",
+}
+CV_OWNER_NAMES = {"othon", "othón", "gonzalez", "gonzález"}
 
 
 def _valid_output(output: str, hit_titles: list[str]) -> bool:
@@ -155,6 +166,31 @@ def _is_sources_line(line: str) -> bool:
     normalized = re.sub(r"^\*{1,2}\s*", "", normalized)
     normalized = re.sub(r"\s*\*{1,2}\s*:", ":", normalized)
     return normalized.startswith("Fuentes:")
+
+
+def _unknown_initial_subject(question: str, context: str) -> str | None:
+    match = INITIAL_SUBJECT_RE.match(question)
+    if not match:
+        return None
+    subject = match.group(1)
+    normalized_subject = _normalize_text(subject)
+    if normalized_subject in QUESTION_WORDS or normalized_subject in CV_OWNER_NAMES:
+        return None
+    if re.search(rf"\b{re.escape(normalized_subject)}\b", _normalize_text(context)):
+        return None
+    return subject
+
+
+def _unknown_subject_fallback(subject: str, hit_titles: list[str]) -> str:
+    message = (
+        f"No hay información respaldada sobre {subject} en la wiki del CV. "
+        "Este agente está construido para responder sobre Othón González; "
+        "no atribuiré hechos del CV de Othón a otra persona."
+    )
+    if not hit_titles:
+        return f"{message}\nFuentes disponibles: ninguna."
+    citations = ", ".join(f"[[{title}]]" for title in hit_titles)
+    return f"{message}\nFuentes: {citations}"
 
 
 def _looks_spanish(output: str) -> bool:

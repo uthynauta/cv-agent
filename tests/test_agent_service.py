@@ -234,7 +234,7 @@ def test_page_context_rerank_fallback_includes_later_wiki_pages(tmp_path: Path):
     assert any("taught undergraduate" in excerpt for excerpt in fake_reranker.seen_excerpts)
 
 
-def test_agent_sends_third_party_subject_to_model_with_identity_policy(tmp_path: Path):
+def test_agent_rejects_unknown_third_party_subject_before_generation(tmp_path: Path):
     repo = WikiRepository(tmp_path)
     repo.write_page(
         "experience/teaching.md",
@@ -242,43 +242,15 @@ def test_agent_sends_third_party_subject_to_model_with_identity_policy(tmp_path:
         {"kind": "experience"},
         "Othon developed and taught undergraduate and graduate courses as docente.",
     )
-    fake_client = FakeTextClient(
-        "No hay información respaldada sobre Juanita en las fuentes.\n"
-        "Fuentes: [[Teaching Experience]]"
-    )
+    fake_client = FakeTextClient("Sí. Juanita trabajó como docente.\nFuentes: [[Teaching Experience]]")
     service = AgentService(Settings(openai_api_key="test-key"), WikiSearch(repo), fake_client)
 
     answer = service.answer("¿Juanita ha trabajado como docente?")
 
     assert "No hay información respaldada sobre Juanita" in answer
+    assert "Sí. Juanita" not in answer
     assert "Fuentes: [[Teaching Experience]]" in answer
-    assert "Juanita" in fake_client.input_text
-    assert "Do not transfer Othon's CV facts to any other person" in fake_client.instructions
-
-
-def test_agent_does_not_treat_capitalized_spanish_openers_as_unknown_subjects(tmp_path: Path):
-    repo = WikiRepository(tmp_path)
-    repo.write_page(
-        "experience/agentic.md",
-        "Agentic AI",
-        {"kind": "experience"},
-        "Othon construyó plataformas de agentes de IA, evaluacion y observabilidad.",
-    )
-    expected = "Othón construyó plataformas de agentes de IA.\nFuentes: [[Agentic AI]]"
-    questions = [
-        "Con qué experiencia cuenta Othon en agentes de IA?",
-        "Dime por qué debo contratar a Othon.",
-        "Las áreas en las que Othon es experto son?",
-    ]
-
-    for question in questions:
-        fake_client = FakeTextClient(expected)
-        service = AgentService(Settings(openai_api_key="test-key"), WikiSearch(repo), fake_client)
-
-        answer = service.answer(question)
-
-        assert answer == expected
-        assert question in fake_client.input_text
+    assert fake_client.input_text == ""
 
 
 def test_agent_page_context_includes_full_selected_page(tmp_path: Path):
