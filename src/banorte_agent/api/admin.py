@@ -1,9 +1,11 @@
 from datetime import UTC, datetime
+import os
 from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile, status
 
+from banorte_agent.admin.github import GitHubAdminService
 from banorte_agent.api.models import IngestRequest
 from banorte_agent.config import Settings
 from banorte_agent.wiki.extractors import extract_source
@@ -12,7 +14,7 @@ from banorte_agent.wiki.storage import safe_upload_filename, upload_directory
 
 
 def wiki_has_changes(settings: Settings) -> bool:
-    return False
+    return GitHubAdminService(settings).wiki_has_changes()
 
 
 async def _read_upload(file: UploadFile, max_bytes: int) -> bytes:
@@ -96,5 +98,31 @@ def build_admin_router(settings: Settings, ingestion: IngestionService) -> APIRo
                 "pending": wiki_has_changes(settings),
             },
         }
+
+    @router.get("/admin/status")
+    def admin_status() -> dict[str, object]:
+        uploads = upload_directory(settings.wiki_dir)
+        uploads.mkdir(parents=True, exist_ok=True)
+        return {
+            "status": "ok",
+            "admin": {"enabled": bool(settings.admin_api_key)},
+            "wiki": {
+                "dir": settings.wiki_dir,
+                "upload_dir": str(uploads),
+                "upload_dir_writable": uploads.exists() and os.access(uploads, os.W_OK),
+            },
+            "ingestion": {"mode": settings.ingestion_mode},
+            "github": GitHubAdminService(settings).status(),
+        }
+
+    @router.post("/admin/publish")
+    def publish_wiki() -> dict[str, object]:
+        try:
+            return GitHubAdminService(settings).publish()
+        except RuntimeError as exc:
+            detail = str(exc)
+            if settings.github_token:
+                detail = detail.replace(settings.github_token, "[redacted]")
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail) from exc
 
     return router

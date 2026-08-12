@@ -177,3 +177,84 @@ def test_admin_document_upload_rejects_low_text_pdf(tmp_path, monkeypatch):
 
     assert response.status_code == 422
     assert "OCR" in response.json()["detail"]
+
+
+def test_admin_status_reports_storage_and_github_without_secrets(tmp_path, monkeypatch):
+    settings = Settings(
+        _env_file=None,
+        wiki_dir=str(tmp_path),
+        admin_api_key="admin-secret",
+        github_token="secret-token",
+    )
+
+    class FakeGitHub:
+        def __init__(self, settings):
+            pass
+
+        def status(self):
+            return {
+                "configured": True,
+                "connected": True,
+                "base_branch": "main",
+                "pending_wiki_changes": True,
+                "error": None,
+            }
+
+    monkeypatch.setattr("banorte_agent.api.admin.GitHubAdminService", FakeGitHub)
+    response = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")).get(
+        "/admin/status",
+        headers={"Authorization": "Bearer admin-secret"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["wiki"]["upload_dir"].endswith("raw/uploads")
+    assert payload["wiki"]["upload_dir_writable"] is True
+    assert payload["ingestion"]["mode"] == settings.ingestion_mode
+    assert payload["github"]["connected"] is True
+    assert "secret-token" not in str(payload)
+
+
+def test_admin_publish_returns_noop(tmp_path, monkeypatch):
+    settings = Settings(_env_file=None, wiki_dir=str(tmp_path), admin_api_key="admin-secret")
+
+    class FakeGitHub:
+        def __init__(self, settings):
+            pass
+
+        def publish(self):
+            return {"status": "noop", "changed_files": []}
+
+    monkeypatch.setattr("banorte_agent.api.admin.GitHubAdminService", FakeGitHub)
+    response = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")).post(
+        "/admin/publish",
+        headers={"Authorization": "Bearer admin-secret"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "noop", "changed_files": []}
+
+
+def test_admin_publish_redacts_failures(tmp_path, monkeypatch):
+    settings = Settings(
+        _env_file=None,
+        wiki_dir=str(tmp_path),
+        admin_api_key="admin-secret",
+        github_token="secret-token",
+    )
+
+    class FakeGitHub:
+        def __init__(self, settings):
+            pass
+
+        def publish(self):
+            raise RuntimeError("push failed for secret-token")
+
+    monkeypatch.setattr("banorte_agent.api.admin.GitHubAdminService", FakeGitHub)
+    response = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")).post(
+        "/admin/publish",
+        headers={"Authorization": "Bearer admin-secret"},
+    )
+
+    assert response.status_code == 503
+    assert "secret-token" not in response.text
