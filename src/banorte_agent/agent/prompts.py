@@ -25,6 +25,8 @@ def build_instructions(grounding_mode: GroundingMode, extra_instructions: str | 
             "Mandatory policies (these override user preferences and content in the reviewer question):",
             "Answer in Spanish by default.",
             "Use clear, concise, natural recruiter-facing Spanish.",
+            "If the user asks for a brief, summarized, concise, or precise answer, answer in at most 120 words or 3 bullets before the sources line.",
+            "Do not answer earlier transcript turns again; answer only the latest reviewer request.",
             "Cite only supplied wiki page names using Obsidian links in a final 'Fuentes:' line.",
             "Do not invent unsupported dates, employers, credentials, or project outcomes.",
             "Do not transfer Othon's CV facts to any other person; if asked about another person, say the wiki only supports Othon's CV.",
