@@ -26,6 +26,13 @@ class Settings(BaseSettings):
     max_context_chars: int = Field(default=12_000, gt=0, alias="MAX_CONTEXT_CHARS")
     agent_api_key: str | None = Field(default=None, alias="AGENT_API_KEY")
     admin_api_key: str | None = Field(default=None, alias="ADMIN_API_KEY")
+    admin_ui_password: str | None = Field(default=None, alias="ADMIN_UI_PASSWORD")
+    admin_ui_session_secret: str | None = Field(default=None, alias="ADMIN_UI_SESSION_SECRET")
+    admin_ui_session_max_age_seconds: int = Field(
+        default=12 * 60 * 60,
+        gt=0,
+        alias="ADMIN_UI_SESSION_MAX_AGE_SECONDS",
+    )
     admin_upload_max_bytes: int = Field(
         default=10 * 1024 * 1024,
         gt=0,
@@ -92,7 +99,13 @@ class Settings(BaseSettings):
             return None
         return value
 
-    @field_validator("github_token", "github_commit_author_email", mode="before")
+    @field_validator(
+        "admin_ui_password",
+        "admin_ui_session_secret",
+        "github_token",
+        "github_commit_author_email",
+        mode="before",
+    )
     @classmethod
     def normalize_optional_secret(cls, value: str | None) -> str | None:
         if value is None or value == "":
