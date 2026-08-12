@@ -98,3 +98,67 @@ def test_admin_logout_clears_session(tmp_path):
     assert "banorte_admin_session=" in set_cookie
     assert "path=/admin" in set_cookie
     assert "max-age=0" in set_cookie or "expires=" in set_cookie
+
+
+def logged_in_client(tmp_path):
+    client = TestClient(create_app(settings=ui_settings(tmp_path), agent_answerer=lambda text, instructions=None: "ok"))
+    response = client.post("/admin/login", data={"password": "ui-secret"})
+    assert response.status_code == 200
+    return client
+
+
+def test_dashboard_requires_session(tmp_path):
+    response = TestClient(
+        create_app(settings=ui_settings(tmp_path), agent_answerer=lambda text, instructions=None: "ok"),
+        follow_redirects=False,
+    ).get("/admin/ui")
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/admin/login"
+
+
+def test_dashboard_renders_status_tiles_and_actions(tmp_path):
+    client = logged_in_client(tmp_path)
+
+    response = client.get("/admin/ui")
+
+    assert response.status_code == 200
+    assert 'data-status-grid' in response.text
+    assert 'data-upload-form' in response.text
+    assert 'data-publish-button' in response.text
+    assert 'Last updated' in response.text
+
+
+def test_ui_status_requires_session(tmp_path):
+    response = TestClient(
+        create_app(settings=ui_settings(tmp_path), agent_answerer=lambda text, instructions=None: "ok")
+    ).get("/admin/ui/status")
+
+    assert response.status_code == 401
+
+
+def test_ui_status_returns_payload_without_secrets(tmp_path, monkeypatch):
+    settings = ui_settings(tmp_path, github_token="secret-token")
+
+    class FakeGitHub:
+        def __init__(self, settings):
+            pass
+
+        def status(self):
+            return {
+                "configured": True,
+                "connected": True,
+                "base_branch": "main",
+                "pending_wiki_changes": True,
+                "error": None,
+            }
+
+    monkeypatch.setattr("banorte_agent.api.admin.GitHubAdminService", FakeGitHub)
+    client = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok"))
+    client.post("/admin/login", data={"password": "ui-secret"})
+
+    response = client.get("/admin/ui/status")
+
+    assert response.status_code == 200
+    assert response.json()["github"]["pending_wiki_changes"] is True
+    assert "secret-token" not in response.text
