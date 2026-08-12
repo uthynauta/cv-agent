@@ -37,10 +37,11 @@ def create_app(
     app.middleware("http")(request_observability_middleware)
     app.include_router(build_agent_card_router(settings))
     app.include_router(build_health_router(settings))
-    app.include_router(build_admin_ui_router(settings))
     bundled_wiki_dir = Path(__file__).resolve().parents[2] / "wiki"
     ensure_wiki_storage(settings.wiki_dir, bundled_wiki_dir)
     repository = WikiRepository(Path(settings.wiki_dir))
+    ingestion = IngestionService(repository, settings)
+    app.include_router(build_admin_ui_router(settings, ingestion))
     if agent_answerer is None:
         def agent_answerer(text: str, instructions: str | None = None) -> str:
             answer_client = OpenAITextClient(settings)
@@ -53,7 +54,7 @@ def create_app(
             agent = AgentService(settings, WikiSearch(repository), answer_client, reranker)
             return agent.answer(text, instructions)
     app.include_router(build_responses_router(settings, agent_answerer))
-    app.include_router(build_admin_router(settings, IngestionService(repository, settings)))
+    app.include_router(build_admin_router(settings, ingestion))
     return app
 
 

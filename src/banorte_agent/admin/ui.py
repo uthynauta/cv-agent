@@ -2,7 +2,6 @@ import base64
 import hashlib
 import hmac
 import json
-from pathlib import Path
 import time
 from typing import Any
 
@@ -13,13 +12,12 @@ from starlette.responses import Response
 from banorte_agent.api.admin import build_admin_status_payload, publish_wiki_payload, upload_document_payload
 from banorte_agent.config import Settings
 from banorte_agent.wiki.ingest import IngestionService
-from banorte_agent.wiki.repository import WikiRepository
 
 
 SESSION_COOKIE = "banorte_admin_session"
 
 
-def build_admin_ui_router(settings: Settings) -> APIRouter:
+def build_admin_ui_router(settings: Settings, ingestion: IngestionService) -> APIRouter:
     router = APIRouter()
 
     def ui_enabled() -> bool:
@@ -446,7 +444,6 @@ setInterval(refreshStatus, 10000);
             return disabled_response()
         if not verify_session_token(request.cookies.get(SESSION_COOKIE)):
             return JSONResponse({"detail": "invalid session"}, status_code=status.HTTP_401_UNAUTHORIZED)
-        ingestion = IngestionService(WikiRepository(Path(settings.wiki_dir)), settings)
         return await upload_document_payload(settings, ingestion, file)
 
     @router.post("/admin/ui/publish")

@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from fastapi import APIRouter
 from fastapi.testclient import TestClient
 
 from banorte_agent.config import Settings
@@ -219,6 +220,38 @@ def test_ui_upload_reuses_document_upload_behavior(tmp_path, monkeypatch):
     assert payload["publish"] == {"pending": True}
 
 
+def test_ui_upload_uses_shared_admin_ingestion(tmp_path, monkeypatch):
+    settings = ui_settings(tmp_path)
+    captured = {}
+
+    def fake_build_admin_router(settings_arg, ingestion):
+        captured["api_ingestion"] = ingestion
+        return APIRouter()
+
+    async def fake_upload_document_payload(settings_arg, ingestion, file):
+        captured["ui_ingestion"] = ingestion
+        return {
+            "status": "ok",
+            "document": {"filename": "Uploaded-PDF.pdf", "path": "raw/uploads/Uploaded-PDF.pdf", "kind": "pdf"},
+            "ingestion": {"count": 1, "sources": ["sources/uploaded.md"]},
+            "publish": {"pending": False},
+        }
+
+    monkeypatch.setattr("banorte_agent.main.build_admin_router", fake_build_admin_router)
+    monkeypatch.setattr("banorte_agent.admin.ui.upload_document_payload", fake_upload_document_payload)
+
+    client = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok"))
+    client.post("/admin/login", data={"password": "ui-secret"})
+
+    response = client.post(
+        "/admin/ui/documents",
+        files={"file": ("Uploaded PDF.pdf", b"%PDF-1.4 text", "application/pdf")},
+    )
+
+    assert response.status_code == 200
+    assert captured["ui_ingestion"] is captured["api_ingestion"]
+
+
 def test_ui_publish_requires_session(tmp_path):
     response = TestClient(
         create_app(settings=ui_settings(tmp_path), agent_answerer=lambda text, instructions=None: "ok")
@@ -237,8 +270,9 @@ def test_ui_publish_returns_redacted_result(tmp_path, monkeypatch):
         def publish(self):
             return {
                 "status": "published",
-                "changed_files": ["wiki/index.md"],
+                "changed_files": ["wiki/index.md", "logs/secret-token.txt"],
                 "remote_url": "https://github.com/example/repo",
+                "error": "publish detail secret-token",
             }
 
     monkeypatch.setattr("banorte_agent.api.admin.GitHubAdminService", FakeGitHub)
@@ -250,7 +284,9 @@ def test_ui_publish_returns_redacted_result(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert response.json() == {
         "status": "published",
-        "changed_files": ["wiki/index.md"],
+        "changed_files": ["wiki/index.md", "logs/[redacted].txt"],
         "remote_url": "https://github.com/example/repo",
+        "error": "publish detail [redacted]",
     }
     assert "secret-token" not in response.text
+    assert "[redacted]" in response.text
