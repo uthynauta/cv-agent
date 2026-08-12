@@ -78,3 +78,102 @@ def test_admin_ingest_is_disabled_without_configured_key(tmp_path):
 
     assert response.status_code == 503
     assert response.json()["detail"] == "admin ingest is disabled"
+
+
+def test_admin_document_upload_saves_pdf_and_ingests(tmp_path, monkeypatch):
+    settings = Settings(
+        _env_file=None,
+        wiki_dir=str(tmp_path),
+        admin_api_key="admin-secret",
+        admin_upload_max_bytes=1024,
+    )
+    app = create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
+
+    class Extracted:
+        kind = "pdf"
+        needs_ocr = False
+        text = "retrievable text " * 20
+        sha256 = "a" * 64
+
+    class Result:
+        source_page = Path("sources/uploaded.md")
+
+    def fake_extract(path: Path):
+        assert path.name.endswith(".pdf")
+        return Extracted()
+
+    def fake_ingest_file(self, path: Path):
+        assert path.parent == tmp_path / "raw" / "uploads"
+        assert path.read_bytes() == b"%PDF-1.4 text"
+        return Result()
+
+    monkeypatch.setattr("banorte_agent.api.admin.extract_source", fake_extract)
+    monkeypatch.setattr("banorte_agent.api.admin.IngestionService.ingest_file", fake_ingest_file)
+    monkeypatch.setattr("banorte_agent.api.admin.wiki_has_changes", lambda _: True)
+
+    response = TestClient(app).post(
+        "/admin/documents",
+        headers={"Authorization": "Bearer admin-secret"},
+        files={"file": ("Uploaded PDF.pdf", b"%PDF-1.4 text", "application/pdf")},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["document"]["filename"] == "Uploaded-PDF.pdf"
+    assert payload["document"]["kind"] == "pdf"
+    assert payload["ingestion"] == {"count": 1, "sources": ["sources/uploaded.md"]}
+    assert payload["publish"] == {"pending": True}
+
+
+def test_admin_document_upload_rejects_non_pdf(tmp_path):
+    settings = Settings(_env_file=None, wiki_dir=str(tmp_path), admin_api_key="admin-secret")
+    app = create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
+
+    response = TestClient(app).post(
+        "/admin/documents",
+        headers={"Authorization": "Bearer admin-secret"},
+        files={"file": ("notes.txt", b"text", "text/plain")},
+    )
+
+    assert response.status_code == 400
+
+
+def test_admin_document_upload_rejects_oversized_file(tmp_path):
+    settings = Settings(
+        _env_file=None,
+        wiki_dir=str(tmp_path),
+        admin_api_key="admin-secret",
+        admin_upload_max_bytes=4,
+    )
+    app = create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
+
+    response = TestClient(app).post(
+        "/admin/documents",
+        headers={"Authorization": "Bearer admin-secret"},
+        files={"file": ("cv.pdf", b"12345", "application/pdf")},
+    )
+
+    assert response.status_code == 413
+
+
+def test_admin_document_upload_rejects_low_text_pdf(tmp_path, monkeypatch):
+    settings = Settings(_env_file=None, wiki_dir=str(tmp_path), admin_api_key="admin-secret")
+    app = create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
+
+    class Extracted:
+        kind = "pdf"
+        needs_ocr = True
+        text = ""
+        sha256 = "a" * 64
+
+    monkeypatch.setattr("banorte_agent.api.admin.extract_source", lambda path: Extracted())
+
+    response = TestClient(app).post(
+        "/admin/documents",
+        headers={"Authorization": "Bearer admin-secret"},
+        files={"file": ("scan.pdf", b"%PDF-1.4 image", "application/pdf")},
+    )
+
+    assert response.status_code == 422
+    assert "OCR" in response.json()["detail"]
