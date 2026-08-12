@@ -9,13 +9,13 @@ The Banorte CV Agent already exposes a protected admin ingestion endpoint:
 - Accepts an existing server-side path under `WIKI_DIR/raw`.
 - Runs the current ingestion pipeline over that file or directory.
 
-The ingestion pipeline already supports `.pdf`, `.md`, and `.tex` sources. Markdown and LaTeX sources remain Git-managed. The missing workflow is uploading text-retrievable PDFs at runtime, ingesting them into the wiki, and later publishing the generated wiki changes back to GitHub through a manual admin action.
+The ingestion pipeline supports `.pdf`, `.md`, and `.tex` sources. Markdown and LaTeX sources remain Git-managed. Runtime PDF upload, immediate wiki ingestion, admin status, and manual GitHub PR publishing are implemented as protected admin workflows. A browser dashboard is implemented separately and reuses these same service functions.
 
 Render's default filesystem is ephemeral. Runtime uploads must live on a Render Persistent Disk or an external object store to survive restarts and redeploys. Version 1 uses a Render Persistent Disk because it is simpler and fits the single-instance Banorte review deployment.
 
 ## Goals
 
-- Let an admin upload a text-retrievable PDF with curl or a future UI.
+- Let an admin upload a text-retrievable PDF with curl or the browser dashboard.
 - Save uploaded PDFs under the wiki raw tree.
 - Ingest uploaded PDFs immediately after upload.
 - Keep GitHub publishing manual, so multiple uploads can be batched into one pull request.
@@ -28,7 +28,6 @@ Render's default filesystem is ephemeral. Runtime uploads must live on a Render 
 - Do not add general environment variable or secret mutation endpoints.
 - Do not make GitHub connectivity affect `/readyz`.
 - Do not support Markdown or LaTeX upload in version 1.
-- Do not implement a full admin web UI yet.
 - Do not use Google Drive as persistent runtime storage.
 
 ## Deployment Model
@@ -39,13 +38,13 @@ Render should attach a Persistent Disk to the web service. Recommended mount pat
 /app/data
 ```
 
-Recommended runtime wiki path after the code supports durable wiki seeding:
+Recommended runtime wiki path:
 
 ```text
 WIKI_DIR=/app/data/wiki
 ```
 
-The service should not be switched to `WIKI_DIR=/app/data/wiki` before the seeding logic is deployed, because an empty persistent wiki can make readiness fail. It is acceptable to create the disk earlier at `/app/data` while leaving `WIKI_DIR=wiki`; the disk will be unused until the env var is changed.
+Do not switch `WIKI_DIR` to `/app/data/wiki` before deploying the storage seeding code. An empty persistent wiki can make readiness fail. Creating the disk earlier is safe if `WIKI_DIR` remains `wiki`; the disk will be unused until the env var is changed.
 
 On startup or before the first document operation, the app ensures:
 
@@ -141,7 +140,7 @@ Publish should be manual rather than automatic. Upload and ingestion can succeed
 
 ## Configuration
 
-New environment variables:
+Environment variables:
 
 ```text
 ADMIN_UPLOAD_MAX_BYTES=10485760
@@ -207,7 +206,7 @@ Admin curl/UI
 
 ## Testing
 
-Add focused tests for:
+Focused tests cover:
 
 - Upload requires admin auth.
 - Upload rejects non-PDF files.

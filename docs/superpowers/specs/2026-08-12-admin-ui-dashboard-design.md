@@ -9,7 +9,7 @@ The Banorte CV Agent already exposes protected admin JSON endpoints:
 - `POST /admin/publish`
 - `POST /admin/ingest`
 
-These endpoints are useful from curl, but routine document upload and publish flows are easier from a browser. Render exposes one public web service port, so the admin UI should be served by the existing FastAPI app rather than by a separate frontend service.
+These endpoints are useful from curl, but routine document upload and publish flows are easier from a browser. Render exposes one public web service port, so the admin UI is served by the existing FastAPI app rather than by a separate frontend service.
 
 ## Goals
 
@@ -34,20 +34,20 @@ These endpoints are useful from curl, but routine document upload and publish fl
 
 ## Architecture
 
-Use server-rendered HTML served by FastAPI:
+The implemented UI uses server-rendered HTML served by FastAPI:
 
 - `GET /admin/login`: login page.
 - `POST /admin/login`: validate password and set an HttpOnly signed session cookie.
 - `POST /admin/logout`: clear the session cookie.
 - `GET /admin/ui`: dashboard page, protected by the session cookie.
 - Existing JSON endpoints remain protected by `ADMIN_API_KEY` bearer auth.
-- Add UI-specific JSON proxy endpoints only if needed to avoid exposing `ADMIN_API_KEY` in browser JavaScript.
+- UI-specific JSON proxy endpoints avoid exposing `ADMIN_API_KEY` in browser JavaScript.
 
 The browser login must use `ADMIN_UI_PASSWORD`, not `ADMIN_API_KEY`. This keeps UI access separately rotatable from automation tokens.
 
 ## Authentication
 
-New environment variables:
+Environment variables:
 
 ```text
 ADMIN_UI_PASSWORD=
@@ -157,7 +157,7 @@ Publish behavior:
 
 ## Implementation Boundary
 
-To avoid duplicating admin behavior, extract small reusable service functions from `api/admin.py` where needed:
+To avoid duplicating admin behavior, small reusable service functions in `api/admin.py` back both route sets:
 
 - Upload document behavior.
 - Status payload construction.
@@ -209,7 +209,7 @@ The `@` is required so curl uploads file bytes instead of sending the path strin
 
 ## Testing
 
-Add focused tests for:
+Focused tests cover:
 
 - UI disabled when password or session secret is missing.
 - Login page renders when UI env vars are configured.
