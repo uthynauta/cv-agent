@@ -8,6 +8,7 @@ def build_agent_card_router(settings: Settings) -> APIRouter:
 
     @router.get("/.well-known/agent-card.json")
     def agent_card() -> dict[str, object]:
+        responses_url = f"{settings.agent_public_url.rstrip('/')}/v1/responses"
         card: dict[str, object] = {
             "name": "CV Agent - Othon Gonzalez",
             "description": (
@@ -15,8 +16,13 @@ def build_agent_card_router(settings: Settings) -> APIRouter:
                 "profesional, experiencia, habilidades, proyectos, educacion y publicaciones."
             ),
             "version": "1.0.0",
-            "protocolVersion": "0.2.5",
-            "url": f"{settings.agent_public_url.rstrip('/')}/v1/responses",
+            "supportedInterfaces": [
+                {
+                    "url": responses_url,
+                    "protocolBinding": "HTTP+JSON",
+                    "protocolVersion": "1.0",
+                }
+            ],
             "defaultInputModes": ["text/plain"],
             "defaultOutputModes": ["text/plain"],
             "capabilities": {"streaming": False},
