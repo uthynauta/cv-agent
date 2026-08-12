@@ -291,3 +291,36 @@ def test_admin_publish_returns_redacted_github_http_errors(tmp_path, monkeypatch
     assert response.status_code == 502
     assert "GitHub publish failed" in response.json()["detail"]
     assert "secret-token" not in response.text
+
+
+def test_admin_status_payload_helper_redacts_secrets(tmp_path, monkeypatch):
+    from banorte_agent.api.admin import build_admin_status_payload
+
+    settings = Settings(
+        _env_file=None,
+        wiki_dir=str(tmp_path),
+        admin_api_key="admin-secret",
+        github_token="secret-token",
+    )
+
+    class FakeGitHub:
+        def __init__(self, settings):
+            pass
+
+        def status(self):
+            return {
+                "configured": True,
+                "connected": True,
+                "base_branch": "main",
+                "pending_wiki_changes": False,
+                "error": None,
+            }
+
+    monkeypatch.setattr("banorte_agent.api.admin.GitHubAdminService", FakeGitHub)
+
+    payload = build_admin_status_payload(settings)
+
+    assert payload["status"] == "ok"
+    assert payload["wiki"]["upload_dir"].endswith("raw/uploads")
+    assert payload["github"]["connected"] is True
+    assert "secret-token" not in str(payload)

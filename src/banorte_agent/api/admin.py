@@ -29,6 +29,35 @@ def _github_http_error_detail(exc: HTTPError, settings: Settings) -> str:
     return _redact_detail(f"GitHub publish failed: {exc.code} {reason}", settings)
 
 
+def build_admin_status_payload(settings: Settings) -> dict[str, object]:
+    uploads = upload_directory(settings.wiki_dir)
+    uploads.mkdir(parents=True, exist_ok=True)
+    return {
+        "status": "ok",
+        "admin": {"enabled": bool(settings.admin_api_key)},
+        "wiki": {
+            "dir": settings.wiki_dir,
+            "upload_dir": str(uploads),
+            "upload_dir_writable": uploads.exists() and os.access(uploads, os.W_OK),
+        },
+        "ingestion": {"mode": settings.ingestion_mode},
+        "github": GitHubAdminService(settings).status(),
+    }
+
+
+def publish_wiki_payload(settings: Settings) -> dict[str, object]:
+    try:
+        return GitHubAdminService(settings).publish()
+    except RuntimeError as exc:
+        detail = _redact_detail(str(exc), settings)
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail) from exc
+    except HTTPError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=_github_http_error_detail(exc, settings)) from exc
+    except (URLError, OSError) as exc:
+        detail = _redact_detail(f"GitHub publish failed: {exc}", settings)
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail) from exc
+
+
 async def _read_upload(file: UploadFile, max_bytes: int) -> bytes:
     data = await file.read(max_bytes + 1)
     if len(data) > max_bytes:
@@ -113,31 +142,10 @@ def build_admin_router(settings: Settings, ingestion: IngestionService) -> APIRo
 
     @router.get("/admin/status")
     def admin_status() -> dict[str, object]:
-        uploads = upload_directory(settings.wiki_dir)
-        uploads.mkdir(parents=True, exist_ok=True)
-        return {
-            "status": "ok",
-            "admin": {"enabled": bool(settings.admin_api_key)},
-            "wiki": {
-                "dir": settings.wiki_dir,
-                "upload_dir": str(uploads),
-                "upload_dir_writable": uploads.exists() and os.access(uploads, os.W_OK),
-            },
-            "ingestion": {"mode": settings.ingestion_mode},
-            "github": GitHubAdminService(settings).status(),
-        }
+        return build_admin_status_payload(settings)
 
     @router.post("/admin/publish")
     def publish_wiki() -> dict[str, object]:
-        try:
-            return GitHubAdminService(settings).publish()
-        except RuntimeError as exc:
-            detail = _redact_detail(str(exc), settings)
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail) from exc
-        except HTTPError as exc:
-            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=_github_http_error_detail(exc, settings)) from exc
-        except (URLError, OSError) as exc:
-            detail = _redact_detail(f"GitHub publish failed: {exc}", settings)
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail) from exc
+        return publish_wiki_payload(settings)
 
     return router
