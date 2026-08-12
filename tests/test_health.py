@@ -54,3 +54,13 @@ def test_readyz_requires_readable_index_file(tmp_path):
 
     assert response.status_code == 503
     assert "wiki/index.md" in response.json()["missing"]
+
+
+def test_create_app_seeds_empty_configured_wiki(tmp_path):
+    target = tmp_path / "data" / "wiki"
+    settings = Settings(_env_file=None, openai_api_key="test-key", wiki_dir=str(target))
+
+    app = create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
+
+    assert app.title == "Banorte CV Agent"
+    assert (target / "raw" / "uploads").is_dir()

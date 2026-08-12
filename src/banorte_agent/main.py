@@ -17,6 +17,7 @@ from banorte_agent.tracing import configure_tracing
 from banorte_agent.wiki.ingest import IngestionService
 from banorte_agent.wiki.repository import WikiRepository
 from banorte_agent.wiki.search import WikiSearch
+from banorte_agent.wiki.storage import ensure_wiki_storage
 
 
 def create_app(
@@ -35,6 +36,8 @@ def create_app(
     app.middleware("http")(request_observability_middleware)
     app.include_router(build_agent_card_router(settings))
     app.include_router(build_health_router(settings))
+    bundled_wiki_dir = Path(__file__).resolve().parents[2] / "wiki"
+    ensure_wiki_storage(settings.wiki_dir, bundled_wiki_dir)
     repository = WikiRepository(Path(settings.wiki_dir))
     if agent_answerer is None:
         def agent_answerer(text: str, instructions: str | None = None) -> str:
