@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 import os
 from pathlib import Path
 from typing import Annotated
+from urllib.error import HTTPError, URLError
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile, status
 
@@ -15,6 +16,17 @@ from banorte_agent.wiki.storage import safe_upload_filename, upload_directory
 
 def wiki_has_changes(settings: Settings) -> bool:
     return GitHubAdminService(settings).wiki_has_changes()
+
+
+def _redact_detail(detail: str, settings: Settings) -> str:
+    if settings.github_token:
+        detail = detail.replace(settings.github_token, "[redacted]")
+    return detail
+
+
+def _github_http_error_detail(exc: HTTPError, settings: Settings) -> str:
+    reason = exc.reason or str(exc)
+    return _redact_detail(f"GitHub publish failed: {exc.code} {reason}", settings)
 
 
 async def _read_upload(file: UploadFile, max_bytes: int) -> bytes:
@@ -120,9 +132,12 @@ def build_admin_router(settings: Settings, ingestion: IngestionService) -> APIRo
         try:
             return GitHubAdminService(settings).publish()
         except RuntimeError as exc:
-            detail = str(exc)
-            if settings.github_token:
-                detail = detail.replace(settings.github_token, "[redacted]")
+            detail = _redact_detail(str(exc), settings)
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail) from exc
+        except HTTPError as exc:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=_github_http_error_detail(exc, settings)) from exc
+        except (URLError, OSError) as exc:
+            detail = _redact_detail(f"GitHub publish failed: {exc}", settings)
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail) from exc
 
     return router
