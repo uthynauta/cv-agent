@@ -59,3 +59,13 @@
 
 - Source: `/app/data/wiki/raw/uploads/20260812-183235-CertificateOfCompletion_Learning_Git-and_GitHub.pdf`
 - mode: openai
+
+## [2026-08-12] ingest | 20260812-184529-CertificateOfCompletion_Introduction_to_Career_Skills_in_Software_Development.pdf
+
+- Source: `/app/data/wiki/raw/uploads/20260812-184529-CertificateOfCompletion_Introduction_to_Career_Skills_in_Software_Development.pdf`
+- mode: openai
+
+## [2026-08-12] ingest | 20260812-184625-CertificateOfCompletion_Building_Tools_with_Python.pdf
+
+- Source: `/app/data/wiki/raw/uploads/20260812-184625-CertificateOfCompletion_Building_Tools_with_Python.pdf`
+- mode: openai
