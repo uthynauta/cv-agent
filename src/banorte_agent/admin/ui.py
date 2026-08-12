@@ -2,15 +2,18 @@ import base64
 import hashlib
 import hmac
 import json
+from pathlib import Path
 import time
 from typing import Any
 
-from fastapi import APIRouter, Request, status
+from fastapi import APIRouter, File, Request, UploadFile, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from starlette.responses import Response
 
-from banorte_agent.api.admin import build_admin_status_payload
+from banorte_agent.api.admin import build_admin_status_payload, publish_wiki_payload, upload_document_payload
 from banorte_agent.config import Settings
+from banorte_agent.wiki.ingest import IngestionService
+from banorte_agent.wiki.repository import WikiRepository
 
 
 SESSION_COOKIE = "banorte_admin_session"
@@ -436,5 +439,22 @@ setInterval(refreshStatus, 10000);
         if not verify_session_token(request.cookies.get(SESSION_COOKIE)):
             return JSONResponse({"detail": "invalid session"}, status_code=status.HTTP_401_UNAUTHORIZED)
         return build_admin_status_payload(settings)
+
+    @router.post("/admin/ui/documents")
+    async def post_ui_document(request: Request, file: UploadFile = File(...)) -> Any:
+        if not ui_enabled():
+            return disabled_response()
+        if not verify_session_token(request.cookies.get(SESSION_COOKIE)):
+            return JSONResponse({"detail": "invalid session"}, status_code=status.HTTP_401_UNAUTHORIZED)
+        ingestion = IngestionService(WikiRepository(Path(settings.wiki_dir)), settings)
+        return await upload_document_payload(settings, ingestion, file)
+
+    @router.post("/admin/ui/publish")
+    async def post_ui_publish(request: Request) -> Any:
+        if not ui_enabled():
+            return disabled_response()
+        if not verify_session_token(request.cookies.get(SESSION_COOKIE)):
+            return JSONResponse({"detail": "invalid session"}, status_code=status.HTTP_401_UNAUTHORIZED)
+        return publish_wiki_payload(settings)
 
     return router

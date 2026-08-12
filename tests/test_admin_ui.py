@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 from banorte_agent.config import Settings
@@ -161,4 +163,94 @@ def test_ui_status_returns_payload_without_secrets(tmp_path, monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["github"]["pending_wiki_changes"] is True
+    assert "secret-token" not in response.text
+
+
+def test_ui_upload_requires_session(tmp_path):
+    response = TestClient(
+        create_app(settings=ui_settings(tmp_path), agent_answerer=lambda text, instructions=None: "ok")
+    ).post(
+        "/admin/ui/documents",
+        files={"file": ("Uploaded PDF.pdf", b"%PDF-1.4 text", "application/pdf")},
+    )
+
+    assert response.status_code == 401
+
+
+def test_ui_upload_reuses_document_upload_behavior(tmp_path, monkeypatch):
+    settings = ui_settings(tmp_path, admin_upload_max_bytes=1024)
+
+    class Extracted:
+        kind = "pdf"
+        needs_ocr = False
+        text = "retrievable text " * 20
+        sha256 = "a" * 64
+
+    class Result:
+        source_page = Path("sources/uploaded.md")
+
+    def fake_extract(path: Path):
+        assert path.name.endswith(".pdf")
+        return Extracted()
+
+    def fake_ingest_file(self, path: Path):
+        assert path.parent == tmp_path / "raw" / "uploads"
+        assert path.read_bytes() == b"%PDF-1.4 text"
+        return Result()
+
+    monkeypatch.setattr("banorte_agent.api.admin.extract_source", fake_extract)
+    monkeypatch.setattr("banorte_agent.api.admin.IngestionService.ingest_file", fake_ingest_file)
+    monkeypatch.setattr("banorte_agent.api.admin.wiki_has_changes", lambda _: True)
+
+    client = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok"))
+    client.post("/admin/login", data={"password": "ui-secret"})
+
+    response = client.post(
+        "/admin/ui/documents",
+        files={"file": ("Uploaded PDF.pdf", b"%PDF-1.4 text", "application/pdf")},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["document"]["filename"] == "Uploaded-PDF.pdf"
+    assert payload["document"]["kind"] == "pdf"
+    assert payload["ingestion"] == {"count": 1, "sources": ["sources/uploaded.md"]}
+    assert payload["publish"] == {"pending": True}
+
+
+def test_ui_publish_requires_session(tmp_path):
+    response = TestClient(
+        create_app(settings=ui_settings(tmp_path), agent_answerer=lambda text, instructions=None: "ok")
+    ).post("/admin/ui/publish")
+
+    assert response.status_code == 401
+
+
+def test_ui_publish_returns_redacted_result(tmp_path, monkeypatch):
+    settings = ui_settings(tmp_path, github_token="secret-token")
+
+    class FakeGitHub:
+        def __init__(self, settings):
+            pass
+
+        def publish(self):
+            return {
+                "status": "published",
+                "changed_files": ["wiki/index.md"],
+                "remote_url": "https://github.com/example/repo",
+            }
+
+    monkeypatch.setattr("banorte_agent.api.admin.GitHubAdminService", FakeGitHub)
+    client = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok"))
+    client.post("/admin/login", data={"password": "ui-secret"})
+
+    response = client.post("/admin/ui/publish")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "published",
+        "changed_files": ["wiki/index.md"],
+        "remote_url": "https://github.com/example/repo",
+    }
     assert "secret-token" not in response.text
