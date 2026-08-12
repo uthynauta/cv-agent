@@ -68,4 +68,5 @@ def test_admin_logout_clears_session(tmp_path):
     assert response.headers["location"] == "/admin/login"
     set_cookie = response.headers["set-cookie"].lower()
     assert "banorte_admin_session=" in set_cookie
+    assert "path=/admin" in set_cookie
     assert "max-age=0" in set_cookie or "expires=" in set_cookie
