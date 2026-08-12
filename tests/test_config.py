@@ -50,3 +50,26 @@ def test_context_mode_rejects_invalid_value():
         assert "context_mode" in str(exc)
     else:
         raise AssertionError("invalid context mode was accepted")
+
+
+def test_admin_upload_and_github_defaults():
+    settings = Settings(_env_file=None, openai_api_key="test-key")
+
+    assert settings.admin_upload_max_bytes == 10 * 1024 * 1024
+    assert settings.github_token is None
+    assert settings.github_repository == "uthynauta/cv-agent"
+    assert settings.github_base_branch == "main"
+    assert settings.github_commit_author_name == "Banorte Agent Admin"
+    assert settings.github_commit_author_email is None
+
+
+def test_blank_github_values_normalize_to_none():
+    settings = Settings(
+        _env_file=None,
+        openai_api_key="test-key",
+        github_token="",
+        github_commit_author_email="",
+    )
+
+    assert settings.github_token is None
+    assert settings.github_commit_author_email is None

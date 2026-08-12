@@ -36,6 +36,28 @@ Recommended Render settings:
 
 Do not put secrets in the repository. Configure API keys only through Render environment variables.
 
+## Persistent Wiki Storage
+
+Render's default filesystem is ephemeral. To keep uploaded PDFs and generated wiki pages across deploys, attach a Render Persistent Disk to the web service.
+
+Recommended settings:
+
+- Disk mount path: `/app/data`.
+- Environment variable after storage seeding support is deployed: `WIKI_DIR=/app/data/wiki`.
+- Upload limit: `ADMIN_UPLOAD_MAX_BYTES=10485760`.
+
+Do not switch `WIKI_DIR` to `/app/data/wiki` before deploying the storage seeding code, because an empty wiki can make readiness fail. Creating the disk earlier is safe if `WIKI_DIR` remains `wiki`.
+
+GitHub publishing uses these Render environment variables:
+
+- `GITHUB_TOKEN`
+- `GITHUB_REPOSITORY=uthynauta/cv-agent`
+- `GITHUB_BASE_BRANCH=main`
+- `GITHUB_COMMIT_AUTHOR_NAME`
+- `GITHUB_COMMIT_AUTHOR_EMAIL`
+
+Manage these values in the Render Dashboard. The admin API reports GitHub status but never returns secret values.
+
 ## Run
 
 ```bash
@@ -81,6 +103,28 @@ curl -sS http://localhost:8000/admin/ingest \
   -H 'Authorization: Bearer YOUR_ADMIN_API_KEY' \
   -H 'Content-Type: application/json' \
   -d '{"path":"wiki/raw/cv"}'
+```
+
+Upload and immediately ingest a text-retrievable PDF:
+
+```bash
+curl -sS http://localhost:8000/admin/documents \
+  -H 'Authorization: Bearer YOUR_ADMIN_API_KEY' \
+  -F 'file=@/path/to/text-retrievable.pdf'
+```
+
+Check admin-only storage and GitHub publishing status:
+
+```bash
+curl -sS http://localhost:8000/admin/status \
+  -H 'Authorization: Bearer YOUR_ADMIN_API_KEY'
+```
+
+After one or more uploads, publish updated wiki files through a manual GitHub pull request:
+
+```bash
+curl -sS -X POST http://localhost:8000/admin/publish \
+  -H 'Authorization: Bearer YOUR_ADMIN_API_KEY'
 ```
 
 Stop the local Compose deployment when finished:

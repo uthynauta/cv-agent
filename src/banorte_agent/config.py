@@ -26,6 +26,22 @@ class Settings(BaseSettings):
     max_context_chars: int = Field(default=12_000, gt=0, alias="MAX_CONTEXT_CHARS")
     agent_api_key: str | None = Field(default=None, alias="AGENT_API_KEY")
     admin_api_key: str | None = Field(default=None, alias="ADMIN_API_KEY")
+    admin_upload_max_bytes: int = Field(
+        default=10 * 1024 * 1024,
+        gt=0,
+        alias="ADMIN_UPLOAD_MAX_BYTES",
+    )
+    github_token: str | None = Field(default=None, alias="GITHUB_TOKEN")
+    github_repository: str = Field(default="uthynauta/cv-agent", alias="GITHUB_REPOSITORY")
+    github_base_branch: str = Field(default="main", alias="GITHUB_BASE_BRANCH")
+    github_commit_author_name: str = Field(
+        default="Banorte Agent Admin",
+        alias="GITHUB_COMMIT_AUTHOR_NAME",
+    )
+    github_commit_author_email: str | None = Field(
+        default=None,
+        alias="GITHUB_COMMIT_AUTHOR_EMAIL",
+    )
     agent_model_name: str = Field(default="banorte-cv-agent", alias="AGENT_MODEL_NAME")
     agent_public_url: str = Field(
         default="https://banorte-cv-agent.onrender.com",
@@ -72,6 +88,13 @@ class Settings(BaseSettings):
     @field_validator("rerank_model", mode="before")
     @classmethod
     def normalize_rerank_model(cls, value: str | None) -> str | None:
+        if value is None or value == "":
+            return None
+        return value
+
+    @field_validator("github_token", "github_commit_author_email", mode="before")
+    @classmethod
+    def normalize_optional_secret(cls, value: str | None) -> str | None:
         if value is None or value == "":
             return None
         return value
