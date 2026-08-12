@@ -21,7 +21,14 @@ def test_agent_card_exposes_public_a2a_metadata_without_auth():
         "Agente de CV de Othon Gonzalez para responder preguntas sobre su perfil "
         "profesional, experiencia, habilidades, proyectos, educacion y publicaciones."
     )
-    assert payload["url"] == "https://banorte-cv-agent.onrender.com/v1/responses"
+    assert payload["supportedInterfaces"] == [
+        {
+            "url": "https://banorte-cv-agent.onrender.com/v1/responses",
+            "protocolBinding": "HTTP+JSON",
+            "protocolVersion": "1.0",
+        }
+    ]
+    assert "url" not in payload
     assert payload["capabilities"] == {"streaming": False}
     assert payload["securitySchemes"]["bearer"]["type"] == "http"
     assert payload["security"] == [{"bearer": []}]
