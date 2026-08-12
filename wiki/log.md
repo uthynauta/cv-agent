@@ -54,3 +54,8 @@
 
 - Source: `/app/data/wiki/raw/uploads/20260812-033744-ENA-Appreciation-Othon.pdf`
 - mode: openai
+
+## [2026-08-12] ingest | 20260812-183235-CertificateOfCompletion_Learning_Git-and_GitHub.pdf
+
+- Source: `/app/data/wiki/raw/uploads/20260812-183235-CertificateOfCompletion_Learning_Git-and_GitHub.pdf`
+- mode: openai
