@@ -1,14 +1,29 @@
 # Banorte CV Agent
 
-Dockerized FastAPI CV agent for the Banorte challenge. It retrieves evidence from a local Markdown wiki, calls OpenAI, validates Spanish output and citations, and exposes an Open Responses-like API.
+Dockerized FastAPI CV agent for the Banorte challenge. It retrieves evidence from a local Markdown wiki, calls OpenAI, validates Spanish output and citations, and exposes an Open Responses-compatible API.
 
 ## Current Status
 
-The service is currently local-only at `http://localhost:8000`. No Banorte platform URL or registration contract has been provided, and this repository has no live `OPENAI_API_KEY`. Health, tests, deterministic ingestion, and container builds work without live model calls; `/v1/responses` and default OpenAI ingestion need a real key when using the built-in OpenAI client.
+The service is deployed on Render at:
+
+```text
+https://banorte-cv-agent.onrender.com
+```
+
+Public checks:
+
+```text
+https://banorte-cv-agent.onrender.com/healthz
+https://banorte-cv-agent.onrender.com/readyz
+https://banorte-cv-agent.onrender.com/.well-known/agent-card.json
+https://banorte-cv-agent.onrender.com/v1/responses
+```
+
+The repository does not include live secrets. Health, tests, deterministic ingestion, and container builds work without live model calls; `/v1/responses` and default OpenAI ingestion require `OPENAI_API_KEY` in the deployment environment.
 
 ## Architecture
 
-Request flow: optional public bearer auth -> bounded request validation -> normalized passage-level wiki search -> OpenAI Responses API -> Spanish/citation validation -> Open Responses-like response. Invalid generated output is replaced with a safe Spanish answer citing only retrieved pages.
+Request flow: optional public bearer auth -> bounded/tolerant request normalization -> latest reviewer request extraction -> normalized passage-level wiki search -> optional LLM rerank -> OpenAI Responses API -> Spanish/citation validation -> terminal Open Responses-compatible response. Invalid generated output is replaced with a safe Spanish answer citing only retrieved pages.
 
 Raw `.tex`, `.pdf`, and `.md` sources are ingested from `wiki/raw/`. Committed LaTeX CV sources may generate full-text pages. Git-ignored PDF and Markdown sources generate metadata and a bounded snippet only, so their full extracted text is not copied into committed Markdown by default.
 
@@ -23,6 +38,10 @@ Context assembly is page-aware by default:
 
 - `CONTEXT_MODE=page`: expand selected hits to full generated wiki pages, deduplicated by path and capped by `MAX_CONTEXT_CHARS`.
 - `CONTEXT_MODE=excerpt`: send only the matched excerpts, useful for lower token usage or debugging.
+
+Conversation handling is intentionally stateless on the server. When Banorte sends transcript replay, the API extracts the latest user/developer message, keeps only a bounded light context from the last turns, and resolves short confirmations such as `si por favor` against the previous assistant follow-up question. This supports natural follow-ups such as `y que hizo despues?` without storing conversations server-side.
+
+Reviewer-facing answers are brief by default, avoid bullet lists unless useful, and ask one grounded follow-up question before the final `Fuentes:` line when the available wiki context supports it.
 
 See [architecture](docs/architecture.md), [deployment](docs/deployment.md), [demo guide](docs/demo.md), and [sample transcript](docs/sample-transcript.md).
 
@@ -47,6 +66,8 @@ https://banorte-cv-agent.onrender.com/v1/responses
 ```
 
 Set `AGENT_PUBLIC_URL` if deploying under another public base URL.
+
+For the Banorte form, use the Open Responses URL above as the service endpoint. If the form asks for the agent card, provide the `.well-known/agent-card.json` URL. For capability content, prefer the inline Base64 option when available so the reviewer platform does not depend on the agent being able to fetch Parley during execution.
 
 ## Local Development
 
