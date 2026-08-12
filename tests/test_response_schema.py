@@ -30,6 +30,73 @@ def test_responses_endpoint_returns_canonical_model_name():
     assert response.json()["model"] == "banorte-cv-agent"
 
 
+def test_responses_endpoint_accepts_open_responses_message_array_input():
+    seen: dict[str, str | None] = {}
+
+    def answerer(text: str, instructions: str | None = None) -> str:
+        seen["text"] = text
+        seen["instructions"] = instructions
+        return "Respuesta en español. Fuentes: [[Othon CV]]"
+
+    app = create_app(
+        settings=__import__("banorte_agent.config", fromlist=["Settings"]).Settings(
+            openai_api_key="test-key"
+        ),
+        agent_answerer=answerer,
+    )
+
+    response = TestClient(app).post(
+        "/v1/responses",
+        json={
+            "model": "banorte-cv-agent",
+            "input": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": "¿Qué experiencia tiene Othon con agentes de IA?",
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert seen["text"] == "¿Qué experiencia tiene Othon con agentes de IA?"
+
+
+def test_responses_endpoint_accepts_open_responses_content_array_input():
+    seen: dict[str, str | None] = {}
+
+    def answerer(text: str, instructions: str | None = None) -> str:
+        seen["text"] = text
+        return "Respuesta en español. Fuentes: [[Othon CV]]"
+
+    app = create_app(
+        settings=__import__("banorte_agent.config", fromlist=["Settings"]).Settings(
+            openai_api_key="test-key"
+        ),
+        agent_answerer=answerer,
+    )
+
+    response = TestClient(app).post(
+        "/v1/responses",
+        json={
+            "input": [
+                {
+                    "type": "input_text",
+                    "text": "Resume el perfil profesional de Othon.",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert seen["text"] == "Resume el perfil profesional de Othon."
+
+
 def test_responses_endpoint_rejects_overlong_model():
     app = create_app(
         settings=__import__("banorte_agent.config", fromlist=["Settings"]).Settings(
