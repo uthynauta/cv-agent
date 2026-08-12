@@ -100,7 +100,7 @@ def test_responses_endpoint_accepts_open_responses_content_array_input():
     assert seen["text"] == "Resume el perfil profesional de Othon."
 
 
-def test_responses_endpoint_rejects_overlong_model():
+def test_responses_endpoint_ignores_overlong_client_model_without_validation_leak():
     app = create_app(
         settings=__import__("banorte_agent.config", fromlist=["Settings"]).Settings(
             openai_api_key="test-key"
@@ -112,7 +112,11 @@ def test_responses_endpoint_rejects_overlong_model():
         "/v1/responses", json={"model": "x" * 129, "input": "hola"}
     )
 
-    assert response.status_code == 422
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "completed"
+    assert payload["model"] == "banorte-cv-agent"
+    assert "detail" not in payload
 
 
 def test_responses_endpoint_rejects_oversized_request_body():
@@ -130,32 +134,48 @@ def test_responses_endpoint_rejects_oversized_request_body():
     assert response.status_code == 413
 
 
-def test_responses_endpoint_limits_public_input_size():
+def test_responses_endpoint_truncates_public_input_without_validation_leak():
+    seen: dict[str, str] = {}
+
+    def answerer(text: str, instructions=None):
+        seen["text"] = text
+        return "Respuesta"
+
     app = create_app(
         settings=__import__("banorte_agent.config", fromlist=["Settings"]).Settings(
             openai_api_key="test-key"
         ),
-        agent_answerer=lambda text, instructions=None: "Respuesta",
+        agent_answerer=answerer,
     )
 
     response = TestClient(app).post("/v1/responses", json={"input": "x" * 4001})
 
-    assert response.status_code == 422
+    assert response.status_code == 200
+    assert response.json()["status"] == "completed"
+    assert len(seen["text"]) == 4000
 
 
-def test_responses_endpoint_limits_public_instructions_size():
+def test_responses_endpoint_truncates_public_instructions_without_validation_leak():
+    seen: dict[str, str | None] = {}
+
+    def answerer(text: str, instructions=None):
+        seen["instructions"] = instructions
+        return "Respuesta"
+
     app = create_app(
         settings=__import__("banorte_agent.config", fromlist=["Settings"]).Settings(
             openai_api_key="test-key"
         ),
-        agent_answerer=lambda text, instructions=None: "Respuesta",
+        agent_answerer=answerer,
     )
 
     response = TestClient(app).post(
         "/v1/responses", json={"input": "hola", "instructions": "x" * 1001}
     )
 
-    assert response.status_code == 422
+    assert response.status_code == 200
+    assert response.json()["status"] == "completed"
+    assert len(seen["instructions"] or "") == 1000
 
 
 def test_responses_endpoint_enforces_agent_key():

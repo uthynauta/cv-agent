@@ -8,9 +8,17 @@ MAX_MODEL_CHARS = 128
 
 
 class ResponseRequest(BaseModel):
-    model: str | None = Field(default=None, max_length=MAX_MODEL_CHARS)
-    input: str = Field(min_length=1, max_length=MAX_INPUT_CHARS)
-    instructions: str | None = Field(default=None, max_length=MAX_INSTRUCTIONS_CHARS)
+    model: str | None = None
+    input: str = Field(min_length=1)
+    instructions: str | None = None
+
+    @field_validator("model", mode="before")
+    @classmethod
+    def normalize_model(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        text = _extract_input_text(value) or str(value)
+        return text[:MAX_MODEL_CHARS]
 
     @field_validator("input", mode="before")
     @classmethod
@@ -18,7 +26,17 @@ class ResponseRequest(BaseModel):
         text = _extract_input_text(value)
         if text is None:
             return value
-        return text
+        return text[:MAX_INPUT_CHARS]
+
+    @field_validator("instructions", mode="before")
+    @classmethod
+    def normalize_instructions(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        text = _extract_input_text(value)
+        if text is None:
+            return str(value)[:MAX_INSTRUCTIONS_CHARS]
+        return text[:MAX_INSTRUCTIONS_CHARS]
 
 
 class IngestRequest(BaseModel):
