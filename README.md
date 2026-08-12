@@ -141,6 +141,30 @@ curl -sS http://localhost:8000/admin/ingest \
   -d '{"path":"wiki/raw/cv"}'
 ```
 
+For runtime PDF uploads, configure `ADMIN_API_KEY` and use the admin documents endpoint:
+
+```bash
+curl -sS http://localhost:8000/admin/documents \
+  -H 'Authorization: Bearer YOUR_ADMIN_API_KEY' \
+  -F 'file=@/path/to/text-retrievable.pdf'
+```
+
+The endpoint accepts text-retrievable PDFs only, saves them under `wiki/raw/uploads`, and ingests them immediately. Image-only scanned PDFs must be OCR-processed before upload.
+
+Admin status is available without exposing secrets:
+
+```bash
+curl -sS http://localhost:8000/admin/status \
+  -H 'Authorization: Bearer YOUR_ADMIN_API_KEY'
+```
+
+Publishing updated wiki files to GitHub is manual:
+
+```bash
+curl -sS -X POST http://localhost:8000/admin/publish \
+  -H 'Authorization: Bearer YOUR_ADMIN_API_KEY'
+```
+
 ## Evaluation
 
 Run only after configuring a real OpenAI key:
