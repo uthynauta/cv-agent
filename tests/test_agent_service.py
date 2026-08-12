@@ -84,6 +84,21 @@ def test_agent_instructions_enforce_brevity_and_latest_turn(tmp_path: Path):
     assert "Do not answer earlier transcript turns again" in fake.instructions
 
 
+def test_agent_instructions_prefer_conversational_answers_and_grounded_followups(tmp_path: Path):
+    repo = WikiRepository(tmp_path)
+    repo.write_page("projects/agentic.md", "Agentic AI", {"kind": "project"}, "Othon worked on agentic AI.")
+    fake = FakeTextClient("Othon trabajó en Agentic AI.\nFuentes: [[Agentic AI]]")
+    service = AgentService(Settings(openai_api_key="test-key"), WikiSearch(repo), fake)
+
+    service.answer("¿Qué proyectos importantes de IA ha manejado Othon?")
+
+    assert "Prefer one short conversational paragraph" in fake.instructions
+    assert "Avoid bullet lists unless the user explicitly asks for a list" in fake.instructions
+    assert "Before the final Fuentes line, ask exactly one short useful follow-up question" in fake.instructions
+    assert "skip it only if the user explicitly asks for no questions or only the answer" in fake.instructions
+    assert "Only suggest follow-ups that can be answered from the supplied wiki context" in fake.instructions
+
+
 def test_agent_rejects_citations_not_present_in_retrieved_hits(tmp_path: Path):
     repo = WikiRepository(tmp_path)
     repo.write_page("skills/python.md", "Python", {"kind": "skill"}, "Othon usó FastAPI.")

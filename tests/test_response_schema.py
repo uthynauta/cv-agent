@@ -123,6 +123,53 @@ def test_responses_endpoint_uses_latest_user_message_with_light_transcript_conte
     )
 
 
+def test_responses_endpoint_resolves_short_confirmation_to_previous_followup():
+    seen: dict[str, str | None] = {}
+
+    def answerer(text: str, instructions: str | None = None) -> str:
+        seen["text"] = text
+        return "Respuesta en español. Fuentes: [[Othon CV]]"
+
+    app = create_app(
+        settings=__import__("banorte_agent.config", fromlist=["Settings"]).Settings(
+            openai_api_key="test-key"
+        ),
+        agent_answerer=answerer,
+    )
+
+    previous_answer = (
+        "Othón ha laborado en Teradata, Continental Autonomous Mobility, CentroGEO "
+        "y Aeroméxico. ¿Quieres que las ordene cronológicamente?"
+    )
+    response = TestClient(app).post(
+        "/v1/responses",
+        json={
+            "input": [
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "¿En qué empresas ha laborado?"}],
+                },
+                {
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": previous_answer}],
+                },
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "sí por favor"}],
+                },
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert "Previous assistant answer for this follow-up:" in (seen["text"] or "")
+    assert "Teradata, Continental Autonomous Mobility, CentroGEO" in (seen["text"] or "")
+    assert "Previous assistant follow-up question:\n¿Quieres que las ordene cronológicamente?" in (
+        seen["text"] or ""
+    )
+    assert "Interpret the latest reviewer request as confirmation" in (seen["text"] or "")
+
+
 def test_responses_endpoint_accepts_open_responses_content_array_input():
     seen: dict[str, str | None] = {}
 
