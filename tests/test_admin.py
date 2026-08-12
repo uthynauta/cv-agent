@@ -1,4 +1,5 @@
 from pathlib import Path
+import urllib.error
 
 from fastapi.testclient import TestClient
 
@@ -257,4 +258,36 @@ def test_admin_publish_redacts_failures(tmp_path, monkeypatch):
     )
 
     assert response.status_code == 503
+    assert "secret-token" not in response.text
+
+
+def test_admin_publish_returns_redacted_github_http_errors(tmp_path, monkeypatch):
+    settings = Settings(
+        _env_file=None,
+        wiki_dir=str(tmp_path),
+        admin_api_key="admin-secret",
+        github_token="secret-token",
+    )
+
+    class FakeGitHub:
+        def __init__(self, settings):
+            pass
+
+        def publish(self):
+            raise urllib.error.HTTPError(
+                "https://api.github.com/repos/uthynauta/cv-agent/git/refs",
+                403,
+                "Resource not accessible by personal access token secret-token",
+                {},
+                None,
+            )
+
+    monkeypatch.setattr("banorte_agent.api.admin.GitHubAdminService", FakeGitHub)
+    response = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")).post(
+        "/admin/publish",
+        headers={"Authorization": "Bearer admin-secret"},
+    )
+
+    assert response.status_code == 502
+    assert "GitHub publish failed" in response.json()["detail"]
     assert "secret-token" not in response.text
