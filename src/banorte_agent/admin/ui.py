@@ -81,6 +81,7 @@ def build_admin_ui_router(settings: Settings) -> APIRouter:
             return False
         payload, signature = token.rsplit(".", 1)
         try:
+            payload.encode("ascii")
             signature_bytes = signature.encode("ascii")
         except UnicodeEncodeError:
             return False
