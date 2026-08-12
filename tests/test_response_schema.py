@@ -11,8 +11,11 @@ def test_responses_endpoint_returns_openai_like_shape(monkeypatch):
     assert response.status_code == 200
     payload = response.json()
     assert payload["object"] == "response"
+    assert payload["status"] == "completed"
     assert payload["model"] == "banorte-cv-agent"
     assert payload["output_text"].endswith("Fuentes: [[Othon CV]]")
+    assert payload["output"][0]["id"].startswith("msg_")
+    assert payload["output"][0]["status"] == "completed"
     assert payload["output"][0]["content"][0]["type"] == "output_text"
 
 
