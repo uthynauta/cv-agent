@@ -73,3 +73,23 @@ def test_blank_github_values_normalize_to_none():
 
     assert settings.github_token is None
     assert settings.github_commit_author_email is None
+
+
+def test_admin_ui_defaults():
+    settings = Settings(_env_file=None, openai_api_key="test-key")
+
+    assert settings.admin_ui_password is None
+    assert settings.admin_ui_session_secret is None
+    assert settings.admin_ui_session_max_age_seconds == 12 * 60 * 60
+
+
+def test_blank_admin_ui_secrets_normalize_to_none():
+    settings = Settings(
+        _env_file=None,
+        openai_api_key="test-key",
+        admin_ui_password="",
+        admin_ui_session_secret="",
+    )
+
+    assert settings.admin_ui_password is None
+    assert settings.admin_ui_session_secret is None

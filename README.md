@@ -165,6 +165,24 @@ curl -sS -X POST http://localhost:8000/admin/publish \
   -H 'Authorization: Bearer YOUR_ADMIN_API_KEY'
 ```
 
+### Browser Admin Dashboard
+
+Set these environment variables to enable the browser UI:
+
+```text
+ADMIN_UI_PASSWORD=...
+ADMIN_UI_SESSION_SECRET=...
+ADMIN_UI_SESSION_MAX_AGE_SECONDS=43200
+```
+
+Open:
+
+```text
+https://banorte-cv-agent.onrender.com/admin/login
+```
+
+The dashboard shows storage, ingestion, and GitHub publish status, refreshes automatically, supports PDF upload, and can trigger manual wiki publish. The browser UI uses a signed session cookie and does not expose `ADMIN_API_KEY` or `GITHUB_TOKEN`.
+
 ## Evaluation
 
 Run only after configuring a real OpenAI key:
