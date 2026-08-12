@@ -26,6 +26,28 @@ Context assembly is page-aware by default:
 
 See [architecture](docs/architecture.md), [deployment](docs/deployment.md), [demo guide](docs/demo.md), and [sample transcript](docs/sample-transcript.md).
 
+## Agent Card
+
+The service exposes A2A-style public metadata at:
+
+```text
+/.well-known/agent-card.json
+```
+
+For the Render deployment, Banorte can fetch:
+
+```text
+https://banorte-cv-agent.onrender.com/.well-known/agent-card.json
+```
+
+The card advertises this Open Responses endpoint:
+
+```text
+https://banorte-cv-agent.onrender.com/v1/responses
+```
+
+Set `AGENT_PUBLIC_URL` if deploying under another public base URL.
+
 ## Local Development
 
 ```bash

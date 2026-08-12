@@ -12,6 +12,7 @@ Copy `.env.example` to `.env` before serving model requests. Configure these val
 - `RERANK_MODEL` is optional; when empty, reranking uses `OPENAI_MODEL`.
 - `CONTEXT_MODE=page` expands selected hits to full generated wiki pages within `MAX_CONTEXT_CHARS`; `CONTEXT_MODE=excerpt` sends only matched excerpts.
 - `AGENT_MODEL_NAME=banorte-cv-agent` is the canonical model name returned to clients.
+- `AGENT_PUBLIC_URL` is the public service base URL advertised by `/.well-known/agent-card.json`.
 
 The `.env` file is optional for Compose validation and startup. Do not send model requests without a real key. For OpenTelemetry export, set `OTEL_ENABLED=true`, `OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_ENDPOINT`, and optional comma-separated `OTEL_RESOURCE_ATTRIBUTES`. The default OTLP endpoint assumes a `tempo` service is available on the Compose network; this repository does not define that service.
 
@@ -70,4 +71,16 @@ docker compose down
 
 ## Banorte Registration
 
-Banorte platform URL, authentication requirements, and registration details are not available yet. Do not infer them from this Open Responses-like local adapter. Until a public deployment and Banorte contract are available, use `http://localhost:8000/v1/responses` only for local testing.
+Register the Open Responses endpoint:
+
+```text
+https://banorte-cv-agent.onrender.com/v1/responses
+```
+
+If Banorte offers agent-card import, use:
+
+```text
+https://banorte-cv-agent.onrender.com/.well-known/agent-card.json
+```
+
+If `AGENT_API_KEY` is set, register the same value as the endpoint API key in Banorte.
