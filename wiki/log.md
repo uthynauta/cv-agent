@@ -49,3 +49,8 @@
 
 - Source: `wiki/raw/cv/CV-OGC-ATS.tex`
 - mode: openai
+
+## [2026-08-12] ingest | 20260812-033744-ENA-Appreciation-Othon.pdf
+
+- Source: `/app/data/wiki/raw/uploads/20260812-033744-ENA-Appreciation-Othon.pdf`
+- mode: openai
