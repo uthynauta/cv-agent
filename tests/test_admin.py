@@ -313,7 +313,7 @@ def test_admin_status_payload_helper_redacts_secrets(tmp_path, monkeypatch):
                 "connected": True,
                 "base_branch": "main",
                 "pending_wiki_changes": False,
-                "error": None,
+                "error": "failed secret-token",
             }
 
     monkeypatch.setattr("banorte_agent.api.admin.GitHubAdminService", FakeGitHub)

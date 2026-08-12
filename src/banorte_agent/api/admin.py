@@ -29,6 +29,16 @@ def _github_http_error_detail(exc: HTTPError, settings: Settings) -> str:
     return _redact_detail(f"GitHub publish failed: {exc.code} {reason}", settings)
 
 
+def _redact_payload_secrets(value: object, settings: Settings) -> object:
+    if isinstance(value, str):
+        return _redact_detail(value, settings)
+    if isinstance(value, dict):
+        return {key: _redact_payload_secrets(item, settings) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_redact_payload_secrets(item, settings) for item in value]
+    return value
+
+
 def build_admin_status_payload(settings: Settings) -> dict[str, object]:
     uploads = upload_directory(settings.wiki_dir)
     uploads.mkdir(parents=True, exist_ok=True)
@@ -41,7 +51,7 @@ def build_admin_status_payload(settings: Settings) -> dict[str, object]:
             "upload_dir_writable": uploads.exists() and os.access(uploads, os.W_OK),
         },
         "ingestion": {"mode": settings.ingestion_mode},
-        "github": GitHubAdminService(settings).status(),
+        "github": _redact_payload_secrets(GitHubAdminService(settings).status(), settings),
     }
 
 
