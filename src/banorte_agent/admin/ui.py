@@ -105,7 +105,7 @@ def build_admin_ui_router(settings: Settings) -> APIRouter:
         form = await request.form()
         password = str(form.get("password", ""))
         assert settings.admin_ui_password is not None
-        if not hmac.compare_digest(password, settings.admin_ui_password):
+        if not hmac.compare_digest(password.encode("utf-8"), settings.admin_ui_password.encode("utf-8")):
             return login_page("Invalid password", status.HTTP_401_UNAUTHORIZED)
 
         response = RedirectResponse("/admin/ui", status_code=status.HTTP_303_SEE_OTHER)

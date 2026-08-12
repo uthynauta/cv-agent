@@ -48,6 +48,16 @@ def test_invalid_admin_login_does_not_set_session(tmp_path):
     assert "banorte_admin_session" not in response.cookies
 
 
+def test_non_ascii_invalid_admin_login_does_not_set_session(tmp_path):
+    response = TestClient(
+        create_app(settings=ui_settings(tmp_path), agent_answerer=lambda text, instructions=None: "ok")
+    ).post("/admin/login", data={"password": "á"})
+
+    assert response.status_code == 401
+    assert "Invalid password" in response.text
+    assert "banorte_admin_session" not in response.cookies
+
+
 def test_valid_admin_login_sets_session_and_redirects(tmp_path):
     response = TestClient(
         create_app(settings=ui_settings(tmp_path), agent_answerer=lambda text, instructions=None: "ok")
