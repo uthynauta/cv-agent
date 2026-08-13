@@ -47,12 +47,14 @@ def test_upload_directory_returns_raw_uploads(tmp_path: Path):
     ("filename", "expected"),
     [
         ("Profile PDF.pdf", "Profile-PDF.pdf"),
+        ("Profile Notes.md", "Profile-Notes.md"),
+        ("Profile Source.tex", "Profile-Source.tex"),
         ("../secret.pdf", "secret.pdf"),
         ("áé resume.pdf", "resume.pdf"),
         ("multi___space.pdf", "multi-space.pdf"),
     ],
 )
-def test_safe_upload_filename_normalizes_pdf_names(filename: str, expected: str):
+def test_safe_upload_filename_normalizes_supported_document_names(filename: str, expected: str):
     assert safe_upload_filename(filename) == expected
 
 

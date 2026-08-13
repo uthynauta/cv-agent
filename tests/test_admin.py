@@ -127,7 +127,105 @@ def test_admin_document_upload_saves_pdf_and_ingests(tmp_path, monkeypatch):
     assert payload["publish"] == {"pending": True}
 
 
-def test_admin_document_upload_rejects_non_pdf(tmp_path):
+def test_admin_document_upload_saves_markdown_and_ingests(tmp_path, monkeypatch):
+    settings = Settings(
+        _env_file=None,
+        wiki_dir=str(tmp_path),
+        admin_api_key="admin-secret",
+        admin_upload_max_bytes=1024,
+    )
+    app = create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
+
+    class Extracted:
+        kind = "markdown"
+        needs_ocr = False
+        text = "# Profile\n\nMarkdown evidence."
+        sha256 = "a" * 64
+
+    class Result:
+        source_page = Path("sources/profile.md")
+
+    def fake_extract(path: Path):
+        assert path.name.endswith(".md")
+        return Extracted()
+
+    def fake_ingest_file(self, path: Path):
+        assert path.parent == tmp_path / "raw" / "uploads"
+        assert path.read_text(encoding="utf-8") == "# Profile\n\nMarkdown evidence."
+        return Result()
+
+    monkeypatch.setattr("banorte_agent.api.admin.extract_source", fake_extract)
+    monkeypatch.setattr("banorte_agent.api.admin.IngestionService.ingest_file", fake_ingest_file)
+    monkeypatch.setattr("banorte_agent.api.admin.wiki_has_changes", lambda _: True)
+
+    response = TestClient(app).post(
+        "/admin/documents",
+        headers={"Authorization": "Bearer admin-secret"},
+        files={"file": ("Profile Notes.md", b"# Profile\n\nMarkdown evidence.", "text/markdown")},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["document"]["filename"] == "Profile-Notes.md"
+    assert payload["document"]["kind"] == "markdown"
+    assert payload["ingestion"] == {"count": 1, "sources": ["sources/profile.md"]}
+    assert payload["publish"] == {"pending": True}
+
+
+def test_admin_document_upload_saves_latex_and_ingests(tmp_path, monkeypatch):
+    settings = Settings(
+        _env_file=None,
+        wiki_dir=str(tmp_path),
+        admin_api_key="admin-secret",
+        admin_upload_max_bytes=1024,
+    )
+    app = create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
+
+    class Extracted:
+        kind = "latex"
+        needs_ocr = False
+        text = "Profile latex evidence."
+        sha256 = "a" * 64
+
+    class Result:
+        source_page = Path("sources/profile-latex.md")
+
+    def fake_extract(path: Path):
+        assert path.name.endswith(".tex")
+        return Extracted()
+
+    def fake_ingest_file(self, path: Path):
+        assert path.parent == tmp_path / "raw" / "uploads"
+        assert path.read_text(encoding="utf-8") == r"\section{Profile} Profile latex evidence."
+        return Result()
+
+    monkeypatch.setattr("banorte_agent.api.admin.extract_source", fake_extract)
+    monkeypatch.setattr("banorte_agent.api.admin.IngestionService.ingest_file", fake_ingest_file)
+    monkeypatch.setattr("banorte_agent.api.admin.wiki_has_changes", lambda _: True)
+
+    response = TestClient(app).post(
+        "/admin/documents",
+        headers={"Authorization": "Bearer admin-secret"},
+        files={
+            "file": (
+                "Profile Source.tex",
+                rb"\section{Profile} Profile latex evidence.",
+                "application/x-tex",
+            )
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["document"]["filename"] == "Profile-Source.tex"
+    assert payload["document"]["kind"] == "latex"
+    assert payload["ingestion"] == {"count": 1, "sources": ["sources/profile-latex.md"]}
+    assert payload["publish"] == {"pending": True}
+
+
+def test_admin_document_upload_rejects_unsupported_extension(tmp_path):
     settings = Settings(_env_file=None, wiki_dir=str(tmp_path), admin_api_key="admin-secret")
     app = create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
 
@@ -138,6 +236,7 @@ def test_admin_document_upload_rejects_non_pdf(tmp_path):
     )
 
     assert response.status_code == 400
+    assert response.json()["detail"] == "only .pdf, .md, and .tex uploads are supported"
 
 
 def test_admin_document_upload_rejects_oversized_file(tmp_path):
