@@ -3,9 +3,9 @@ from pathlib import Path
 import re
 import unicodedata
 
-from banorte_agent.metrics import SEARCH_HITS
-from banorte_agent.wiki.repository import WikiRepository
-from banorte_agent.tracing import get_tracer, safe_count_attribute
+from cv_agent.metrics import SEARCH_HITS
+from cv_agent.knowledge.repository import KnowledgeRepository
+from cv_agent.tracing import get_tracer, safe_count_attribute
 
 
 SPANISH_STOPWORDS = {
@@ -40,8 +40,8 @@ class SearchHit:
     score: float
 
 
-class WikiSearch:
-    def __init__(self, repository: WikiRepository) -> None:
+class KnowledgeSearch:
+    def __init__(self, repository: KnowledgeRepository) -> None:
         self.repository = repository
 
     def search(self, query: str, limit: int = 5) -> list[SearchHit]:

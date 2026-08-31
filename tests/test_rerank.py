@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from banorte_agent.agent.rerank import LLMReranker
-from banorte_agent.wiki.search import SearchHit
+from cv_agent.agent.rerank import LLMReranker
+from cv_agent.knowledge.search import SearchHit
 
 
 class FakeTextClient:

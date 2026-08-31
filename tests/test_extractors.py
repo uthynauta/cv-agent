@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-import banorte_agent.wiki.extractors as extractors
-from banorte_agent.wiki.extractors import extract_source
+import cv_agent.knowledge.extractors as extractors
+from cv_agent.knowledge.extractors import extract_source
 
 
 FIXTURES = Path(__file__).parent / "fixtures"

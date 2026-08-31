@@ -4,9 +4,9 @@ import re
 from fastapi import APIRouter, Response, status
 from fastapi.responses import PlainTextResponse
 
-from banorte_agent.config import Settings, get_settings
-from banorte_agent.metrics import render_metrics
-from banorte_agent.wiki.frontmatter import load_frontmatter
+from cv_agent.config import Settings, get_settings
+from cv_agent.metrics import render_metrics
+from cv_agent.knowledge.frontmatter import load_frontmatter
 
 
 

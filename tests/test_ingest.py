@@ -2,12 +2,12 @@ from pathlib import Path
 
 import pytest
 
-from banorte_agent.config import Settings
-import banorte_agent.wiki.ingest as ingest_module
-from banorte_agent.wiki.extractors import ExtractedSource
-from banorte_agent.wiki.ingest import IngestionService
-from banorte_agent.wiki.openai_ingest import OpenAIWikiIngestionClient
-from banorte_agent.wiki.repository import WikiRepository
+from cv_agent.config import Settings
+import cv_agent.knowledge.ingest as ingest_module
+from cv_agent.knowledge.extractors import ExtractedSource
+from cv_agent.knowledge.ingest import IngestionService
+from cv_agent.knowledge.openai_ingest import OpenAIWikiIngestionClient
+from cv_agent.knowledge.repository import KnowledgeRepository
 
 
 def test_ingest_file_creates_source_page_and_log(tmp_path: Path):
@@ -15,7 +15,7 @@ def test_ingest_file_creates_source_page_and_log(tmp_path: Path):
     raw.mkdir(parents=True)
     source = raw / "othon.tex"
     source.write_text(r"\section{Skills} Python, FastAPI, AI agents", encoding="utf-8")
-    repo = WikiRepository(tmp_path)
+    repo = KnowledgeRepository(tmp_path)
     result = IngestionService(repo).ingest_file(source)
     assert result.source_page == tmp_path / "sources" / "othon.md"
     text = result.source_page.read_text(encoding="utf-8")
@@ -38,7 +38,7 @@ def test_non_latex_ingest_does_not_copy_full_source_text(
     extracted = ExtractedSource(source, private_text, kind, False, "a" * 64)
     monkeypatch.setattr(ingest_module, "extract_source", lambda path: extracted)
 
-    result = IngestionService(WikiRepository(tmp_path)).ingest_file(source)
+    result = IngestionService(KnowledgeRepository(tmp_path)).ingest_file(source)
     generated = result.source_page.read_text(encoding="utf-8")
 
     assert "content_policy: snippet_only" in generated
@@ -113,7 +113,7 @@ def test_openai_ingest_writes_structured_wiki_pages(tmp_path: Path):
         ingestion_mode="openai",
         openai_model="gpt-5.6-luna",
     )
-    result = IngestionService(WikiRepository(tmp_path), settings, FakeTextClient()).ingest_file(source)
+    result = IngestionService(KnowledgeRepository(tmp_path), settings, FakeTextClient()).ingest_file(source)
 
     assert result.source_page == tmp_path / "sources" / "othon.md"
     assert not (tmp_path / "sources" / "model-picked-wrong-slug.md").exists()

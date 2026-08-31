@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
-from banorte_agent.config import Settings
-from banorte_agent.main import create_app
+from cv_agent.config import Settings
+from cv_agent.main import create_app
 
 
 def test_agent_card_exposes_public_a2a_metadata_without_auth():

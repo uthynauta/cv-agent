@@ -3,7 +3,7 @@ from pathlib import Path
 
 
 @dataclass(frozen=True)
-class WikiPage:
+class KnowledgePage:
     path: Path
     title: str
     metadata: dict[str, object]

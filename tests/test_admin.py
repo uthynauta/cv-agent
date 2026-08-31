@@ -3,8 +3,8 @@ import urllib.error
 
 from fastapi.testclient import TestClient
 
-from banorte_agent.config import Settings
-from banorte_agent.main import create_app
+from cv_agent.config import Settings
+from cv_agent.main import create_app
 
 
 def test_admin_ingest_allows_file_inside_raw(tmp_path, monkeypatch):
@@ -22,7 +22,7 @@ def test_admin_ingest_allows_file_inside_raw(tmp_path, monkeypatch):
         return Result()
 
     app = create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
-    monkeypatch.setattr("banorte_agent.api.admin.IngestionService.ingest_file", ingest_file)
+    monkeypatch.setattr("cv_agent.api.admin.IngestionService.ingest_file", ingest_file)
 
     response = TestClient(app).post(
         "/admin/ingest",
@@ -108,9 +108,9 @@ def test_admin_document_upload_saves_pdf_and_ingests(tmp_path, monkeypatch):
         assert path.read_bytes() == b"%PDF-1.4 text"
         return Result()
 
-    monkeypatch.setattr("banorte_agent.api.admin.extract_source", fake_extract)
-    monkeypatch.setattr("banorte_agent.api.admin.IngestionService.ingest_file", fake_ingest_file)
-    monkeypatch.setattr("banorte_agent.api.admin.wiki_has_changes", lambda _: True)
+    monkeypatch.setattr("cv_agent.api.admin.extract_source", fake_extract)
+    monkeypatch.setattr("cv_agent.api.admin.IngestionService.ingest_file", fake_ingest_file)
+    monkeypatch.setattr("cv_agent.api.admin.wiki_has_changes", lambda _: True)
 
     response = TestClient(app).post(
         "/admin/documents",
@@ -154,9 +154,9 @@ def test_admin_document_upload_saves_markdown_and_ingests(tmp_path, monkeypatch)
         assert path.read_text(encoding="utf-8") == "# Profile\n\nMarkdown evidence."
         return Result()
 
-    monkeypatch.setattr("banorte_agent.api.admin.extract_source", fake_extract)
-    monkeypatch.setattr("banorte_agent.api.admin.IngestionService.ingest_file", fake_ingest_file)
-    monkeypatch.setattr("banorte_agent.api.admin.wiki_has_changes", lambda _: True)
+    monkeypatch.setattr("cv_agent.api.admin.extract_source", fake_extract)
+    monkeypatch.setattr("cv_agent.api.admin.IngestionService.ingest_file", fake_ingest_file)
+    monkeypatch.setattr("cv_agent.api.admin.wiki_has_changes", lambda _: True)
 
     response = TestClient(app).post(
         "/admin/documents",
@@ -200,9 +200,9 @@ def test_admin_document_upload_saves_latex_and_ingests(tmp_path, monkeypatch):
         assert path.read_text(encoding="utf-8") == r"\section{Profile} Profile latex evidence."
         return Result()
 
-    monkeypatch.setattr("banorte_agent.api.admin.extract_source", fake_extract)
-    monkeypatch.setattr("banorte_agent.api.admin.IngestionService.ingest_file", fake_ingest_file)
-    monkeypatch.setattr("banorte_agent.api.admin.wiki_has_changes", lambda _: True)
+    monkeypatch.setattr("cv_agent.api.admin.extract_source", fake_extract)
+    monkeypatch.setattr("cv_agent.api.admin.IngestionService.ingest_file", fake_ingest_file)
+    monkeypatch.setattr("cv_agent.api.admin.wiki_has_changes", lambda _: True)
 
     response = TestClient(app).post(
         "/admin/documents",
@@ -267,7 +267,7 @@ def test_admin_document_upload_rejects_low_text_pdf(tmp_path, monkeypatch):
         text = ""
         sha256 = "a" * 64
 
-    monkeypatch.setattr("banorte_agent.api.admin.extract_source", lambda path: Extracted())
+    monkeypatch.setattr("cv_agent.api.admin.extract_source", lambda path: Extracted())
 
     response = TestClient(app).post(
         "/admin/documents",
@@ -300,7 +300,7 @@ def test_admin_status_reports_storage_and_github_without_secrets(tmp_path, monke
                 "error": None,
             }
 
-    monkeypatch.setattr("banorte_agent.api.admin.GitHubAdminService", FakeGitHub)
+    monkeypatch.setattr("cv_agent.api.admin.GitHubAdminService", FakeGitHub)
     response = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")).get(
         "/admin/status",
         headers={"Authorization": "Bearer admin-secret"},
@@ -325,7 +325,7 @@ def test_admin_publish_returns_noop(tmp_path, monkeypatch):
         def publish(self):
             return {"status": "noop", "changed_files": []}
 
-    monkeypatch.setattr("banorte_agent.api.admin.GitHubAdminService", FakeGitHub)
+    monkeypatch.setattr("cv_agent.api.admin.GitHubAdminService", FakeGitHub)
     response = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")).post(
         "/admin/publish",
         headers={"Authorization": "Bearer admin-secret"},
@@ -350,7 +350,7 @@ def test_admin_publish_redacts_failures(tmp_path, monkeypatch):
         def publish(self):
             raise RuntimeError("push failed for secret-token")
 
-    monkeypatch.setattr("banorte_agent.api.admin.GitHubAdminService", FakeGitHub)
+    monkeypatch.setattr("cv_agent.api.admin.GitHubAdminService", FakeGitHub)
     response = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")).post(
         "/admin/publish",
         headers={"Authorization": "Bearer admin-secret"},
@@ -381,7 +381,7 @@ def test_admin_publish_returns_redacted_github_http_errors(tmp_path, monkeypatch
                 None,
             )
 
-    monkeypatch.setattr("banorte_agent.api.admin.GitHubAdminService", FakeGitHub)
+    monkeypatch.setattr("cv_agent.api.admin.GitHubAdminService", FakeGitHub)
     response = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")).post(
         "/admin/publish",
         headers={"Authorization": "Bearer admin-secret"},
@@ -393,7 +393,7 @@ def test_admin_publish_returns_redacted_github_http_errors(tmp_path, monkeypatch
 
 
 def test_admin_status_payload_helper_redacts_secrets(tmp_path, monkeypatch):
-    from banorte_agent.api.admin import build_admin_status_payload
+    from cv_agent.api.admin import build_admin_status_payload
 
     settings = Settings(
         _env_file=None,
@@ -415,7 +415,7 @@ def test_admin_status_payload_helper_redacts_secrets(tmp_path, monkeypatch):
                 "error": "failed secret-token",
             }
 
-    monkeypatch.setattr("banorte_agent.api.admin.GitHubAdminService", FakeGitHub)
+    monkeypatch.setattr("cv_agent.api.admin.GitHubAdminService", FakeGitHub)
 
     payload = build_admin_status_payload(settings)
 

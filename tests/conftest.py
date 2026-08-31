@@ -1,6 +1,6 @@
 import pytest
 
-from banorte_agent.config import get_settings
+from cv_agent.config import get_settings
 
 
 @pytest.fixture(autouse=True)

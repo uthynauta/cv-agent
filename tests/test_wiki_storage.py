@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from banorte_agent.wiki.storage import (
+from cv_agent.knowledge.storage import (
     ensure_wiki_storage,
     safe_upload_filename,
     upload_directory,

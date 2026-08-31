@@ -7,9 +7,9 @@ from uuid import uuid4
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 
-from banorte_agent.metrics import HTTP_LATENCY, HTTP_REQUESTS
+from cv_agent.metrics import HTTP_LATENCY, HTTP_REQUESTS
 
-logger = logging.getLogger("banorte_agent")
+logger = logging.getLogger("cv_agent")
 
 
 def configure_logging() -> None:

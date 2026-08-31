@@ -49,7 +49,7 @@ class Settings(BaseSettings):
         default=None,
         alias="GITHUB_COMMIT_AUTHOR_EMAIL",
     )
-    agent_model_name: str = Field(default="banorte-cv-agent", alias="AGENT_MODEL_NAME")
+    agent_model_name: str = Field(default="cv-agent", alias="AGENT_MODEL_NAME")
     agent_public_url: str = Field(
         default="https://banorte-cv-agent.onrender.com",
         alias="AGENT_PUBLIC_URL",
@@ -59,7 +59,7 @@ class Settings(BaseSettings):
     )
     wiki_dir: str = Field(default="wiki", alias="WIKI_DIR")
     otel_enabled: bool = Field(default=False, alias="OTEL_ENABLED")
-    otel_service_name: str = Field(default="banorte-cv-agent", alias="OTEL_SERVICE_NAME")
+    otel_service_name: str = Field(default="cv-agent", alias="OTEL_SERVICE_NAME")
     otel_exporter_otlp_endpoint: str = Field(default="http://tempo:4317", alias="OTEL_EXPORTER_OTLP_ENDPOINT")
     otel_exporter_otlp_insecure: bool = Field(default=True, alias="OTEL_EXPORTER_OTLP_INSECURE")
     otel_resource_attributes: str | None = Field(default=None, alias="OTEL_RESOURCE_ATTRIBUTES")

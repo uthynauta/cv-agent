@@ -1,8 +1,8 @@
 import urllib.error
 from pathlib import Path
 
-from banorte_agent.admin.github import GitHubAdminService
-from banorte_agent.config import Settings
+from cv_agent.admin.github import GitHubAdminService
+from cv_agent.config import Settings
 
 
 def test_github_status_reports_unconfigured(tmp_path: Path):
@@ -56,7 +56,7 @@ def test_status_redacts_github_error(tmp_path: Path, monkeypatch):
     def fake_urlopen(request, timeout):
         raise urllib.error.HTTPError(str(request.full_url), 401, "Bad credentials token-secret", {}, None)
 
-    monkeypatch.setattr("banorte_agent.admin.github.urlopen", fake_urlopen)
+    monkeypatch.setattr("cv_agent.admin.github.urlopen", fake_urlopen)
     service = GitHubAdminService(Settings(_env_file=None, github_token="token-secret", wiki_dir=str(wiki)))
 
     status = service.status()
@@ -96,7 +96,7 @@ def test_publish_creates_blobs_tree_commit_ref_and_pr(tmp_path: Path, monkeypatc
         raise AssertionError(path)
 
     monkeypatch.setattr(service, "_github_json", fake_github_json)
-    monkeypatch.setattr("banorte_agent.admin.github._branch_suffix", lambda: "20260812-000000")
+    monkeypatch.setattr("cv_agent.admin.github._branch_suffix", lambda: "20260812-000000")
 
     result = service.publish()
 

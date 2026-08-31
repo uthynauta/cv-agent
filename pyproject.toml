@@ -1,7 +1,7 @@
 [project]
-name = "banorte-agent"
+name = "cv-agent"
 version = "0.1.0"
-description = "Open Responses-compatible CV agent for the Banorte AI challenge"
+description = "Open Responses-compatible CV retrieval agent"
 requires-python = ">=3.12"
 dependencies = [
   "fastapi>=0.116.0",
@@ -27,7 +27,7 @@ dev = [
 ]
 
 [project.scripts]
-banorte-agent = "banorte_agent.cli:main"
+cv-agent = "cv_agent.cli:main"
 
 [build-system]
 requires = ["hatchling"]

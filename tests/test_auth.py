@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from banorte_agent.api.auth import require_bearer
+from cv_agent.api.auth import require_bearer
 
 
 def test_optional_bearer_allows_request_when_key_missing():

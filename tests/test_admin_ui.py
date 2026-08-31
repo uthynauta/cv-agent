@@ -3,8 +3,8 @@ from pathlib import Path
 from fastapi import APIRouter
 from fastapi.testclient import TestClient
 
-from banorte_agent.config import Settings
-from banorte_agent.main import create_app
+from cv_agent.config import Settings
+from cv_agent.main import create_app
 
 
 def ui_settings(tmp_path, **overrides):
@@ -48,7 +48,7 @@ def test_invalid_admin_login_does_not_set_session(tmp_path):
 
     assert response.status_code == 401
     assert "Invalid password" in response.text
-    assert "banorte_admin_session" not in response.cookies
+    assert "cv_agent_admin_session" not in response.cookies
 
 
 def test_non_ascii_invalid_admin_login_does_not_set_session(tmp_path):
@@ -58,7 +58,7 @@ def test_non_ascii_invalid_admin_login_does_not_set_session(tmp_path):
 
     assert response.status_code == 401
     assert "Invalid password" in response.text
-    assert "banorte_admin_session" not in response.cookies
+    assert "cv_agent_admin_session" not in response.cookies
 
 
 def test_valid_admin_login_sets_session_and_redirects(tmp_path):
@@ -68,13 +68,13 @@ def test_valid_admin_login_sets_session_and_redirects(tmp_path):
 
     assert response.status_code == 303
     assert response.headers["location"] == "/admin/ui"
-    assert response.cookies.get("banorte_admin_session")
+    assert response.cookies.get("cv_agent_admin_session")
 
 
 def test_admin_dashboard_rejects_non_ascii_session_cookie(tmp_path):
     response = TestClient(
         create_app(settings=ui_settings(tmp_path), agent_answerer=lambda text, instructions=None: "ok")
-    ).get("/admin/ui", headers={"cookie": b"banorte_admin_session=payload.\xc3\xa1"}, follow_redirects=False)
+    ).get("/admin/ui", headers={"cookie": b"cv_agent_admin_session=payload.\xc3\xa1"}, follow_redirects=False)
 
     assert response.status_code == 303
     assert response.headers["location"] == "/admin/login"
@@ -83,7 +83,7 @@ def test_admin_dashboard_rejects_non_ascii_session_cookie(tmp_path):
 def test_admin_dashboard_rejects_non_ascii_session_payload(tmp_path):
     response = TestClient(
         create_app(settings=ui_settings(tmp_path), agent_answerer=lambda text, instructions=None: "ok")
-    ).get("/admin/ui", headers={"cookie": b"banorte_admin_session=\xc3\xa1.payload"}, follow_redirects=False)
+    ).get("/admin/ui", headers={"cookie": b"cv_agent_admin_session=\xc3\xa1.payload"}, follow_redirects=False)
 
     assert response.status_code == 303
     assert response.headers["location"] == "/admin/login"
@@ -98,7 +98,7 @@ def test_admin_logout_clears_session(tmp_path):
     assert response.status_code == 303
     assert response.headers["location"] == "/admin/login"
     set_cookie = response.headers["set-cookie"].lower()
-    assert "banorte_admin_session=" in set_cookie
+    assert "cv_agent_admin_session=" in set_cookie
     assert "path=/admin" in set_cookie
     assert "max-age=0" in set_cookie or "expires=" in set_cookie
 
@@ -158,7 +158,7 @@ def test_ui_status_returns_payload_without_secrets(tmp_path, monkeypatch):
                 "error": None,
             }
 
-    monkeypatch.setattr("banorte_agent.api.admin.GitHubAdminService", FakeGitHub)
+    monkeypatch.setattr("cv_agent.api.admin.GitHubAdminService", FakeGitHub)
     client = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok"))
     client.post("/admin/login", data={"password": "ui-secret"})
 
@@ -201,9 +201,9 @@ def test_ui_upload_reuses_document_upload_behavior(tmp_path, monkeypatch):
         assert path.read_bytes() == b"%PDF-1.4 text"
         return Result()
 
-    monkeypatch.setattr("banorte_agent.api.admin.extract_source", fake_extract)
-    monkeypatch.setattr("banorte_agent.api.admin.IngestionService.ingest_file", fake_ingest_file)
-    monkeypatch.setattr("banorte_agent.api.admin.wiki_has_changes", lambda _: True)
+    monkeypatch.setattr("cv_agent.api.admin.extract_source", fake_extract)
+    monkeypatch.setattr("cv_agent.api.admin.IngestionService.ingest_file", fake_ingest_file)
+    monkeypatch.setattr("cv_agent.api.admin.wiki_has_changes", lambda _: True)
 
     client = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok"))
     client.post("/admin/login", data={"password": "ui-secret"})
@@ -239,8 +239,8 @@ def test_ui_upload_uses_shared_admin_ingestion(tmp_path, monkeypatch):
             "publish": {"pending": False},
         }
 
-    monkeypatch.setattr("banorte_agent.main.build_admin_router", fake_build_admin_router)
-    monkeypatch.setattr("banorte_agent.admin.ui.upload_document_payload", fake_upload_document_payload)
+    monkeypatch.setattr("cv_agent.main.build_admin_router", fake_build_admin_router)
+    monkeypatch.setattr("cv_agent.admin.ui.upload_document_payload", fake_upload_document_payload)
 
     client = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok"))
     client.post("/admin/login", data={"password": "ui-secret"})
@@ -277,7 +277,7 @@ def test_ui_publish_returns_redacted_result(tmp_path, monkeypatch):
                 "error": "publish detail secret-token",
             }
 
-    monkeypatch.setattr("banorte_agent.api.admin.GitHubAdminService", FakeGitHub)
+    monkeypatch.setattr("cv_agent.api.admin.GitHubAdminService", FakeGitHub)
     client = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok"))
     client.post("/admin/login", data={"password": "ui-secret"})
 

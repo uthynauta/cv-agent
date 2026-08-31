@@ -17,4 +17,4 @@ ENV PATH="/app/.venv/bin:$PATH"
 
 EXPOSE 8000
 
-CMD ["uvicorn", "banorte_agent.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "cv_agent.main:app", "--host", "0.0.0.0", "--port", "8000"]

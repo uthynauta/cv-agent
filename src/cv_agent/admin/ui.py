@@ -9,12 +9,12 @@ from fastapi import APIRouter, File, Request, UploadFile, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from starlette.responses import Response
 
-from banorte_agent.api.admin import build_admin_status_payload, publish_wiki_payload, upload_document_payload
-from banorte_agent.config import Settings
-from banorte_agent.wiki.ingest import IngestionService
+from cv_agent.api.admin import build_admin_status_payload, publish_wiki_payload, upload_document_payload
+from cv_agent.config import Settings
+from cv_agent.knowledge.ingest import IngestionService
 
 
-SESSION_COOKIE = "banorte_admin_session"
+SESSION_COOKIE = "cv_agent_admin_session"
 
 
 def build_admin_ui_router(settings: Settings, ingestion: IngestionService) -> APIRouter:

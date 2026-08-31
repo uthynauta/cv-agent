@@ -1,7 +1,7 @@
 import json
 from typing import Protocol
 
-from banorte_agent.wiki.search import SearchHit
+from cv_agent.knowledge.search import SearchHit
 
 
 class TextClient(Protocol):

@@ -1,6 +1,6 @@
 import json
 
-from banorte_agent.config import GroundingMode
+from cv_agent.config import GroundingMode
 
 
 def build_instructions(grounding_mode: GroundingMode, extra_instructions: str | None = None) -> str:

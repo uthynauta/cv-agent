@@ -2,8 +2,8 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from banorte_agent.config import Settings
-from banorte_agent.main import create_app
+from cv_agent.config import Settings
+from cv_agent.main import create_app
 
 
 def test_healthz_returns_alive():
@@ -62,7 +62,7 @@ def test_create_app_seeds_empty_configured_wiki(tmp_path):
 
     app = create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
 
-    assert app.title == "Banorte CV Agent"
+    assert app.title == "CV Agent"
     assert (target / "raw" / "uploads").is_dir()
 
 

@@ -3,9 +3,9 @@ import time
 from openai import OpenAI
 from opentelemetry.trace import Status, StatusCode
 
-from banorte_agent.config import Settings
-from banorte_agent.metrics import OPENAI_CALLS, OPENAI_LATENCY
-from banorte_agent.tracing import get_tracer, safe_count_attribute
+from cv_agent.config import Settings
+from cv_agent.metrics import OPENAI_CALLS, OPENAI_LATENCY
+from cv_agent.tracing import get_tracer, safe_count_attribute
 
 
 class OpenAITextClient:

@@ -1,13 +1,13 @@
 from pathlib import Path
 import argparse
 
-from banorte_agent.config import get_settings
-from banorte_agent.wiki.ingest import IngestionService
-from banorte_agent.wiki.repository import WikiRepository
+from cv_agent.config import get_settings
+from cv_agent.knowledge.ingest import IngestionService
+from cv_agent.knowledge.repository import KnowledgeRepository
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(prog="banorte-agent")
+    parser = argparse.ArgumentParser(prog="cv-agent")
     subparsers = parser.add_subparsers(dest="command", required=True)
     ingest_parser = subparsers.add_parser("ingest")
     ingest_parser.add_argument("path")
@@ -15,7 +15,7 @@ def main() -> None:
 
     if args.command == "ingest":
         settings = get_settings()
-        repo = WikiRepository(Path(settings.wiki_dir))
+        repo = KnowledgeRepository(Path(settings.wiki_dir))
         service = IngestionService(repo, settings)
         target = Path(args.path)
         results = service.ingest_directory(target) if target.is_dir() else [service.ingest_file(target)]

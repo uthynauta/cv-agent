@@ -4,8 +4,8 @@ from typing import Protocol
 
 from openai import OpenAI
 
-from banorte_agent.config import Settings
-from banorte_agent.wiki.extractors import ExtractedSource
+from cv_agent.config import Settings
+from cv_agent.knowledge.extractors import ExtractedSource
 
 
 ALLOWED_PAGE_ROOTS = {

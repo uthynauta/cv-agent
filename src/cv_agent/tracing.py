@@ -8,7 +8,7 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-from banorte_agent.config import Settings
+from cv_agent.config import Settings
 
 
 def tracing_enabled(settings: Settings) -> bool:
@@ -30,7 +30,7 @@ def configure_tracing(app: FastAPI, settings: Settings) -> None:
 
 
 def get_tracer():
-    return trace.get_tracer("banorte_agent")
+    return trace.get_tracer("cv_agent")
 
 
 def resource_attributes(settings: Settings) -> dict[str, str]:

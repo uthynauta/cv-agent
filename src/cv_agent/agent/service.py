@@ -2,10 +2,10 @@ import re
 import unicodedata
 from typing import Protocol
 
-from banorte_agent.agent.prompts import build_instructions, encode_untrusted_text
-from banorte_agent.config import Settings
-from banorte_agent.tracing import get_tracer, safe_count_attribute
-from banorte_agent.wiki.search import SearchHit, WikiSearch
+from cv_agent.agent.prompts import build_instructions, encode_untrusted_text
+from cv_agent.config import Settings
+from cv_agent.tracing import get_tracer, safe_count_attribute
+from cv_agent.knowledge.search import SearchHit, KnowledgeSearch
 
 
 class TextClient(Protocol):
@@ -22,7 +22,7 @@ class AgentService:
     def __init__(
         self,
         settings: Settings,
-        search: WikiSearch,
+        search: KnowledgeSearch,
         text_client: TextClient,
         reranker: HitReranker | None = None,
     ) -> None:
@@ -64,7 +64,7 @@ class AgentService:
             return output if _valid_output(output, titles) else _safe_fallback(titles)
 
 
-def _build_context(hits: list[SearchHit], search: WikiSearch, settings: Settings) -> str:
+def _build_context(hits: list[SearchHit], search: KnowledgeSearch, settings: Settings) -> str:
     if settings.context_mode == "excerpt":
         return _truncate_context(
             "\n\n".join(
@@ -91,7 +91,7 @@ def _build_context(hits: list[SearchHit], search: WikiSearch, settings: Settings
 
 
 def _prepare_rerank_candidates(
-    hits: list[SearchHit], search: WikiSearch, settings: Settings
+    hits: list[SearchHit], search: KnowledgeSearch, settings: Settings
 ) -> list[SearchHit]:
     if settings.context_mode != "page":
         return hits

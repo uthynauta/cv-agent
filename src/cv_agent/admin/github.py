@@ -7,7 +7,7 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from banorte_agent.config import Settings
+from cv_agent.config import Settings
 
 
 class GitHubAdminService:

@@ -3,22 +3,22 @@ from pathlib import Path
 
 from fastapi import FastAPI
 
-from banorte_agent.agent.openai_client import OpenAITextClient
-from banorte_agent.agent.rerank import LLMReranker
-from banorte_agent.agent.service import AgentService
-from banorte_agent.admin.ui import build_admin_ui_router
-from banorte_agent.api.admin import build_admin_router
-from banorte_agent.api.agent_card import build_agent_card_router
-from banorte_agent.api.health import build_health_router
-from banorte_agent.api.responses import build_responses_router
-from banorte_agent.api.request_limits import public_request_size_middleware
-from banorte_agent.config import Settings, get_settings
-from banorte_agent.logging import configure_logging, request_observability_middleware
-from banorte_agent.tracing import configure_tracing
-from banorte_agent.wiki.ingest import IngestionService
-from banorte_agent.wiki.repository import WikiRepository
-from banorte_agent.wiki.search import WikiSearch
-from banorte_agent.wiki.storage import ensure_wiki_storage
+from cv_agent.agent.openai_client import OpenAITextClient
+from cv_agent.agent.rerank import LLMReranker
+from cv_agent.agent.service import AgentService
+from cv_agent.admin.ui import build_admin_ui_router
+from cv_agent.api.admin import build_admin_router
+from cv_agent.api.agent_card import build_agent_card_router
+from cv_agent.api.health import build_health_router
+from cv_agent.api.responses import build_responses_router
+from cv_agent.api.request_limits import public_request_size_middleware
+from cv_agent.config import Settings, get_settings
+from cv_agent.logging import configure_logging, request_observability_middleware
+from cv_agent.tracing import configure_tracing
+from cv_agent.knowledge.ingest import IngestionService
+from cv_agent.knowledge.repository import KnowledgeRepository
+from cv_agent.knowledge.search import KnowledgeSearch
+from cv_agent.knowledge.storage import ensure_wiki_storage
 
 
 def create_app(
@@ -26,7 +26,7 @@ def create_app(
     agent_answerer: Callable[[str, str | None], str] | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
-    app = FastAPI(title="Banorte CV Agent", version="0.1.0")
+    app = FastAPI(title="CV Agent", version="0.3.0")
     configure_logging()
     configure_tracing(app, settings)
     app.middleware("http")(
@@ -39,7 +39,7 @@ def create_app(
     app.include_router(build_health_router(settings))
     bundled_wiki_dir = Path(__file__).resolve().parents[2] / "wiki"
     ensure_wiki_storage(settings.wiki_dir, bundled_wiki_dir)
-    repository = WikiRepository(Path(settings.wiki_dir))
+    repository = KnowledgeRepository(Path(settings.wiki_dir))
     ingestion = IngestionService(repository, settings)
     app.include_router(build_admin_ui_router(settings, ingestion))
     if agent_answerer is None:
@@ -51,7 +51,7 @@ def create_app(
                     update={"openai_model": settings.rerank_model or settings.openai_model}
                 )
                 reranker = LLMReranker(OpenAITextClient(rerank_settings), settings.answer_top_k)
-            agent = AgentService(settings, WikiSearch(repository), answer_client, reranker)
+            agent = AgentService(settings, KnowledgeSearch(repository), answer_client, reranker)
             return agent.answer(text, instructions)
     app.include_router(build_responses_router(settings, agent_answerer))
     app.include_router(build_admin_router(settings, ingestion))

@@ -3,12 +3,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 import re
 
-from banorte_agent.config import Settings
-from banorte_agent.wiki.extractors import extract_source
-from banorte_agent.metrics import INGEST_EVENTS
-from banorte_agent.wiki.openai_ingest import OpenAIWikiIngestionClient, TextClient, build_openai_wiki_pages
-from banorte_agent.wiki.repository import WikiRepository
-from banorte_agent.tracing import get_tracer
+from cv_agent.config import Settings
+from cv_agent.knowledge.extractors import extract_source
+from cv_agent.metrics import INGEST_EVENTS
+from cv_agent.knowledge.openai_ingest import OpenAIWikiIngestionClient, TextClient, build_openai_wiki_pages
+from cv_agent.knowledge.repository import KnowledgeRepository
+from cv_agent.tracing import get_tracer
 
 
 @dataclass(frozen=True)
@@ -21,7 +21,7 @@ class IngestResult:
 class IngestionService:
     def __init__(
         self,
-        repository: WikiRepository,
+        repository: KnowledgeRepository,
         settings: Settings | None = None,
         text_client: TextClient | None = None,
     ) -> None:

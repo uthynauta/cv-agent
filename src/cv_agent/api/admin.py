@@ -6,12 +6,12 @@ from urllib.error import HTTPError, URLError
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile, status
 
-from banorte_agent.admin.github import GitHubAdminService
-from banorte_agent.api.models import IngestRequest
-from banorte_agent.config import Settings
-from banorte_agent.wiki.extractors import extract_source
-from banorte_agent.wiki.ingest import IngestionService
-from banorte_agent.wiki.storage import safe_upload_filename, upload_directory
+from cv_agent.admin.github import GitHubAdminService
+from cv_agent.api.models import IngestRequest
+from cv_agent.config import Settings
+from cv_agent.knowledge.extractors import extract_source
+from cv_agent.knowledge.ingest import IngestionService
+from cv_agent.knowledge.storage import safe_upload_filename, upload_directory
 
 
 def wiki_has_changes(settings: Settings) -> bool:

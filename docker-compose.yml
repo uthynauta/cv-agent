@@ -1,5 +1,5 @@
 services:
-  banorte-agent:
+  cv-agent:
     build: .
     ports:
       - "8000:8000"

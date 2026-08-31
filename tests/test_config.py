@@ -1,4 +1,4 @@
-from banorte_agent.config import Settings
+from cv_agent.config import Settings
 
 
 def test_settings_defaults():
@@ -12,7 +12,7 @@ def test_settings_defaults():
     assert settings.answer_top_k == 5
     assert settings.context_mode == "page"
     assert settings.max_context_chars == 12000
-    assert settings.agent_model_name == "banorte-cv-agent"
+    assert settings.agent_model_name == "cv-agent"
     assert settings.wiki_dir == "wiki"
 
 

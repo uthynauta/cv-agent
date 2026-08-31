@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from banorte_agent.wiki.frontmatter import dump_frontmatter, load_frontmatter
-from banorte_agent.wiki.repository import WikiRepository
+from cv_agent.knowledge.frontmatter import dump_frontmatter, load_frontmatter
+from cv_agent.knowledge.repository import KnowledgeRepository
 
 
 def test_frontmatter_round_trip():
@@ -15,7 +15,7 @@ def test_frontmatter_round_trip():
 
 
 def test_repository_writes_and_lists_pages(tmp_path: Path):
-    repo = WikiRepository(tmp_path)
+    repo = KnowledgeRepository(tmp_path)
     written = repo.write_page(
         "sources/othon-cv.md",
         "Othon CV",
@@ -32,7 +32,7 @@ def test_repository_writes_and_lists_pages(tmp_path: Path):
 
 @pytest.mark.parametrize("relative_path", ["/outside.md", "../outside.md"])
 def test_repository_rejects_paths_outside_root(tmp_path: Path, relative_path: str):
-    repo = WikiRepository(tmp_path / "wiki")
+    repo = KnowledgeRepository(tmp_path / "wiki")
 
     with pytest.raises(ValueError, match="outside wiki root"):
         repo.write_page(relative_path, "Outside", {}, "Should not be written")

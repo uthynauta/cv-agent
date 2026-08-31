@@ -4,9 +4,9 @@ from uuid import uuid4
 
 from fastapi import APIRouter
 
-from banorte_agent.api.auth import require_bearer
-from banorte_agent.api.models import ResponseRequest
-from banorte_agent.config import Settings
+from cv_agent.api.auth import require_bearer
+from cv_agent.api.models import ResponseRequest
+from cv_agent.config import Settings
 
 
 def build_responses_router(settings: Settings, answerer: Callable[[str, str | None], str]) -> APIRouter:

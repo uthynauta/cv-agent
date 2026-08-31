@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from banorte_agent.config import Settings
+from cv_agent.config import Settings
 
 
 def build_agent_card_router(settings: Settings) -> APIRouter:
