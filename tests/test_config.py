@@ -63,6 +63,11 @@ def test_blank_or_current_directory_data_dir_is_rejected(value):
         Settings(_env_file=None, data_dir=value)
 
 
+def test_filesystem_root_data_dir_is_rejected():
+    with pytest.raises(ValueError, match="data_dir"):
+        Settings(_env_file=None, data_dir=Path("/"))
+
+
 @pytest.mark.parametrize("field", ["data_git_author_name", "data_git_author_email"])
 @pytest.mark.parametrize("value", ["", "   "])
 def test_blank_data_git_author_values_are_rejected(field, value):

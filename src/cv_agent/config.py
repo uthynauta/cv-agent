@@ -117,7 +117,9 @@ class Settings(BaseSettings):
         if not isinstance(value, (str, Path)):
             raise ValueError("data_dir must be a nonblank path")
         normalized = str(value).strip()
-        if not normalized or Path(normalized) == Path("."):
+        candidate = Path(normalized).expanduser()
+        resolved = candidate.resolve()
+        if not normalized or candidate == Path(".") or resolved == Path(resolved.anchor):
             raise ValueError("data_dir must be a nonblank path other than '.'")
         return normalized
 

@@ -13,9 +13,11 @@ def _normalize_data_root(root: str | Path) -> Path:
     if not isinstance(root, (str, Path)):
         raise ValueError("data root must be a nonblank path")
     normalized = str(root).strip()
-    if not normalized or Path(normalized) == Path("."):
+    candidate = Path(normalized).expanduser()
+    resolved = candidate.resolve()
+    if not normalized or candidate == Path(".") or resolved == Path(resolved.anchor):
         raise ValueError("data root must be a nonblank path other than '.'")
-    return Path(normalized)
+    return candidate
 
 
 @dataclass(frozen=True)

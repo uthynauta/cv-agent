@@ -32,6 +32,11 @@ def test_data_paths_reject_blank_or_current_directory_root(root):
         DataPaths.from_root(root)
 
 
+def test_data_paths_reject_filesystem_root():
+    with pytest.raises(ValueError, match="data root"):
+        DataPaths.from_root(Path("/"))
+
+
 def test_ensure_data_storage_creates_empty_tree(tmp_path: Path):
     paths = ensure_data_storage(tmp_path / "data")
 
