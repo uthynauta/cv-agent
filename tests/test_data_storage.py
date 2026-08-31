@@ -26,6 +26,12 @@ def test_data_paths_derive_all_runtime_locations(tmp_path: Path):
     assert paths.locks == root / "locks"
 
 
+@pytest.mark.parametrize("root", ["", "   ", ".", Path(".")])
+def test_data_paths_reject_blank_or_current_directory_root(root):
+    with pytest.raises(ValueError, match="data root"):
+        DataPaths.from_root(root)
+
+
 def test_ensure_data_storage_creates_empty_tree(tmp_path: Path):
     paths = ensure_data_storage(tmp_path / "data")
 
@@ -42,6 +48,17 @@ def test_ensure_data_storage_creates_empty_tree(tmp_path: Path):
     ):
         assert directory.is_dir()
     assert list(paths.knowledge.iterdir()) == []
+
+
+def test_ensure_data_storage_is_idempotent_and_preserves_knowledge(tmp_path: Path):
+    paths = ensure_data_storage(tmp_path / "data")
+    sentinel = paths.knowledge / "sentinel.md"
+    sentinel.write_text("keep", encoding="utf-8")
+
+    second_paths = ensure_data_storage(tmp_path / "data")
+
+    assert second_paths == paths
+    assert sentinel.read_text(encoding="utf-8") == "keep"
 
 
 def test_ensure_wiki_storage_seeds_empty_wiki(tmp_path: Path):

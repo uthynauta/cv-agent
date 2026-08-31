@@ -10,6 +10,7 @@ GroundingMode = Literal["strict", "inference"]
 IngestionMode = Literal["openai", "deterministic"]
 RetrievalMode = Literal["lexical", "llm_rerank"]
 ContextMode = Literal["excerpt", "page"]
+AgentLanguage = Literal["auto", "es", "en"]
 
 
 class Settings(BaseSettings):
@@ -63,7 +64,7 @@ class Settings(BaseSettings):
     agent_description: str = Field(
         default="Ask questions about this candidate's CV.", alias="AGENT_DESCRIPTION"
     )
-    agent_language: str = Field(default="auto", alias="AGENT_LANGUAGE")
+    agent_language: AgentLanguage = Field(default="auto", alias="AGENT_LANGUAGE")
     agent_public_url: str = Field(
         default="https://banorte-cv-agent.onrender.com",
         alias="AGENT_PUBLIC_URL",
@@ -110,6 +111,16 @@ class Settings(BaseSettings):
             raise ValueError("context_mode must be 'excerpt' or 'page'")
         return value
 
+    @field_validator("data_dir", mode="before")
+    @classmethod
+    def validate_data_dir(cls, value: str | Path) -> str | Path:
+        if not isinstance(value, (str, Path)):
+            raise ValueError("data_dir must be a nonblank path")
+        normalized = str(value).strip()
+        if not normalized or Path(normalized) == Path("."):
+            raise ValueError("data_dir must be a nonblank path other than '.'")
+        return normalized
+
     @field_validator("agent_language", mode="before")
     @classmethod
     def validate_agent_language(cls, value: str) -> str:
@@ -120,9 +131,19 @@ class Settings(BaseSettings):
     @field_validator("agent_owner_name", mode="before")
     @classmethod
     def normalize_agent_owner_name(cls, value: str | None) -> str | None:
-        if value is None or (isinstance(value, str) and not value.strip()):
+        if value is None:
             return None
+        if isinstance(value, str):
+            normalized = value.strip()
+            return normalized or None
         return value
+
+    @field_validator("data_git_author_name", "data_git_author_email", mode="before")
+    @classmethod
+    def normalize_data_git_author(cls, value: str) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("data Git author values must be nonblank")
+        return value.strip()
 
     @field_validator("rerank_model", mode="before")
     @classmethod

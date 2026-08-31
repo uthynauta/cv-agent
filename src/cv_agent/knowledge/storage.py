@@ -9,6 +9,15 @@ SUPPORTED_UPLOAD_EXTENSIONS = {".pdf", ".md", ".tex"}
 SUPPORTED_UPLOAD_EXTENSIONS_MESSAGE = "only .pdf, .md, and .tex uploads are supported"
 
 
+def _normalize_data_root(root: str | Path) -> Path:
+    if not isinstance(root, (str, Path)):
+        raise ValueError("data root must be a nonblank path")
+    normalized = str(root).strip()
+    if not normalized or Path(normalized) == Path("."):
+        raise ValueError("data root must be a nonblank path other than '.'")
+    return Path(normalized)
+
+
 @dataclass(frozen=True)
 class DataPaths:
     root: Path
@@ -23,7 +32,7 @@ class DataPaths:
 
     @classmethod
     def from_root(cls, root: str | Path) -> "DataPaths":
-        resolved = Path(root).expanduser().resolve()
+        resolved = _normalize_data_root(root).expanduser().resolve()
         repository = resolved / "repository"
         return cls(
             root=resolved,

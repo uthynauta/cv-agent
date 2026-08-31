@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from cv_agent.config import Settings
+from cv_agent.config import AgentLanguage, Settings
 
 
 def test_settings_defaults():
@@ -40,13 +40,54 @@ def test_generic_storage_and_identity_settings(tmp_path):
     assert settings.agent_owner_name == "Candidate Owner"
 
 
-def test_blank_agent_owner_name_normalizes_to_none():
-    assert Settings(_env_file=None, agent_owner_name="").agent_owner_name is None
+@pytest.mark.parametrize("value", ["", "   "])
+def test_blank_agent_owner_name_normalizes_to_none(value):
+    assert Settings(_env_file=None, agent_owner_name=value).agent_owner_name is None
+
+
+def test_agent_owner_name_is_stripped():
+    assert Settings(_env_file=None, agent_owner_name="  Alex  ").agent_owner_name == "Alex"
+
+
+@pytest.mark.parametrize("value", ["", "   "])
+def test_blank_data_dir_from_environment_is_rejected(monkeypatch, value):
+    monkeypatch.setenv("DATA_DIR", value)
+
+    with pytest.raises(ValueError, match="data_dir"):
+        Settings(_env_file=None)
+
+
+@pytest.mark.parametrize("value", ["", "   ", "."])
+def test_blank_or_current_directory_data_dir_is_rejected(value):
+    with pytest.raises(ValueError, match="data_dir"):
+        Settings(_env_file=None, data_dir=value)
+
+
+@pytest.mark.parametrize("field", ["data_git_author_name", "data_git_author_email"])
+@pytest.mark.parametrize("value", ["", "   "])
+def test_blank_data_git_author_values_are_rejected(field, value):
+    with pytest.raises(ValueError, match="nonblank"):
+        Settings(_env_file=None, **{field: value})
+
+
+def test_data_git_author_values_are_stripped():
+    settings = Settings(
+        _env_file=None,
+        data_git_author_name="  CV Agent  ",
+        data_git_author_email="  cv-agent@localhost  ",
+    )
+
+    assert settings.data_git_author_name == "CV Agent"
+    assert settings.data_git_author_email == "cv-agent@localhost"
 
 
 @pytest.mark.parametrize("value", ["auto", "es", "en"])
 def test_agent_language_accepts_supported_values(value):
     assert Settings(_env_file=None, agent_language=value).agent_language == value
+
+
+def test_agent_language_uses_supported_literal_type():
+    assert Settings.model_fields["agent_language"].annotation is AgentLanguage
 
 
 @pytest.mark.parametrize("value", ["", "english", "es-MX", "../es"])
