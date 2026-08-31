@@ -1,6 +1,6 @@
 [project]
 name = "cv-agent"
-version = "0.1.0"
+version = "0.3.0"
 description = "Open Responses-compatible CV retrieval agent"
 requires-python = ">=3.12"
 dependencies = [

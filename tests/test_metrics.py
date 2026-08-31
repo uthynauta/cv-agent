@@ -21,7 +21,7 @@ def test_metrics_endpoint_exposes_prometheus_text(monkeypatch):
     response = client.get("/metrics")
     assert response.status_code == 200
     assert "text/plain" in response.headers["content-type"]
-    assert "banorte_http_requests_total" in response.text
+    assert "cv_agent_http_requests_total" in response.text
 
 
 def test_request_id_header_is_returned(monkeypatch):
@@ -84,7 +84,7 @@ def test_search_hit_metric_is_recorded(tmp_path: Path):
     KnowledgeSearch(repo).search("Python")
 
     metrics = render_metrics().decode("utf-8")
-    assert "banorte_wiki_search_hits_count" in metrics
+    assert "cv_agent_wiki_search_hits_count" in metrics
 
 
 def test_openai_latency_metric_is_recorded():
@@ -102,5 +102,5 @@ def test_openai_latency_metric_is_recorded():
     client.create_response("instructions", "input")
 
     metrics = render_metrics().decode("utf-8")
-    assert "banorte_openai_call_duration_seconds_count" in metrics
+    assert "cv_agent_openai_call_duration_seconds_count" in metrics
     assert responses.kwargs["max_output_tokens"] == 1200
