@@ -38,6 +38,12 @@ def test_data_paths_reject_current_working_directory(root_factory):
         DataPaths.from_root(root_factory())
 
 
+@pytest.mark.parametrize("root", [Path("/"), "/"])
+def test_data_paths_reject_filesystem_root(root):
+    with pytest.raises(ValueError, match="data root"):
+        DataPaths.from_root(root)
+
+
 @pytest.mark.parametrize("root", ["data/..", Path("data/..")])
 def test_data_paths_reject_collapsing_root(tmp_path, monkeypatch, root):
     monkeypatch.chdir(tmp_path)

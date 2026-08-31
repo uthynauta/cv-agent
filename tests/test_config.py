@@ -69,6 +69,12 @@ def test_current_working_directory_data_dir_is_rejected(value_factory):
         Settings(_env_file=None, data_dir=value_factory())
 
 
+@pytest.mark.parametrize("value", [Path("/"), "/"])
+def test_filesystem_root_data_dir_is_rejected(value):
+    with pytest.raises(ValueError, match="data_dir"):
+        Settings(_env_file=None, data_dir=value)
+
+
 @pytest.mark.parametrize("value", ["data/..", Path("data/..")])
 def test_collapsing_data_dir_is_rejected(tmp_path, monkeypatch, value):
     monkeypatch.chdir(tmp_path)
