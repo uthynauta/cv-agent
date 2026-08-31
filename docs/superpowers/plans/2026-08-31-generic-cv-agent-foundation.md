@@ -230,7 +230,7 @@ data_git_author_email: str = Field(default="cv-agent@localhost", alias="DATA_GIT
 otel_service_name: str = Field(default="cv-agent", alias="OTEL_SERVICE_NAME")
 ```
 
-Remove `wiki_dir` and every `github_*` field. Add:
+Add the generic fields without removing `wiki_dir` or `github_*` yet. Those transitional fields still serve the legacy startup/publish paths and are removed with their consumers in Tasks 5 and 6. Add:
 
 ```python
 @field_validator("agent_language")
@@ -296,7 +296,7 @@ def ensure_data_storage(root: str | Path) -> DataPaths:
 
 - [ ] **Step 5: Update `.env.example` and run focused tests**
 
-Document the exact settings from the design, with blank secrets and no personal/deployment values. Remove `WIKI_DIR` and `GITHUB_*`.
+Add the generic storage, identity, backup, and local-Git settings with blank secrets and no personal values. Keep the existing wiki-path and remote-publishing variables temporarily because their runtime consumers remain until Tasks 5 and 6; mark them as transitional in comments rather than presenting them as the new deployment interface.
 
 Run:
 
