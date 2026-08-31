@@ -1,3 +1,7 @@
+from pathlib import Path
+
+import pytest
+
 from cv_agent.config import Settings
 
 
@@ -14,6 +18,50 @@ def test_settings_defaults():
     assert settings.max_context_chars == 12000
     assert settings.agent_model_name == "cv-agent"
     assert settings.wiki_dir == "wiki"
+    assert settings.data_dir == Path("data")
+    assert settings.agent_owner_name is None
+    assert settings.agent_display_name == "CV Agent"
+    assert settings.agent_description == "Ask questions about this candidate's CV."
+    assert settings.agent_language == "auto"
+    assert settings.admin_backup_max_bytes == 100 * 1024 * 1024
+    assert settings.backup_retention_count == 10
+    assert settings.data_git_author_name == "CV Agent"
+    assert settings.data_git_author_email == "cv-agent@localhost"
+
+
+def test_generic_storage_and_identity_settings(tmp_path):
+    settings = Settings(
+        _env_file=None,
+        data_dir=tmp_path,
+        agent_owner_name="Candidate Owner",
+    )
+
+    assert settings.data_dir == tmp_path
+    assert settings.agent_owner_name == "Candidate Owner"
+
+
+def test_blank_agent_owner_name_normalizes_to_none():
+    assert Settings(_env_file=None, agent_owner_name="").agent_owner_name is None
+
+
+@pytest.mark.parametrize("value", ["auto", "es", "en"])
+def test_agent_language_accepts_supported_values(value):
+    assert Settings(_env_file=None, agent_language=value).agent_language == value
+
+
+@pytest.mark.parametrize("value", ["", "english", "es-MX", "../es"])
+def test_agent_language_rejects_invalid_values(value):
+    with pytest.raises(ValueError):
+        Settings(_env_file=None, agent_language=value)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("admin_backup_max_bytes", 0), ("admin_backup_max_bytes", -1), ("backup_retention_count", 0)],
+)
+def test_backup_limits_reject_non_positive_values(field, value):
+    with pytest.raises(ValueError):
+        Settings(_env_file=None, **{field: value})
 
 
 def test_grounding_mode_rejects_invalid_value():

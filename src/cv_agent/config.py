@@ -1,4 +1,5 @@
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, field_validator
@@ -38,6 +39,12 @@ class Settings(BaseSettings):
         gt=0,
         alias="ADMIN_UPLOAD_MAX_BYTES",
     )
+    admin_backup_max_bytes: int = Field(
+        default=100 * 1024 * 1024,
+        gt=0,
+        alias="ADMIN_BACKUP_MAX_BYTES",
+    )
+    backup_retention_count: int = Field(default=10, ge=1, alias="BACKUP_RETENTION_COUNT")
     github_token: str | None = Field(default=None, alias="GITHUB_TOKEN")
     github_repository: str = Field(default="uthynauta/cv-agent", alias="GITHUB_REPOSITORY")
     github_base_branch: str = Field(default="main", alias="GITHUB_BASE_BRANCH")
@@ -50,9 +57,20 @@ class Settings(BaseSettings):
         alias="GITHUB_COMMIT_AUTHOR_EMAIL",
     )
     agent_model_name: str = Field(default="cv-agent", alias="AGENT_MODEL_NAME")
+    data_dir: Path = Field(default=Path("data"), alias="DATA_DIR")
+    agent_owner_name: str | None = Field(default=None, alias="AGENT_OWNER_NAME")
+    agent_display_name: str = Field(default="CV Agent", alias="AGENT_DISPLAY_NAME")
+    agent_description: str = Field(
+        default="Ask questions about this candidate's CV.", alias="AGENT_DESCRIPTION"
+    )
+    agent_language: str = Field(default="auto", alias="AGENT_LANGUAGE")
     agent_public_url: str = Field(
         default="https://banorte-cv-agent.onrender.com",
         alias="AGENT_PUBLIC_URL",
+    )
+    data_git_author_name: str = Field(default="CV Agent", alias="DATA_GIT_AUTHOR_NAME")
+    data_git_author_email: str = Field(
+        default="cv-agent@localhost", alias="DATA_GIT_AUTHOR_EMAIL"
     )
     public_request_body_limit_bytes: int = Field(
         default=16 * 1024, gt=0, alias="PUBLIC_REQUEST_BODY_LIMIT_BYTES"
@@ -90,6 +108,20 @@ class Settings(BaseSettings):
     def validate_context_mode(cls, value: str) -> str:
         if value not in {"excerpt", "page"}:
             raise ValueError("context_mode must be 'excerpt' or 'page'")
+        return value
+
+    @field_validator("agent_language", mode="before")
+    @classmethod
+    def validate_agent_language(cls, value: str) -> str:
+        if value in {"auto", "es", "en"}:
+            return value
+        raise ValueError("agent_language must be 'auto', 'es', or 'en'")
+
+    @field_validator("agent_owner_name", mode="before")
+    @classmethod
+    def normalize_agent_owner_name(cls, value: str | None) -> str | None:
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return None
         return value
 
     @field_validator("rerank_model", mode="before")

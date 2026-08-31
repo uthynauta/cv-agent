@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from pathlib import Path
 import re
 import shutil
@@ -6,6 +7,50 @@ import unicodedata
 
 SUPPORTED_UPLOAD_EXTENSIONS = {".pdf", ".md", ".tex"}
 SUPPORTED_UPLOAD_EXTENSIONS_MESSAGE = "only .pdf, .md, and .tex uploads are supported"
+
+
+@dataclass(frozen=True)
+class DataPaths:
+    root: Path
+    documents: Path
+    quarantine: Path
+    repository: Path
+    sources: Path
+    knowledge: Path
+    backups: Path
+    staging: Path
+    locks: Path
+
+    @classmethod
+    def from_root(cls, root: str | Path) -> "DataPaths":
+        resolved = Path(root).expanduser().resolve()
+        repository = resolved / "repository"
+        return cls(
+            root=resolved,
+            documents=resolved / "documents",
+            quarantine=resolved / "documents" / "quarantine",
+            repository=repository,
+            sources=repository / "sources",
+            knowledge=repository / "knowledge",
+            backups=resolved / "backups",
+            staging=resolved / "staging",
+            locks=resolved / "locks",
+        )
+
+
+def ensure_data_storage(root: str | Path) -> DataPaths:
+    paths = DataPaths.from_root(root)
+    for directory in (
+        paths.documents,
+        paths.quarantine,
+        paths.sources,
+        paths.knowledge,
+        paths.backups,
+        paths.staging,
+        paths.locks,
+    ):
+        directory.mkdir(parents=True, exist_ok=True)
+    return paths
 
 
 def upload_directory(wiki_dir: str | Path) -> Path:

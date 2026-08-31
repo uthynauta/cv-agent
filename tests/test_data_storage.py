@@ -3,10 +3,45 @@ from pathlib import Path
 import pytest
 
 from cv_agent.knowledge.storage import (
+    DataPaths,
+    ensure_data_storage,
     ensure_wiki_storage,
     safe_upload_filename,
     upload_directory,
 )
+
+
+def test_data_paths_derive_all_runtime_locations(tmp_path: Path):
+    paths = DataPaths.from_root(tmp_path / "data")
+    root = (tmp_path / "data").resolve()
+
+    assert paths.root == root
+    assert paths.documents == root / "documents"
+    assert paths.quarantine == root / "documents" / "quarantine"
+    assert paths.repository == root / "repository"
+    assert paths.sources == root / "repository" / "sources"
+    assert paths.knowledge == root / "repository" / "knowledge"
+    assert paths.backups == root / "backups"
+    assert paths.staging == root / "staging"
+    assert paths.locks == root / "locks"
+
+
+def test_ensure_data_storage_creates_empty_tree(tmp_path: Path):
+    paths = ensure_data_storage(tmp_path / "data")
+
+    for directory in (
+        paths.root,
+        paths.documents,
+        paths.quarantine,
+        paths.repository,
+        paths.sources,
+        paths.knowledge,
+        paths.backups,
+        paths.staging,
+        paths.locks,
+    ):
+        assert directory.is_dir()
+    assert list(paths.knowledge.iterdir()) == []
 
 
 def test_ensure_wiki_storage_seeds_empty_wiki(tmp_path: Path):
