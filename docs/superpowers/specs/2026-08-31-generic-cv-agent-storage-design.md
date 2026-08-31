@@ -10,7 +10,7 @@ Existing Git history remains unchanged. The refactor is a normal forward commit;
 
 ## Goals
 
-- Rename the application and Python package from `banorte_agent` to `cv_agent`.
+- Rename the application and Python package from the legacy namespace to `cv_agent`.
 - Remove active references to the legacy brand, original challenge, current candidate, employers, and current deployment.
 - Make the repository safe and practical to fork for another person's CV agent.
 - Keep candidate documents and generated RAG knowledge out of the application repository.
@@ -69,6 +69,7 @@ Tests, examples, prompts, agent-card fields, observability defaults, and deploym
 ```text
 DATA_DIR/
 ├── documents/             # current original files; persistent and never Git-tracked
+│   └── quarantine/        # rollback mismatches; excluded from active inventory
 ├── repository/
 │   ├── .git/              # local-only history; no remote
 │   ├── sources/           # versioned normalized source Markdown
@@ -125,7 +126,7 @@ OTEL_EXPORTER_OTLP_INSECURE=true
 OTEL_RESOURCE_ATTRIBUTES=
 ```
 
-`WIKI_DIR` and all remote-publishing settings are removed. Configuration validation rejects unsupported language/retrieval/context values, unsafe data paths, and invalid limits without exposing secrets. `AGENT_LANGUAGE` accepts `auto` or a valid configured language tag such as `es`, `en`, or `es-MX`.
+The legacy wiki-path setting and all remote-publishing settings are removed. Configuration validation rejects unsupported language/retrieval/context values, unsafe data paths, and invalid limits without exposing secrets. This release accepts `AGENT_LANGUAGE=auto`, `AGENT_LANGUAGE=es`, or `AGENT_LANGUAGE=en`.
 
 Public readiness requires a configured owner name, public URL, OpenAI API key and model, plus usable active knowledge. Missing public configuration never blocks authenticated admin initialization routes.
 
