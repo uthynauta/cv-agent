@@ -15,7 +15,12 @@ def _normalize_data_root(root: str | Path) -> Path:
     normalized = str(root).strip()
     candidate = Path(normalized).expanduser()
     resolved = candidate.resolve()
-    if not normalized or candidate == Path(".") or resolved == Path(resolved.anchor):
+    if (
+        not normalized
+        or candidate == Path(".")
+        or resolved == Path.cwd().resolve()
+        or resolved == Path(resolved.anchor)
+    ):
         raise ValueError("data root must be a nonblank path other than '.'")
     return candidate
 

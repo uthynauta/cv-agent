@@ -32,9 +32,18 @@ def test_data_paths_reject_blank_or_current_directory_root(root):
         DataPaths.from_root(root)
 
 
-def test_data_paths_reject_filesystem_root():
+@pytest.mark.parametrize("root_factory", [Path.cwd, lambda: str(Path.cwd())])
+def test_data_paths_reject_current_working_directory(root_factory):
     with pytest.raises(ValueError, match="data root"):
-        DataPaths.from_root(Path("/"))
+        DataPaths.from_root(root_factory())
+
+
+@pytest.mark.parametrize("root", ["data/..", Path("data/..")])
+def test_data_paths_reject_collapsing_root(tmp_path, monkeypatch, root):
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(ValueError, match="data root"):
+        DataPaths.from_root(root)
 
 
 def test_ensure_data_storage_creates_empty_tree(tmp_path: Path):
