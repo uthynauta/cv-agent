@@ -41,4 +41,3 @@ Each successful mutation creates a local Git commit using `DATA_GIT_AUTHOR_NAME`
 Request logs and metrics use bounded route labels and do not contain prompts, document content, retrieved text, or secrets. Optional OpenTelemetry export is configured through `OTEL_*` settings.
 
 `/healthz` reports process liveness. `/readyz` checks required public configuration and usable mounted knowledge. `/metrics` exposes Prometheus text. Admin status reports document storage writability, ingestion mode, knowledge readiness, paths, and local repository revision.
-

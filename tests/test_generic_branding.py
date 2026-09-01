@@ -1,9 +1,13 @@
 from importlib.metadata import version
 from pathlib import Path
+import subprocess
+import sys
 
 from fastapi.testclient import TestClient
 
 from cv_agent.config import Settings
+from cv_agent.config import get_settings
+from cv_agent.cli import main as cli_main
 from cv_agent.main import create_app
 
 
@@ -56,3 +60,50 @@ def test_active_tree_has_no_legacy_identity_or_deployment_markers():
             if any(marker in text for marker in markers):
                 offenders.append(str(path.relative_to(root)))
     assert offenders == []
+
+
+def test_cli_ingest_commits_versioned_knowledge_without_tracking_originals(tmp_path, monkeypatch):
+    data_dir = tmp_path / "data"
+    documents = data_dir / "documents"
+    documents.mkdir(parents=True)
+    source = documents / "candidate.md"
+    source.write_text("# Example Candidate\n\nPython experience.", encoding="utf-8")
+    monkeypatch.setenv("DATA_DIR", str(data_dir))
+    monkeypatch.setenv("INGESTION_MODE", "deterministic")
+    monkeypatch.setattr(sys, "argv", ["cv-agent", "ingest", str(documents)])
+    get_settings.cache_clear()
+
+    try:
+        cli_main()
+    finally:
+        get_settings.cache_clear()
+
+    repository = data_dir / "repository"
+    assert (repository / ".git").is_dir()
+    head = subprocess.run(
+        ["git", "-C", str(repository), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert head
+    tracked = subprocess.run(
+        ["git", "-C", str(repository), "ls-files"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    assert any(path.startswith("sources/candidate-") and path.endswith(".md") for path in tracked)
+    assert "knowledge/index.md" in tracked
+    assert all(not path.startswith("documents/") for path in tracked)
+    assert source.exists()
+
+
+def test_compose_uses_generic_runtime_defaults():
+    root = Path(__file__).resolve().parents[1]
+    compose = (root / "docker-compose.yml").read_text(encoding="utf-8")
+    env_example = (root / ".env.example").read_text(encoding="utf-8")
+    assert "AGENT_PUBLIC_URL: ${AGENT_PUBLIC_URL:-}" in compose
+    assert "AGENT_MODEL_NAME: ${AGENT_MODEL_NAME:-cv-agent}" in compose
+    assert "OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-cv-agent}" in compose
+    assert "PUBLIC_REQUEST_BODY_LIMIT_BYTES=16384" in env_example

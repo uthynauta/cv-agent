@@ -15,4 +15,3 @@ Fuentes: [[Example Systems]] · [[Example Mobility]]
 Fuentes: [[Example Candidate CV]]
 
 No candidate data is committed to this repository. The transcript is illustrative only.
-

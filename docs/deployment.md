@@ -63,4 +63,3 @@ Local Git history is not an off-volume backup. Use volume snapshots or lifecycle
 ```bash
 docker compose down
 ```
-

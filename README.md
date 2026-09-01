@@ -95,4 +95,3 @@ The browser dashboard is available at `/admin/login` when `ADMIN_UI_PASSWORD` an
 Mount the entire `DATA_DIR` volume. It contains original documents, generated Markdown, local Git history, staging files, locks, and backup artifacts. Local Git is version history, not an off-volume backup. Protect the mounted volume with normal snapshot or archive procedures.
 
 See [architecture](docs/architecture.md), [deployment](docs/deployment.md), [demo guide](docs/demo.md), and [sample transcript](docs/sample-transcript.md).
-

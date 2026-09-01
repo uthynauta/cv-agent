@@ -237,4 +237,3 @@ def test_ui_upload_uses_shared_admin_ingestion(tmp_path, monkeypatch):
 
     assert response.status_code == 200
     assert captured["ui_ingestion"] is captured["api_ingestion"]
-

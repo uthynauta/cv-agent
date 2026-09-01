@@ -47,4 +47,3 @@ def test_search_uses_spanish_stopwords_token_boundaries_and_matching_passages(tm
     assert "Example Mobility" in hits[0].excerpt
     assert "radar" in hits[0].excerpt
     assert KnowledgeSearch(repo).search("¿Qué hizo en con la?") == []
-
