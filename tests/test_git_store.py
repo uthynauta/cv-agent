@@ -100,6 +100,59 @@ def test_initialize_rejects_historical_unrelated_paths(tmp_path: Path):
     assert store._run("config", "--local", "user.name").stdout.strip() == "Test Author"
 
 
+def test_initialize_existing_allowed_repository_preserves_head_and_paths(tmp_path: Path):
+    store, _ = make_store(tmp_path)
+    store.initialize()
+    source = store.root / "sources" / "source.md"
+    knowledge = store.root / "knowledge" / "page.md"
+    source.write_text("source", encoding="utf-8")
+    knowledge.write_text("page", encoding="utf-8")
+    commit_sha = store.commit("add allowed content")
+    tracked = store.tracked_paths()
+
+    restarted = LocalKnowledgeGit(store.root, "Test Author", "test@example.com")
+    restarted.initialize()
+
+    assert restarted.head() == commit_sha
+    assert restarted.tracked_paths() == tracked
+
+
+@pytest.mark.parametrize("root_name", ["sources", "knowledge"])
+def test_initialize_rejects_root_blob_named_allowed_scope(tmp_path: Path, root_name: str):
+    store = LocalKnowledgeGit(tmp_path / "repository", "Test Author", "test@example.com")
+    store.initialize()
+    (store.root / root_name).write_text("root blob", encoding="utf-8")
+    store._run("add", "--", root_name)
+    store._run("commit", "--message", "invalid root path")
+
+    with pytest.raises(GitStoreError):
+        LocalKnowledgeGit(store.root, "Test Author", "test@example.com").initialize()
+
+
+@pytest.mark.parametrize("metadata_kind", ["symlink", "gitfile"])
+def test_initialize_rejects_repository_metadata_outside_root(tmp_path: Path, metadata_kind: str):
+    external = tmp_path / "external"
+    external.mkdir()
+    subprocess.run(
+        ["git", "-C", str(external), "init", "--initial-branch=main"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    root = tmp_path / "repository"
+    root.mkdir()
+    git_metadata = root / ".git"
+    if metadata_kind == "symlink":
+        git_metadata.symlink_to(external / ".git", target_is_directory=True)
+    else:
+        git_metadata.write_text(f"gitdir: {external / '.git'}\n", encoding="utf-8")
+
+    with pytest.raises(GitStoreError):
+        LocalKnowledgeGit(root, "Test Author", "test@example.com").initialize()
+
+    assert not (root / "config").exists()
+
+
 def test_commit_stages_sources_but_not_documents(tmp_path: Path):
     store, data_root = make_store(tmp_path)
     store.initialize()

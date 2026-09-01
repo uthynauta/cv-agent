@@ -8,6 +8,7 @@ import subprocess
 _SAFE_OPERATIONS = frozenset(
     {
         "add",
+        "cat-file",
         "commit",
         "config",
         "diff",
@@ -23,6 +24,7 @@ _SAFE_OPERATIONS = frozenset(
 )
 
 _ALLOWED_PATH_PREFIXES = ("sources/", "knowledge/")
+_ALLOWED_TREE_NAMES = frozenset({"sources", "knowledge"})
 
 
 class GitStoreError(RuntimeError):
@@ -37,9 +39,12 @@ class LocalKnowledgeGit:
 
     def initialize(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
-        existing = (self.root / ".git").exists()
+        git_metadata = self.root / ".git"
+        existing = git_metadata.exists() or git_metadata.is_symlink()
         if not existing:
             self._run("init", "--initial-branch=main", "--object-format=sha1")
+        else:
+            self._validate_repository_locality(git_metadata)
         self._validate_object_format()
         if existing:
             self._validate_repository_invariants()
@@ -89,13 +94,42 @@ class LocalKnowledgeGit:
         if result.stdout.strip() != "sha1":
             raise GitStoreError("Git repository object format must be sha1")
 
+    def _validate_repository_locality(self, git_metadata: Path) -> None:
+        if git_metadata.is_symlink() or not git_metadata.is_dir():
+            raise GitStoreError("Git repository metadata must be a local directory")
+
+        top_level = Path(self._run("rev-parse", "--show-toplevel").stdout.strip()).resolve()
+        git_dir = Path(self._run("rev-parse", "--git-dir").stdout.strip())
+        common_dir = Path(self._run("rev-parse", "--git-common-dir").stdout.strip())
+        if not git_dir.is_absolute():
+            git_dir = self.root / git_dir
+        if not common_dir.is_absolute():
+            common_dir = self.root / common_dir
+        expected_git_dir = git_metadata.resolve()
+        if (
+            top_level != self.root
+            or git_dir.resolve() != expected_git_dir
+            or common_dir.resolve() != expected_git_dir
+        ):
+            raise GitStoreError("Git repository metadata must resolve within the store root")
+
     def _validate_repository_invariants(self) -> None:
         if self.remotes():
             raise GitStoreError("Git repository remotes are not allowed")
 
         indexed = self._run("ls-files", "-z").stdout.split("\0")
+        paths = [path for path in indexed if path]
         reachable = self._run("rev-list", "--objects", "-z", "--all").stdout.split("\0")
-        paths = [path for path in indexed + [entry[5:] for entry in reachable if entry.startswith("path=")] if path]
+        for index, entry in enumerate(reachable):
+            if not entry.startswith("path="):
+                continue
+            path = entry[5:]
+            object_id = reachable[index - 1] if index else ""
+            if path in _ALLOWED_TREE_NAMES:
+                object_type = self._run("cat-file", "-t", object_id).stdout.strip()
+                if object_type == "tree":
+                    continue
+            paths.append(path)
         if any(not self._is_allowed_path(path) for path in paths):
             raise GitStoreError("Git repository contains paths outside allowed scopes")
 
