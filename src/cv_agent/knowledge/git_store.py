@@ -14,6 +14,7 @@ _SAFE_OPERATIONS = frozenset(
         "config",
         "diff",
         "for-each-ref",
+        "fsck",
         "init",
         "ls-files",
         "ls-tree",
@@ -114,14 +115,22 @@ class LocalKnowledgeGit:
     def _validate_repository_state(self, git_metadata: Path) -> None:
         if git_metadata.is_symlink() or not git_metadata.is_dir():
             raise GitStoreError("Git repository metadata must be a local directory")
+        self._validate_history_metadata(git_metadata)
         self._validate_object_storage(git_metadata)
         self._validate_safe_configuration()
         self._validate_repository_locality(git_metadata)
         self._validate_object_format()
+        self._run("fsck", "--full", "--strict", "--no-reflogs")
         if self.remotes():
             raise GitStoreError("Git repository remotes are not allowed")
         if self._run("for-each-ref", "--format=%(refname)", "refs/replace/").stdout.splitlines():
             raise GitStoreError("Git replacement refs are not allowed")
+
+    @staticmethod
+    def _validate_history_metadata(git_metadata: Path) -> None:
+        for metadata in (git_metadata / "shallow", git_metadata / "info" / "grafts"):
+            if metadata.exists() or metadata.is_symlink():
+                raise GitStoreError("Git shallow or graft history metadata is not allowed")
 
     @staticmethod
     def _validate_object_storage(git_metadata: Path) -> None:

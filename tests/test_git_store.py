@@ -616,3 +616,117 @@ def test_initialize_forces_sha1_when_default_hash_is_sha256(tmp_path: Path, monk
 
     assert len(commit_sha) == 40
     assert store._run("rev-parse", "--show-object-format").stdout.strip() == "sha1"
+
+
+@pytest.mark.parametrize("metadata_kind", ["file", "symlink"])
+def test_initialize_rejects_shallow_history_hiding_invalid_parent(
+    tmp_path: Path, metadata_kind: str
+):
+    store = LocalKnowledgeGit(tmp_path / "repository", "Test Author", "test@example.com")
+    store.initialize()
+    clean_env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    author_env = {
+        **clean_env,
+        "GIT_AUTHOR_NAME": "Test",
+        "GIT_AUTHOR_EMAIL": "test@example.com",
+        "GIT_COMMITTER_NAME": "Test",
+        "GIT_COMMITTER_EMAIL": "test@example.com",
+    }
+    hidden_blob = subprocess.run(
+        ["git", "-C", str(store.root), "hash-object", "-w", "--stdin"],
+        input=b"%PDF-hidden-parent-secret",
+        env=clean_env,
+        check=True,
+        capture_output=True,
+    ).stdout.decode().strip()
+    hidden_tree = subprocess.run(
+        ["git", "-C", str(store.root), "mktree"],
+        input=f"100644 blob {hidden_blob}\tsecret.pdf\n".encode(),
+        env=clean_env,
+        check=True,
+        capture_output=True,
+    ).stdout.decode().strip()
+    hidden_parent = subprocess.run(
+        ["git", "-C", str(store.root), "commit-tree", hidden_tree, "-m", "hidden parent"],
+        env=author_env,
+        check=True,
+        capture_output=True,
+    ).stdout.decode().strip()
+    source_blob = subprocess.run(
+        ["git", "-C", str(store.root), "hash-object", "-w", "--stdin"],
+        input=b"allowed source",
+        env=clean_env,
+        check=True,
+        capture_output=True,
+    ).stdout.decode().strip()
+    source_tree = subprocess.run(
+        ["git", "-C", str(store.root), "mktree"],
+        input=f"100644 blob {source_blob}\tsource.md\n".encode(),
+        env=clean_env,
+        check=True,
+        capture_output=True,
+    ).stdout.decode().strip()
+    allowed_tree = subprocess.run(
+        ["git", "-C", str(store.root), "mktree"],
+        input=f"040000 tree {source_tree}\tsources\n".encode(),
+        env=clean_env,
+        check=True,
+        capture_output=True,
+    ).stdout.decode().strip()
+    visible_child = subprocess.run(
+        ["git", "-C", str(store.root), "commit-tree", allowed_tree, "-p", hidden_parent, "-m", "visible child"],
+        env=author_env,
+        check=True,
+        capture_output=True,
+    ).stdout.decode().strip()
+    store._run("update-ref", "refs/heads/main", visible_child)
+
+    shallow = store.root / ".git" / "shallow"
+    if metadata_kind == "file":
+        shallow.write_text(f"{visible_child}\n", encoding="utf-8")
+    else:
+        target = tmp_path / "shallow-target"
+        target.write_text(f"{visible_child}\n", encoding="utf-8")
+        shallow.symlink_to(target)
+
+    with pytest.raises(GitStoreError):
+        LocalKnowledgeGit(store.root, "Replacement Author", "replacement@example.com").initialize()
+
+
+@pytest.mark.parametrize("metadata_kind", ["file", "symlink"])
+def test_initialize_rejects_grafts_metadata(tmp_path: Path, metadata_kind: str):
+    store = LocalKnowledgeGit(tmp_path / "repository", "Test Author", "test@example.com")
+    store.initialize()
+    source = store.root / "sources" / "source.md"
+    source.parent.mkdir(parents=True)
+    source.write_text("first", encoding="utf-8")
+    first = store.commit("first")
+    source.write_text("second", encoding="utf-8")
+    second = store.commit("second")
+
+    grafts = store.root / ".git" / "info" / "grafts"
+    if metadata_kind == "file":
+        grafts.write_text(f"{second} {first}\n", encoding="utf-8")
+    else:
+        target = tmp_path / "grafts-target"
+        target.write_text(f"{second} {first}\n", encoding="utf-8")
+        grafts.symlink_to(target)
+
+    with pytest.raises(GitStoreError):
+        LocalKnowledgeGit(store.root, "Replacement Author", "replacement@example.com").initialize()
+
+
+def test_initialize_rejects_missing_committed_markdown_blob(tmp_path: Path):
+    store = LocalKnowledgeGit(tmp_path / "repository", "Test Author", "test@example.com")
+    store.initialize()
+    source = store.root / "sources" / "source.md"
+    source.parent.mkdir(parents=True)
+    source.write_text("missing blob", encoding="utf-8")
+    store.commit("missing blob")
+    blob = store._run("rev-parse", "HEAD:sources/source.md").stdout.strip()
+    object_path = store.root / ".git" / "objects" / blob[:2] / blob[2:]
+    assert object_path.is_file()
+    object_path.unlink()
+
+    with pytest.raises(GitStoreError):
+        LocalKnowledgeGit(store.root, "Replacement Author", "replacement@example.com").initialize()
