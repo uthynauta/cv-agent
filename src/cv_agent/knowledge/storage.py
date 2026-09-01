@@ -57,6 +57,9 @@ class DataPaths:
 
 
 def ensure_data_storage(root: str | Path) -> DataPaths:
+    # Validate the lexical mount path before resolving it.  Path.resolve() would
+    # otherwise hide a pre-existing symlink and let mkdir operate outside DATA_DIR.
+    resolve_directory_path(Path(root).expanduser())
     paths = DataPaths.from_root(root)
     for directory in (
         paths.documents,
@@ -67,7 +70,7 @@ def ensure_data_storage(root: str | Path) -> DataPaths:
         paths.staging,
         paths.locks,
     ):
-        directory.mkdir(parents=True, exist_ok=True)
+        resolve_directory_path(directory, create=True)
     return paths
 
 

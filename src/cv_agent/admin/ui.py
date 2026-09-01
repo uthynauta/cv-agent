@@ -11,13 +11,20 @@ from starlette.responses import Response
 
 from cv_agent.api.admin import build_admin_status_payload, publish_wiki_payload, upload_document_payload
 from cv_agent.config import Settings
+from cv_agent.knowledge.git_store import LocalKnowledgeGit
 from cv_agent.knowledge.ingest import IngestionService
+from cv_agent.knowledge.storage import DataPaths
 
 
 SESSION_COOKIE = "cv_agent_admin_session"
 
 
-def build_admin_ui_router(settings: Settings, ingestion: IngestionService) -> APIRouter:
+def build_admin_ui_router(
+    settings: Settings,
+    paths: DataPaths,
+    git_store: LocalKnowledgeGit,
+    ingestion: IngestionService,
+) -> APIRouter:
     router = APIRouter()
 
     def ui_enabled() -> bool:
@@ -436,7 +443,7 @@ setInterval(refreshStatus, 10000);
             return disabled_response()
         if not verify_session_token(request.cookies.get(SESSION_COOKIE)):
             return JSONResponse({"detail": "invalid session"}, status_code=status.HTTP_401_UNAUTHORIZED)
-        return build_admin_status_payload(settings)
+        return build_admin_status_payload(settings, paths, git_store, ingestion.repository)
 
     @router.post("/admin/ui/documents")
     async def post_ui_document(request: Request, file: UploadFile = File(...)) -> Any:
@@ -444,7 +451,7 @@ setInterval(refreshStatus, 10000);
             return disabled_response()
         if not verify_session_token(request.cookies.get(SESSION_COOKIE)):
             return JSONResponse({"detail": "invalid session"}, status_code=status.HTTP_401_UNAUTHORIZED)
-        return await upload_document_payload(settings, ingestion, file)
+        return await upload_document_payload(settings, paths, git_store, ingestion, file)
 
     @router.post("/admin/ui/publish")
     async def post_ui_publish(request: Request) -> Any:

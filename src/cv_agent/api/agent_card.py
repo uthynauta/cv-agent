@@ -8,7 +8,8 @@ def build_agent_card_router(settings: Settings) -> APIRouter:
 
     @router.get("/.well-known/agent-card.json")
     def agent_card() -> dict[str, object]:
-        responses_url = f"{settings.agent_public_url.rstrip('/')}/v1/responses"
+        public_url = (settings.agent_public_url or "").rstrip("/")
+        responses_url = f"{public_url}/v1/responses"
         card: dict[str, object] = {
             "name": "CV Agent - Othon Gonzalez",
             "description": (

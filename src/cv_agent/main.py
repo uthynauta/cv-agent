@@ -1,5 +1,4 @@
 from collections.abc import Callable
-from pathlib import Path
 
 from fastapi import FastAPI
 
@@ -9,7 +8,7 @@ from cv_agent.agent.service import AgentService
 from cv_agent.admin.ui import build_admin_ui_router
 from cv_agent.api.admin import build_admin_router
 from cv_agent.api.agent_card import build_agent_card_router
-from cv_agent.api.health import build_health_router
+from cv_agent.api.health import build_health_router, knowledge_is_initialized
 from cv_agent.api.responses import build_responses_router
 from cv_agent.api.request_limits import public_request_size_middleware
 from cv_agent.config import Settings, get_settings
@@ -18,7 +17,8 @@ from cv_agent.tracing import configure_tracing
 from cv_agent.knowledge.ingest import IngestionService
 from cv_agent.knowledge.repository import KnowledgeRepository
 from cv_agent.knowledge.search import KnowledgeSearch
-from cv_agent.knowledge.storage import ensure_wiki_storage
+from cv_agent.knowledge.git_store import LocalKnowledgeGit
+from cv_agent.knowledge.storage import ensure_data_storage
 
 
 def create_app(
@@ -36,12 +36,27 @@ def create_app(
     )
     app.middleware("http")(request_observability_middleware)
     app.include_router(build_agent_card_router(settings))
-    app.include_router(build_health_router(settings))
-    bundled_wiki_dir = Path(__file__).resolve().parents[2] / "wiki"
-    ensure_wiki_storage(settings.wiki_dir, bundled_wiki_dir)
-    repository = KnowledgeRepository(Path(settings.wiki_dir))
+    paths = ensure_data_storage(settings.data_dir)
+    git_store = LocalKnowledgeGit(
+        paths.repository,
+        settings.data_git_author_name,
+        settings.data_git_author_email,
+    )
+    git_store.initialize()
+    repository = KnowledgeRepository(paths.repository)
     ingestion = IngestionService(repository, settings)
-    app.include_router(build_admin_ui_router(settings, ingestion))
+    app.state.data_paths = paths
+    app.state.paths = paths
+    app.state.knowledge_git = git_store
+    app.state.git_store = git_store
+    app.state.knowledge_repository = repository
+    app.state.repository = repository
+    app.state.ingestion_service = ingestion
+    app.state.ingestion = ingestion
+    app.include_router(
+        build_health_router(settings, repository, lambda: knowledge_is_initialized(repository))
+    )
+    app.include_router(build_admin_ui_router(settings, paths, git_store, ingestion))
     if agent_answerer is None:
         def agent_answerer(text: str, instructions: str | None = None) -> str:
             answer_client = OpenAITextClient(settings)
@@ -53,8 +68,10 @@ def create_app(
                 reranker = LLMReranker(OpenAITextClient(rerank_settings), settings.answer_top_k)
             agent = AgentService(settings, KnowledgeSearch(repository), answer_client, reranker)
             return agent.answer(text, instructions)
-    app.include_router(build_responses_router(settings, agent_answerer))
-    app.include_router(build_admin_router(settings, ingestion))
+    app.include_router(
+        build_responses_router(settings, agent_answerer, lambda: knowledge_is_initialized(repository))
+    )
+    app.include_router(build_admin_router(settings, paths, git_store, ingestion))
     return app
 
 

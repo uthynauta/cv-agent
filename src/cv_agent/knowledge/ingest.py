@@ -36,7 +36,9 @@ class IngestionService:
         self.settings = settings
         self.text_client = text_client
 
-    def ingest_file(self, path: Path, document_id: str) -> IngestResult:
+    def ingest_file(
+        self, path: Path, document_id: str, original_filename: str | None = None
+    ) -> IngestResult:
         with get_tracer().start_as_current_span("wiki.ingest_file") as span:
             span.set_attribute("source.extension", path.suffix.lower())
             try:
@@ -46,9 +48,13 @@ class IngestionService:
                 extracted = extract_source(path)
                 span.set_attribute("source.needs_ocr", extracted.needs_ocr)
                 if self._mode == "openai":
-                    source_page, generated_pages = self._ingest_with_openai(path, extracted, document_id)
+                    source_page, generated_pages = self._ingest_with_openai(
+                        path, extracted, document_id, original_filename
+                    )
                 else:
-                    source_page = self._ingest_deterministic(path, extracted, document_id)
+                    source_page = self._ingest_deterministic(
+                        path, extracted, document_id, original_filename
+                    )
                     generated_pages = ()
                 self._append_log(path, self._mode)
                 self._write_index()
@@ -64,7 +70,11 @@ class IngestionService:
         return self.settings.ingestion_mode if self.settings else "deterministic"
 
     def _ingest_with_openai(
-        self, path: Path, extracted: object, document_id: str
+        self,
+        path: Path,
+        extracted: object,
+        document_id: str,
+        original_filename: str | None = None,
     ) -> tuple[Path, tuple[Path, ...]]:
         if not self.settings:
             raise ValueError("settings are required for OpenAI ingestion")
@@ -83,7 +93,9 @@ class IngestionService:
         self.repository.resolve_write_path(source_relative_path)
         for page in generated_records:
             self.repository.resolve_write_path(str(page["path"]))
-        source_page = self._write_source_page(path, extracted, document_id, summary)
+        source_page = self._write_source_page(
+            path, extracted, document_id, summary, original_filename
+        )
         for page in generated_records:
             generated_pages.append(
                 self.repository.write_page(
@@ -95,8 +107,10 @@ class IngestionService:
             )
         return source_page, tuple(generated_pages)
 
-    def _ingest_deterministic(self, path: Path, extracted: object, document_id: str) -> Path:
-        return self._write_source_page(path, extracted, document_id)
+    def _ingest_deterministic(
+        self, path: Path, extracted: object, document_id: str, original_filename: str | None = None
+    ) -> Path:
+        return self._write_source_page(path, extracted, document_id, original_filename=original_filename)
 
     def _write_source_page(
         self,
@@ -104,11 +118,12 @@ class IngestionService:
         extracted: object,
         document_id: str,
         summary: str = "",
+        original_filename: str | None = None,
     ) -> Path:
         metadata = {
             "kind": "source",
             "document_id": document_id,
-            "original_filename": path.name,
+            "original_filename": original_filename or path.name,
             "media_type": _media_type(extracted.kind),
             "uploaded_at": datetime.now(UTC).isoformat(),
             "content_sha256": extracted.sha256,

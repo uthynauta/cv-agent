@@ -11,8 +11,20 @@ from cv_agent.api.models import IngestRequest
 from cv_agent.config import Settings
 from cv_agent.knowledge.extractors import extract_source
 from cv_agent.knowledge.ingest import IngestionService, document_id_for_path
-from cv_agent.knowledge.repository import resolve_directory_path
-from cv_agent.knowledge.storage import safe_upload_filename
+from cv_agent.knowledge import ingest as ingest_module
+from cv_agent.knowledge.git_store import LocalKnowledgeGit
+from cv_agent.knowledge.repository import KnowledgeRepository, resolve_directory_path
+from cv_agent.knowledge.storage import DataPaths, ensure_data_storage, safe_upload_filename
+
+
+_DEFAULT_EXTRACT_SOURCE = extract_source
+
+
+def _extract_upload(path: Path):
+    # Keep upload tests and callers able to patch either the public admin helper
+    # or the extractor used by IngestionService.
+    extractor = extract_source if extract_source is not _DEFAULT_EXTRACT_SOURCE else ingest_module.extract_source
+    return extractor(path)
 
 
 def wiki_has_changes(settings: Settings) -> bool:
@@ -40,11 +52,30 @@ def _redact_payload_secrets(value: object, settings: Settings) -> object:
     return value
 
 
-def build_admin_status_payload(settings: Settings) -> dict[str, object]:
+def _knowledge_initialized(repository: KnowledgeRepository) -> bool:
+    from cv_agent.api.health import knowledge_is_initialized
+
+    return knowledge_is_initialized(repository)
+
+
+def build_admin_status_payload(
+    settings: Settings,
+    paths: DataPaths | None = None,
+    git_store: LocalKnowledgeGit | None = None,
+    repository: KnowledgeRepository | None = None,
+) -> dict[str, object]:
+    paths = paths or ensure_data_storage(settings.data_dir)
+    if git_store is None:
+        git_store = LocalKnowledgeGit(
+            paths.repository, settings.data_git_author_name, settings.data_git_author_email
+        )
+        git_store.initialize()
+    if repository is None:
+        repository = KnowledgeRepository(paths.repository)
     try:
-        wiki_root = resolve_directory_path(Path(settings.wiki_dir))
-        uploads = resolve_directory_path(wiki_root / "raw" / "uploads", create=True)
-    except (OSError, ValueError) as exc:
+        documents = resolve_directory_path(paths.documents)
+        head = git_store.head()
+    except (OSError, ValueError, RuntimeError) as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="upload storage is unavailable",
@@ -54,10 +85,23 @@ def build_admin_status_payload(settings: Settings) -> dict[str, object]:
         "admin": {"enabled": bool(settings.admin_api_key)},
         "wiki": {
             "dir": settings.wiki_dir,
-            "upload_dir": str(uploads),
-            "upload_dir_writable": uploads.exists() and os.access(uploads, os.W_OK),
+            "upload_dir": str(documents),
+            "upload_dir_writable": documents.exists() and os.access(documents, os.W_OK),
         },
         "ingestion": {"mode": settings.ingestion_mode},
+        "knowledge": {
+            "initialized": _knowledge_initialized(repository),
+            "repository_head": head,
+        },
+        "repository": {"head": head},
+        "paths": {
+            "root": str(paths.root),
+            "documents": str(paths.documents),
+            "repository": str(paths.repository),
+            "sources": str(paths.sources),
+            "knowledge": str(paths.knowledge),
+            "staging": str(paths.staging),
+        },
         "github": _redact_payload_secrets(GitHubAdminService(settings).status(), settings),
     }
 
@@ -84,7 +128,52 @@ async def _read_upload(file: UploadFile, max_bytes: int) -> bytes:
     return data
 
 
-async def upload_document_payload(settings: Settings, ingestion: IngestionService, file: UploadFile) -> dict[str, object]:
+def _markdown_paths(repository: KnowledgeRepository) -> set[Path]:
+    root = repository.root
+    try:
+        return {
+            path.resolve()
+            for scope in (root / "sources", root / "knowledge")
+            for path in scope.rglob("*.md")
+            if path.is_file() and not path.is_symlink()
+        }
+    except OSError:
+        return set()
+
+
+def _cleanup_upload(
+    repository: KnowledgeRepository,
+    before_markdown: set[Path],
+    staging_path: Path,
+    original_path: Path,
+) -> None:
+    for path in (staging_path, original_path):
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+    for path in _markdown_paths(repository) - before_markdown:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+async def upload_document_payload(
+    settings: Settings,
+    paths: DataPaths,
+    git_store: LocalKnowledgeGit,
+    ingestion: IngestionService,
+    file: UploadFile,
+) -> dict[str, object]:
     try:
         filename = safe_upload_filename(file.filename or "")
     except ValueError as exc:
@@ -92,53 +181,81 @@ async def upload_document_payload(settings: Settings, ingestion: IngestionServic
 
     data = await _read_upload(file, settings.admin_upload_max_bytes)
     try:
-        wiki_root = resolve_directory_path(Path(settings.wiki_dir))
-        target_dir = resolve_directory_path(wiki_root / "raw" / "uploads", create=True)
+        staging_dir = resolve_directory_path(paths.staging, create=True)
+        documents_dir = resolve_directory_path(paths.documents, create=True)
     except (OSError, ValueError) as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="upload storage is unavailable",
         ) from exc
     document_id = uuid4().hex
-    target = target_dir / f"{document_id}-{filename}"
+    staging_path = staging_dir / f"{document_id}-{filename}"
+    original_path = documents_dir / f"{document_id}{Path(filename).suffix.lower()}"
     try:
-        with target.open("xb") as handle:
+        with staging_path.open("xb") as handle:
             handle.write(data)
     except FileExistsError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="upload ID collision") from exc
 
+    repository = ingestion.repository
+    before_markdown = _markdown_paths(repository)
     try:
-        extracted = extract_source(target)
+        extracted = _extract_upload(staging_path)
     except Exception as exc:
-        target.unlink(missing_ok=True)
+        _cleanup_upload(repository, before_markdown, staging_path, original_path)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="document is unreadable") from exc
     if extracted.needs_ocr:
-        target.unlink(missing_ok=True)
+        _cleanup_upload(repository, before_markdown, staging_path, original_path)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="PDF requires OCR before upload",
         )
 
-    result = ingestion.ingest_file(target, document_id)
+    try:
+        with original_path.open("xb") as handle:
+            handle.write(data)
+        result = ingestion.ingest_file(original_path, document_id, filename)
+        commit = git_store.commit(f"Ingest document {document_id}")
+    except HTTPException:
+        _cleanup_upload(repository, before_markdown, staging_path, original_path)
+        raise
+    except Exception as exc:
+        _cleanup_upload(repository, before_markdown, staging_path, original_path)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="document ingestion is unavailable",
+        ) from exc
+    staging_path.unlink(missing_ok=True)
+    source_path = str(result.source_page)
+    generated_paths = [str(path) for path in getattr(result, "generated_pages", ())]
     return {
         "status": "ok",
         "document": {
             "document_id": getattr(result, "document_id", document_id),
             "filename": filename,
-            "path": str(target.relative_to(wiki_root)),
+            "path": str(original_path.relative_to(paths.root)),
             "kind": extracted.kind,
+            "source": source_path,
+            "generated": generated_paths,
         },
         "ingestion": {
             "count": 1,
-            "sources": [str(result.source_page)],
+            "sources": [source_path],
+            "generated": generated_paths,
         },
+        "revision": {"commit": commit},
         "publish": {
             "pending": wiki_has_changes(settings),
         },
     }
 
 
-def build_admin_router(settings: Settings, ingestion: IngestionService) -> APIRouter:
+def build_admin_router(
+    settings: Settings,
+    paths: DataPaths,
+    git_store: LocalKnowledgeGit,
+    ingestion: IngestionService,
+) -> APIRouter:
     def require_admin_key(authorization: Annotated[str | None, Header()] = None) -> None:
         if not settings.admin_api_key:
             raise HTTPException(
@@ -152,43 +269,41 @@ def build_admin_router(settings: Settings, ingestion: IngestionService) -> APIRo
     @router.post("/admin/ingest")
     def ingest(request: IngestRequest) -> dict[str, object]:
         try:
-            wiki_root = resolve_directory_path(Path(settings.wiki_dir))
-            safe_raw_root = resolve_directory_path(wiki_root / "raw")
             requested = Path(request.path).absolute()
             resolve_directory_path(requested.parent)
-            if requested.is_symlink():
-                raise ValueError("requested path uses symlink component")
             path = requested.resolve()
+            path.relative_to(paths.root.resolve())
         except (OSError, ValueError) as exc:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="raw storage is unavailable",
+                detail="data storage is unavailable",
             ) from exc
-        try:
-            path.relative_to(safe_raw_root.resolve())
-        except ValueError as exc:
+        allowed_roots = (paths.documents.resolve(), paths.staging.resolve())
+        if not any(_is_relative_to(path, root) for root in allowed_roots):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="path must be within the wiki raw directory",
-            ) from exc
+                detail="path must be within the mounted data directory",
+            )
         results = (
             ingestion.ingest_directory(path)
             if path.is_dir()
-            else [ingestion.ingest_file(path, document_id_for_path(path, safe_raw_root))]
+            else [ingestion.ingest_file(path, document_id_for_path(path, paths.documents))]
         )
+        commit = git_store.commit("Ingest legacy document")
         return {
             "status": "ok",
             "count": len(results),
             "sources": [str(result.source_page) for result in results],
+            "revision": {"commit": commit},
         }
 
     @router.post("/admin/documents")
     async def upload_document(file: UploadFile = File(...)) -> dict[str, object]:
-        return await upload_document_payload(settings, ingestion, file)
+        return await upload_document_payload(settings, paths, git_store, ingestion, file)
 
     @router.get("/admin/status")
     def admin_status() -> dict[str, object]:
-        return build_admin_status_payload(settings)
+        return build_admin_status_payload(settings, paths, git_store, ingestion.repository)
 
     @router.post("/admin/publish")
     def publish_wiki() -> dict[str, object]:
