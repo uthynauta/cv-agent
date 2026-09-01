@@ -67,6 +67,13 @@ def test_repository_rejects_internal_symlink_alias_without_overwrite(tmp_path: P
     assert sentinel.read_text(encoding="utf-8") == "original"
 
 
+def test_repository_rejects_overlong_path_component_before_write(tmp_path: Path):
+    with pytest.raises(ValueError, match="path"):
+        KnowledgeRepository(tmp_path).write_page(
+            f"knowledge/projects/{'x' * 129}.md", "Long", {}, "body"
+        )
+
+
 @pytest.mark.parametrize("frontmatter", ["- item\n", "value\n"])
 def test_load_frontmatter_rejects_non_mapping(frontmatter: str):
     with pytest.raises(ValueError, match="mapping"):

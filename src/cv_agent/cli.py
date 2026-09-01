@@ -21,7 +21,7 @@ def main() -> None:
         results = (
             service.ingest_directory(target)
             if target.is_dir()
-            else [service.ingest_file(target, document_id_for_path(target))]
+            else [service.ingest_file(target, document_id_for_path(target, target.parent))]
         )
         for result in results:
             print(f"ingested {result.source_path} -> {result.source_page}")

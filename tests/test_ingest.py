@@ -1,5 +1,6 @@
 from datetime import datetime
 import inspect
+import os
 from pathlib import Path
 
 import pytest
@@ -200,6 +201,13 @@ def test_openai_ingest_writes_generated_pages_under_knowledge_and_source_is_mode
           {"path": "sources/doc-123.md", "title": "One", "kind": "source", "tags": ["source"], "body_lines": ["One"]},
           {"path": "sources/doc-123.md", "title": "Two", "kind": "source", "tags": ["source"], "body_lines": ["Two"]}
         ]}""",
+        """{"pages": [
+          {"path": "knowledge/projects/a.md", "title": "A", "kind": "project", "tags": ["project"], "body_lines": ["No source citation"]}
+        ]}""",
+        """{"pages": [
+          {"path": "knowledge/projects/a.md", "title": "A", "kind": "project", "tags": ["project"], "body_lines": ["See [[sources/doc-123]]"]},
+          {"path": "knowledge/projects/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md", "title": "Long", "kind": "project", "tags": ["project"], "body_lines": ["See [[sources/doc-123]]"]}
+        ]}""",
     ],
 )
 def test_openai_rejects_invalid_pages_before_any_write(tmp_path: Path, response: str):
@@ -229,7 +237,7 @@ def test_openai_allows_generated_pages_without_source_suggestion(tmp_path: Path)
     class FakeTextClient:
         def create_response(self, instructions: str, input_text: str) -> str:
             return """{"pages": [
-              {"path": "knowledge/projects/a.md", "title": "A", "kind": "project", "tags": ["project"], "body_lines": ["A"]}
+              {"path": "knowledge/projects/a.md", "title": "A", "kind": "project", "tags": ["project"], "body_lines": ["See [[sources/doc-123]]"]}
             ]}"""
 
     settings = Settings(_env_file=None, openai_api_key="test-key", ingestion_mode="openai")
@@ -239,6 +247,44 @@ def test_openai_allows_generated_pages_without_source_suggestion(tmp_path: Path)
 
     assert result.source_page == tmp_path / "sources" / "doc-123.md"
     assert result.generated_pages == (tmp_path / "knowledge" / "projects" / "a.md",)
+
+
+def test_ingest_directory_rejects_external_symlink_before_extraction_or_writes(tmp_path: Path, monkeypatch):
+    root = tmp_path / "raw"
+    root.mkdir()
+    (root / "valid.md").write_text("valid", encoding="utf-8")
+    secret = tmp_path / "secret.md"
+    secret.write_text("secret", encoding="utf-8")
+    (root / "linked.md").symlink_to(secret)
+    monkeypatch.setattr(ingest_module, "extract_source", lambda _: pytest.fail("extraction should not run"))
+
+    with pytest.raises(ValueError, match="symlink"):
+        IngestionService(KnowledgeRepository(tmp_path)).ingest_directory(root)
+
+    assert not (tmp_path / "sources").exists()
+    assert not (tmp_path / "knowledge").exists()
+
+
+def test_ingest_directory_rejects_special_file_before_extraction_or_writes(tmp_path: Path, monkeypatch):
+    root = tmp_path / "raw"
+    root.mkdir()
+    os.mkfifo(root / "input.fifo")
+    monkeypatch.setattr(ingest_module, "extract_source", lambda _: pytest.fail("extraction should not run"))
+
+    with pytest.raises(ValueError, match="special"):
+        IngestionService(KnowledgeRepository(tmp_path)).ingest_directory(root)
+
+    assert not (tmp_path / "sources").exists()
+    assert not (tmp_path / "knowledge").exists()
+
+
+def test_document_id_for_path_is_stable_when_content_changes(tmp_path: Path):
+    source = tmp_path / "source.md"
+    source.write_text("first", encoding="utf-8")
+    first_id = document_id_for_path(source, source.parent)
+    source.write_text("second", encoding="utf-8")
+
+    assert document_id_for_path(source, source.parent) == first_id
 
 
 def test_openai_ingestion_client_requests_json_schema_output():

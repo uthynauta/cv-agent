@@ -7,6 +7,7 @@ from openai import OpenAI
 
 from cv_agent.config import Settings
 from cv_agent.knowledge.extractors import ExtractedSource
+from cv_agent.knowledge.repository import validate_relative_path_limits
 
 
 ALLOWED_PAGE_ROOTS = {
@@ -154,6 +155,10 @@ def _is_allowed_path(value: str) -> bool:
     path = Path(value)
     if path.is_absolute() or ".." in path.parts or path.suffix != ".md" or path.as_posix() != value:
         return False
+    try:
+        validate_relative_path_limits(value)
+    except ValueError:
+        return False
     if path.parts[:1] == ("sources",):
         return len(path.parts) == 2
     return len(path.parts) >= 3 and path.parts[0] == "knowledge" and path.parts[1] in ALLOWED_PAGE_ROOTS
@@ -173,15 +178,21 @@ def _validate_page_set(pages: list[dict[str, object]], canonical_source_path: st
                 raise ValueError("OpenAI ingestion response may include at most one source suggestion")
             if path != canonical_source_path:
                 raise ValueError(f"OpenAI source suggestion must use canonical path: {canonical_source_path}")
-        _validate_source_links(str(page["body"]), canonical_source_path)
+        has_source_link = _validate_source_links(str(page["body"]), canonical_source_path)
+        if not path.startswith("sources/") and not has_source_link:
+            raise ValueError(f"OpenAI generated page must cite {canonical_source_path.removesuffix('.md')}: {path}")
 
 
-def _validate_source_links(body: str, canonical_source_path: str) -> None:
+def _validate_source_links(body: str, canonical_source_path: str) -> bool:
     canonical_stem = canonical_source_path.removesuffix(".md")
+    found = False
     for match in re.finditer(r"\[\[([^\]]+)\]\]", body):
         target = match.group(1).split("|", 1)[0].split("#", 1)[0].strip()
+        if target in {canonical_source_path, canonical_stem}:
+            found = True
         if "sources/" in target and target not in {canonical_source_path, canonical_stem}:
             raise ValueError(f"OpenAI source link must target {canonical_stem}: {target}")
+    return found
 
 
 def _json_schema_format() -> dict[str, object]:

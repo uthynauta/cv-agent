@@ -111,10 +111,27 @@ class IngestionService:
         return self.repository.write_page(f"sources/{document_id}.md", path.stem, metadata, body)
 
     def ingest_directory(self, root: Path) -> list[IngestResult]:
-        results: list[IngestResult] = []
-        for path in sorted(root.rglob("*")):
+        scan_root = Path(root).absolute()
+        resolved_root = scan_root.resolve()
+        if scan_root.is_symlink() or not scan_root.is_dir():
+            raise ValueError(f"ingestion root is not a regular directory: {root}")
+        source_paths: list[Path] = []
+        for path in sorted(scan_root.rglob("*")):
+            if path.is_symlink():
+                raise ValueError(f"source tree contains symlink: {path}")
+            try:
+                path.resolve().relative_to(resolved_root)
+            except ValueError as exc:
+                raise ValueError(f"source tree escapes ingestion root: {path}") from exc
+            if path.is_dir():
+                continue
+            if not path.is_file():
+                raise ValueError(f"source tree contains special file: {path}")
             if path.suffix.lower() in {".tex", ".pdf", ".md"}:
-                results.append(self.ingest_file(path, document_id_for_path(path, root)))
+                source_paths.append(path)
+        results: list[IngestResult] = []
+        for path in source_paths:
+            results.append(self.ingest_file(path, document_id_for_path(path, scan_root)))
         return results
 
     def _append_log(self, path: Path, mode: str) -> None:

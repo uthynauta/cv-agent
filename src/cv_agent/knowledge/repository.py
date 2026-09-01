@@ -4,6 +4,22 @@ from cv_agent.knowledge.documents import KnowledgePage
 from cv_agent.knowledge.frontmatter import dump_frontmatter, load_frontmatter
 
 
+MAX_PATH_COMPONENT_BYTES = 128
+MAX_RELATIVE_PATH_BYTES = 1024
+MAX_PATH_DEPTH = 8
+
+
+def validate_relative_path_limits(relative_path: str) -> None:
+    encoded_length = len(relative_path.encode("utf-8"))
+    candidate = Path(relative_path)
+    if encoded_length > MAX_RELATIVE_PATH_BYTES:
+        raise ValueError(f"page path exceeds {MAX_RELATIVE_PATH_BYTES} bytes: {relative_path}")
+    if len(candidate.parts) > MAX_PATH_DEPTH:
+        raise ValueError(f"page path exceeds depth {MAX_PATH_DEPTH}: {relative_path}")
+    if any(len(part.encode("utf-8")) > MAX_PATH_COMPONENT_BYTES for part in candidate.parts):
+        raise ValueError(f"page path component exceeds {MAX_PATH_COMPONENT_BYTES} bytes: {relative_path}")
+
+
 class KnowledgeRepository:
     def __init__(self, root: Path) -> None:
         self.root = root
@@ -34,6 +50,7 @@ class KnowledgeRepository:
         if not isinstance(relative_path, str) or "\x00" in relative_path:
             raise ValueError(f"page path is not allowed: {relative_path}")
         candidate = Path(relative_path)
+        validate_relative_path_limits(relative_path)
         if candidate.is_absolute() or ".." in candidate.parts:
             raise ValueError(f"page path is outside wiki root: {relative_path}")
         if not candidate.parts or "\\" in relative_path:
