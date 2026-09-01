@@ -147,6 +147,7 @@ def test_openai_ingest_writes_generated_pages_under_knowledge_and_source_is_mode
             assert "knowledge/projects/" in instructions
             assert "optional summary suggestion" in instructions
             assert "at most one optional sources/" in instructions
+            assert "Every non-source generated page must contain [[sources/doc-123]]" in instructions
             assert "it is not required" in instructions
             assert "at least one source page" not in instructions
             assert "original-name.tex" in input_text

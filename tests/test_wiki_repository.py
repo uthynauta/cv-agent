@@ -51,6 +51,16 @@ def test_repository_rejects_symlink_escape(tmp_path: Path):
     assert not (outside / "escaped.md").exists()
 
 
+def test_repository_list_pages_ignores_symlinked_root(tmp_path: Path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.md").write_text("secret", encoding="utf-8")
+    wiki_root = tmp_path / "wiki"
+    wiki_root.symlink_to(outside, target_is_directory=True)
+
+    assert KnowledgeRepository(wiki_root).list_pages() == []
+
+
 def test_repository_rejects_internal_symlink_alias_without_overwrite(tmp_path: Path):
     wiki_root = tmp_path / "wiki"
     wiki_root.mkdir()
@@ -72,6 +82,27 @@ def test_repository_rejects_overlong_path_component_before_write(tmp_path: Path)
         KnowledgeRepository(tmp_path).write_page(
             f"knowledge/projects/{'x' * 256}.md", "Long", {}, "body"
         )
+
+
+def test_repository_rejects_existing_directory_target_before_write(tmp_path: Path):
+    target = tmp_path / "knowledge" / "projects" / "existing.md"
+    target.mkdir(parents=True)
+
+    with pytest.raises(ValueError, match="regular file"):
+        KnowledgeRepository(tmp_path).write_page("knowledge/projects/existing.md", "Changed", {}, "body")
+
+    assert target.is_dir()
+
+
+def test_repository_rejects_regular_file_parent_before_write(tmp_path: Path):
+    parent = tmp_path / "knowledge" / "projects"
+    parent.parent.mkdir(parents=True)
+    parent.write_text("sentinel", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="directory"):
+        KnowledgeRepository(tmp_path).write_page("knowledge/projects/new.md", "New", {}, "body")
+
+    assert parent.read_text(encoding="utf-8") == "sentinel"
 
 
 @pytest.mark.parametrize("frontmatter", ["- item\n", "value\n"])

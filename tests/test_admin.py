@@ -1,7 +1,10 @@
 from pathlib import Path
 import urllib.error
+from io import BytesIO
 
+from fastapi import FastAPI, UploadFile
 from fastapi.testclient import TestClient
+import pytest
 
 import cv_agent.api.admin as admin_module
 from cv_agent.config import Settings
@@ -52,6 +55,81 @@ def test_admin_ingest_rejects_path_outside_raw(tmp_path):
     )
 
     assert response.status_code == 400
+
+
+def test_admin_ingest_rejects_symlinked_raw_root_without_external_access(tmp_path, monkeypatch):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    secret = outside / "secret.md"
+    secret.write_text("secret", encoding="utf-8")
+    wiki = tmp_path / "wiki"
+    wiki.mkdir()
+    (wiki / "raw").symlink_to(outside, target_is_directory=True)
+    settings = Settings(_env_file=None, wiki_dir=str(wiki), admin_api_key="admin-secret")
+
+    class FakeIngestion:
+        def ingest_directory(self, path):
+            pytest.fail("symlinked raw root must not be ingested")
+
+        def ingest_file(self, path, document_id):
+            pytest.fail("symlinked raw root must not be ingested")
+
+    from cv_agent.api.admin import build_admin_router
+
+    app = FastAPI()
+    app.include_router(build_admin_router(settings, FakeIngestion()))
+    response = TestClient(app).post(
+        "/admin/ingest",
+        headers={"Authorization": "Bearer admin-secret"},
+        json={"path": str(wiki / "raw")},
+    )
+
+    assert response.status_code == 503
+    assert secret.read_text(encoding="utf-8") == "secret"
+
+
+def test_admin_upload_rejects_symlinked_upload_root_without_external_write(tmp_path, monkeypatch):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    secret = outside / "secret.txt"
+    secret.write_text("secret", encoding="utf-8")
+    wiki = tmp_path / "wiki"
+    wiki.mkdir()
+    (wiki / "raw").symlink_to(outside, target_is_directory=True)
+    settings = Settings(_env_file=None, wiki_dir=str(wiki), admin_api_key="admin-secret")
+
+    class FakeIngestion:
+        def ingest_file(self, path, document_id):
+            pytest.fail("symlinked upload root must not be ingested")
+
+    from cv_agent.api.admin import upload_document_payload
+
+    upload = UploadFile(filename="notes.md", file=BytesIO(b"notes"))
+    with pytest.raises(Exception) as raised:
+        import asyncio
+        asyncio.run(upload_document_payload(settings, FakeIngestion(), upload))
+
+    assert getattr(raised.value, "status_code", None) == 503
+    assert secret.read_text(encoding="utf-8") == "secret"
+    assert not (outside / "uploads").exists()
+
+
+def test_admin_status_rejects_symlinked_upload_root_without_external_access(tmp_path):
+    from fastapi import HTTPException
+    from cv_agent.api.admin import build_admin_status_payload
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    wiki = tmp_path / "wiki"
+    wiki.mkdir()
+    (wiki / "raw").symlink_to(outside, target_is_directory=True)
+    settings = Settings(_env_file=None, wiki_dir=str(wiki), admin_api_key="admin-secret")
+
+    with pytest.raises(HTTPException) as raised:
+        build_admin_status_payload(settings)
+
+    assert raised.value.status_code == 503
+    assert not (outside / "uploads").exists()
 
 
 def test_admin_ingest_requires_admin_key(tmp_path):

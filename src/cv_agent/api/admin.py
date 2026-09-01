@@ -11,6 +11,7 @@ from cv_agent.api.models import IngestRequest
 from cv_agent.config import Settings
 from cv_agent.knowledge.extractors import extract_source
 from cv_agent.knowledge.ingest import IngestionService, document_id_for_path
+from cv_agent.knowledge.repository import resolve_directory_path
 from cv_agent.knowledge.storage import safe_upload_filename, upload_directory
 
 
@@ -40,8 +41,13 @@ def _redact_payload_secrets(value: object, settings: Settings) -> object:
 
 
 def build_admin_status_payload(settings: Settings) -> dict[str, object]:
-    uploads = upload_directory(settings.wiki_dir)
-    uploads.mkdir(parents=True, exist_ok=True)
+    try:
+        uploads = resolve_directory_path(upload_directory(settings.wiki_dir), create=True)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="upload storage is unavailable",
+        ) from exc
     return {
         "status": "ok",
         "admin": {"enabled": bool(settings.admin_api_key)},
@@ -84,8 +90,13 @@ async def upload_document_payload(settings: Settings, ingestion: IngestionServic
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     data = await _read_upload(file, settings.admin_upload_max_bytes)
-    target_dir = upload_directory(settings.wiki_dir)
-    target_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        target_dir = resolve_directory_path(upload_directory(settings.wiki_dir), create=True)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="upload storage is unavailable",
+        ) from exc
     document_id = uuid4().hex
     target = target_dir / f"{document_id}-{filename}"
     try:
@@ -136,13 +147,24 @@ def build_admin_router(settings: Settings, ingestion: IngestionService) -> APIRo
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid bearer token")
 
     router = APIRouter(dependencies=[Depends(require_admin_key)])
-    raw_root = (Path(settings.wiki_dir) / "raw").resolve()
+    raw_root = Path(settings.wiki_dir) / "raw"
 
     @router.post("/admin/ingest")
     def ingest(request: IngestRequest) -> dict[str, object]:
-        path = Path(request.path).resolve()
         try:
-            path.relative_to(raw_root)
+            safe_raw_root = resolve_directory_path(raw_root)
+            requested = Path(request.path).absolute()
+            resolve_directory_path(requested.parent)
+            if requested.is_symlink():
+                raise ValueError("requested path uses symlink component")
+            path = requested.resolve()
+        except (OSError, ValueError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="raw storage is unavailable",
+            ) from exc
+        try:
+            path.relative_to(safe_raw_root.resolve())
         except ValueError as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

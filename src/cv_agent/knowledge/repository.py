@@ -20,13 +20,31 @@ def validate_relative_path_limits(relative_path: str) -> None:
         raise ValueError(f"page path component exceeds {MAX_PATH_COMPONENT_BYTES} bytes: {relative_path}")
 
 
+def resolve_directory_path(path: Path, *, create: bool = False) -> Path:
+    """Return a lexical directory path after rejecting symlink/file components."""
+    lexical = Path(path).absolute()
+    current = Path(lexical.anchor)
+    for part in lexical.parts[1:]:
+        current /= part
+        if current.is_symlink():
+            raise ValueError(f"directory path uses symlink component: {path}")
+        if current.exists() and not current.is_dir():
+            raise ValueError(f"directory path component is not a directory: {path}")
+    if create:
+        try:
+            lexical.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise ValueError(f"directory path is not available: {path}") from exc
+    return lexical
+
+
 class KnowledgeRepository:
     def __init__(self, root: Path) -> None:
         self.root = root
 
     def list_pages(self) -> list[KnowledgePage]:
         pages: list[KnowledgePage] = []
-        if not self.root.exists():
+        if self.root.is_symlink() or not self.root.exists() or not self.root.is_dir():
             return pages
         root = self.root.resolve()
         for path in sorted(self.root.rglob("*.md")):
@@ -46,7 +64,6 @@ class KnowledgeRepository:
         return pages
 
     def resolve_write_path(self, relative_path: str) -> Path:
-        root = self.root.resolve()
         if not isinstance(relative_path, str) or "\x00" in relative_path:
             raise ValueError(f"page path is not allowed: {relative_path}")
         candidate = Path(relative_path)
@@ -55,14 +72,17 @@ class KnowledgeRepository:
             raise ValueError(f"page path is outside wiki root: {relative_path}")
         if not candidate.parts or "\\" in relative_path:
             raise ValueError(f"page path is not allowed: {relative_path}")
-        lexical_root = self.root.absolute()
-        if lexical_root.is_symlink():
-            raise ValueError(f"page path is outside wiki root or uses symlink component: {relative_path}")
+        lexical_root = resolve_directory_path(self.root)
+        root = lexical_root.resolve()
         current = lexical_root
         for part in candidate.parts:
             current /= part
             if current.is_symlink():
                 raise ValueError(f"page path is outside wiki root or uses symlink component: {relative_path}")
+            if current.exists() and part != candidate.parts[-1] and not current.is_dir():
+                raise ValueError(f"page path component is not a directory: {relative_path}")
+        if current.exists() and not current.is_file():
+            raise ValueError(f"page path target is not a regular file: {relative_path}")
         path = (lexical_root / candidate).resolve()
         try:
             path.relative_to(root)

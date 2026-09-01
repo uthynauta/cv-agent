@@ -84,6 +84,7 @@ Rules:
 - Create useful pages under knowledge/projects/, knowledge/concepts/, knowledge/entities/, knowledge/education/, knowledge/credentials/, knowledge/experience/, knowledge/publications/, knowledge/skills/, knowledge/questions/, or knowledge/syntheses/ when supported.
 - Use Obsidian links between pages.
 - Any Obsidian link targeting sources/ must use `{canonical_source_stem}`.
+- Every non-source generated page must contain [[{canonical_source_stem}]] as a citation.
 - Put page Markdown in body_lines, one Markdown line per array item. Do not use a long escaped body string.
 - The source page is only an optional summary suggestion; its path must be exactly `{canonical_source_path}`. Its title, metadata, and extracted text are controlled by the ingestion service.
 - Do not include raw extracted source text in generated pages.
