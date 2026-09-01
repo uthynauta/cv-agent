@@ -1,5 +1,6 @@
 from pathlib import Path
 import os
+import shutil
 import subprocess
 import traceback
 
@@ -38,7 +39,10 @@ def test_git_commands_set_command_scope_safe_directory(tmp_path: Path, monkeypat
 
     assert commands
     assert all(
-        ["-c", f"safe.directory={store.root}"] == command[3:5]
+        any(
+            ["-c", f"safe.directory={store.root}"] == command[index : index + 2]
+            for index in range(len(command) - 1)
+        )
         for command in commands
     )
 
@@ -73,6 +77,34 @@ def test_commit_rejects_filter_command_before_it_executes(tmp_path: Path):
         store.commit("commit with filter")
 
     assert not marker.exists()
+
+
+def test_initialize_rejects_hook_and_worktree_execution_configuration(tmp_path: Path):
+    store, _ = make_store(tmp_path)
+    store.initialize()
+    store._run("config", "--local", "hook.pre-commit.command", "echo executed")
+
+    with pytest.raises(GitStoreError):
+        LocalKnowledgeGit(store.root, "Replacement Author", "replacement@example.com").initialize()
+
+
+def test_initialize_rejects_extensions_worktree_config(tmp_path: Path):
+    store, _ = make_store(tmp_path)
+    store.initialize()
+    store._run("config", "--local", "extensions.worktreeConfig", "true")
+
+    with pytest.raises(GitStoreError):
+        LocalKnowledgeGit(store.root, "Replacement Author", "replacement@example.com").initialize()
+
+
+def test_initialize_rejects_worktree_scoped_hook_configuration(tmp_path: Path):
+    store, _ = make_store(tmp_path)
+    store.initialize()
+    store._run("config", "--local", "extensions.worktreeConfig", "true")
+    store._run("config", "--worktree", "hook.pre-commit.command", "echo executed")
+
+    with pytest.raises(GitStoreError):
+        LocalKnowledgeGit(store.root, "Replacement Author", "replacement@example.com").initialize()
 
 
 def test_initialize_rejects_post_init_execution_configuration(tmp_path: Path):
@@ -137,6 +169,10 @@ def test_commit_rejects_non_markdown_files_in_allowed_scopes(tmp_path: Path, fil
     with pytest.raises(GitStoreError):
         store.commit("reject non-markdown")
 
+    assert store.tracked_paths() == []
+    assert store._run("diff", "--cached", "--name-only").stdout == ""
+    assert (store.root / "sources" / filename).exists()
+
 
 def test_commit_rejects_symlink_in_allowed_scopes(tmp_path: Path):
     store, _ = make_store(tmp_path)
@@ -147,6 +183,139 @@ def test_commit_rejects_symlink_in_allowed_scopes(tmp_path: Path):
 
     with pytest.raises(GitStoreError):
         store.commit("reject symlink")
+
+    assert store.tracked_paths() == []
+    assert store._run("diff", "--cached", "--name-only").stdout == ""
+    assert (store.root / "knowledge" / "linked.md").is_symlink()
+
+
+def test_commit_rejects_scope_root_file_and_cleans_index(tmp_path: Path):
+    store, _ = make_store(tmp_path)
+    store.initialize()
+    shutil.rmtree(store.root / "sources")
+    scope_file = store.root / "sources"
+    scope_file.write_bytes(b"not a directory")
+
+    with pytest.raises(GitStoreError):
+        store.commit("reject scope file")
+
+    assert store.tracked_paths() == []
+    assert store._run("diff", "--cached", "--name-only").stdout == ""
+    assert scope_file.is_file()
+
+
+def test_commit_revalidates_remote_and_metadata_before_mutating_external_repository(tmp_path: Path):
+    store, _ = make_store(tmp_path)
+    store.initialize()
+    external = tmp_path / "external"
+    external.mkdir()
+    subprocess.run(
+        ["git", "-C", str(external), "init", "--initial-branch=main"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    original_git = store.root / ".git"
+    moved_git = store.root / ".git-local"
+    original_git.rename(moved_git)
+    original_git.symlink_to(external / ".git", target_is_directory=True)
+
+    try:
+        with pytest.raises(GitStoreError):
+            store.commit("reject swapped metadata")
+    finally:
+        original_git.unlink()
+        moved_git.rename(original_git)
+
+    external_head = subprocess.run(
+        ["git", "-C", str(external), "rev-parse", "--verify", "HEAD"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert external_head.returncode != 0
+
+
+def test_commit_revalidates_remote_added_after_initialize(tmp_path: Path):
+    store, _ = make_store(tmp_path)
+    store.initialize()
+    store._run("remote", "add", "origin", "https://example.invalid/repository.git")
+    (store.root / "sources" / "source.md").write_text("source", encoding="utf-8")
+
+    with pytest.raises(GitStoreError):
+        store.commit("reject remote")
+
+    assert store.head() == ""
+
+
+def test_commit_revalidates_post_init_core_worktree(tmp_path: Path):
+    store, _ = make_store(tmp_path)
+    store.initialize()
+    external = tmp_path / "external-worktree"
+    external.mkdir()
+    store._run("config", "--local", "core.worktree", str(external))
+    (store.root / "sources" / "source.md").write_text("source", encoding="utf-8")
+
+    with pytest.raises(GitStoreError):
+        store.commit("reject external worktree")
+
+    assert store.head() == ""
+    assert not (external / "sources").exists()
+
+
+def test_initialize_rejects_object_alternates_and_external_object_storage(tmp_path: Path):
+    external = tmp_path / "external-objects"
+    external.mkdir()
+    alternates_root = tmp_path / "alternates-repository"
+    alternates = LocalKnowledgeGit(alternates_root, "Test Author", "test@example.com")
+    alternates.initialize()
+    (alternates_root / ".git" / "objects" / "info" / "alternates").write_text(
+        str(external), encoding="utf-8"
+    )
+    with pytest.raises(GitStoreError):
+        LocalKnowledgeGit(alternates_root, "Test Author", "test@example.com").initialize()
+
+    linked_root = tmp_path / "linked-repository"
+    linked = LocalKnowledgeGit(linked_root, "Test Author", "test@example.com")
+    linked.initialize()
+    objects = linked_root / ".git" / "objects"
+    shutil.rmtree(objects)
+    objects.symlink_to(external, target_is_directory=True)
+    with pytest.raises(GitStoreError):
+        LocalKnowledgeGit(linked_root, "Test Author", "test@example.com").initialize()
+
+
+def test_initialize_rejects_replacement_ref_with_hidden_secret_pdf(tmp_path: Path):
+    store, _ = make_store(tmp_path)
+    store.initialize()
+    source = store.root / "sources" / "source.md"
+    source.write_text("source", encoding="utf-8")
+    original = store.commit("allowed commit")
+    clean_env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    blob = subprocess.run(
+        ["git", "-C", str(store.root), "hash-object", "-w", "--stdin"],
+        input=b"%PDF-hidden-secret",
+        env=clean_env,
+        check=True,
+        capture_output=True,
+    ).stdout.decode().strip()
+    tree = subprocess.run(
+        ["git", "-C", str(store.root), "mktree"],
+        input=f"100644 blob {blob}\tsecret.pdf\n".encode(),
+        env=clean_env,
+        check=True,
+        capture_output=True,
+    ).stdout.decode().strip()
+    hidden = subprocess.run(
+        ["git", "-C", str(store.root), "commit-tree", tree, "-m", "hidden"],
+        env={**clean_env, "GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "test@example.com", "GIT_COMMITTER_NAME": "Test", "GIT_COMMITTER_EMAIL": "test@example.com"},
+        check=True,
+        capture_output=True,
+    ).stdout.decode().strip()
+    store._run("update-ref", f"refs/replace/{original}", hidden)
+
+    with pytest.raises(GitStoreError):
+        LocalKnowledgeGit(store.root, "Test Author", "test@example.com").initialize()
 
 
 def test_initialize_rejects_existing_repository_with_remote_without_mutating_it(tmp_path: Path):

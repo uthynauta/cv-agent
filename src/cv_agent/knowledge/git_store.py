@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import stat
 import subprocess
 
 
@@ -12,6 +13,7 @@ _SAFE_OPERATIONS = frozenset(
         "commit",
         "config",
         "diff",
+        "for-each-ref",
         "init",
         "ls-files",
         "ls-tree",
@@ -44,10 +46,7 @@ class LocalKnowledgeGit:
         existing = git_metadata.exists() or git_metadata.is_symlink()
         if not existing:
             self._run("init", "--initial-branch=main", "--object-format=sha1")
-        else:
-            self._validate_repository_locality(git_metadata)
-        self._validate_safe_configuration()
-        self._validate_object_format()
+        self._validate_repository_state(git_metadata)
         if existing:
             self._validate_repository_invariants()
         self._run("config", "--local", "user.name", self.author_name)
@@ -58,6 +57,10 @@ class LocalKnowledgeGit:
         command = [
             "git",
             "-C",
+            str(self.root),
+            "--git-dir",
+            str(self.root / ".git"),
+            "--work-tree",
             str(self.root),
             "-c",
             f"safe.directory={self.root}",
@@ -96,6 +99,7 @@ class LocalKnowledgeGit:
         environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
         environment["GIT_CONFIG_GLOBAL"] = os.devnull
         environment["GIT_CONFIG_NOSYSTEM"] = "1"
+        environment["GIT_NO_REPLACE_OBJECTS"] = "1"
         return environment
 
     @staticmethod
@@ -107,14 +111,71 @@ class LocalKnowledgeGit:
         if result.stdout.strip() != "sha1":
             raise GitStoreError("Git repository object format must be sha1")
 
+    def _validate_repository_state(self, git_metadata: Path) -> None:
+        if git_metadata.is_symlink() or not git_metadata.is_dir():
+            raise GitStoreError("Git repository metadata must be a local directory")
+        self._validate_object_storage(git_metadata)
+        self._validate_safe_configuration()
+        self._validate_repository_locality(git_metadata)
+        self._validate_object_format()
+        if self.remotes():
+            raise GitStoreError("Git repository remotes are not allowed")
+        if self._run("for-each-ref", "--format=%(refname)", "refs/replace/").stdout.splitlines():
+            raise GitStoreError("Git replacement refs are not allowed")
+
+    @staticmethod
+    def _validate_object_storage(git_metadata: Path) -> None:
+        objects = git_metadata / "objects"
+        if objects.is_symlink() or not objects.is_dir():
+            raise GitStoreError("Git object storage must be a local directory")
+        alternates = objects / "info" / "alternates"
+        if alternates.exists() or alternates.is_symlink():
+            raise GitStoreError("Git object alternates are not allowed")
+        directories = [objects]
+        while directories:
+            directory = directories.pop()
+            try:
+                entries = list(directory.iterdir())
+            except OSError:
+                raise GitStoreError("Git object storage cannot be inspected") from None
+            for entry in entries:
+                if entry.is_symlink():
+                    raise GitStoreError("Git object storage must not contain symlinks")
+                try:
+                    mode = entry.stat(follow_symlinks=False).st_mode
+                except OSError:
+                    raise GitStoreError("Git object storage cannot be inspected") from None
+                if stat.S_ISDIR(mode):
+                    directories.append(entry)
+                elif not stat.S_ISREG(mode):
+                    raise GitStoreError("Git object storage contains a non-regular entry")
+
     def _validate_safe_configuration(self) -> None:
         entries = self._run(
-            "config", "--local", "--includes", "--null", "--show-origin", "--list"
+            "config", "--includes", "--null", "--show-origin", "--list"
         ).stdout.split("\0")
         for index in range(0, len(entries) - 1, 2):
-            key = entries[index + 1].split("\n", 1)[0].lower()
+            origin = entries[index]
+            key_value = entries[index + 1]
+            key, _, value = key_value.partition("\n")
+            key = key.lower()
+            if origin == "command line:" and (
+                (key == "safe.directory" and value == str(self.root))
+                or (key == "core.hookspath" and value == "/dev/null")
+                or (key == "commit.gpgsign" and value == "false")
+            ):
+                continue
             if (
-                key in {"core.hookspath", "core.fsmonitor", "diff.external"}
+                key in {
+                    "core.hookspath",
+                    "core.fsmonitor",
+                    "core.fsmonitorhook",
+                    "core.alternaterefscommand",
+                    "core.worktree",
+                    "diff.external",
+                    "extensions.worktreeconfig",
+                }
+                or key.startswith("hook.")
                 or key.startswith("filter.")
                 and key.endswith((".clean", ".smudge", ".process"))
                 or key.startswith("diff.")
@@ -187,21 +248,54 @@ class LocalKnowledgeGit:
     def _is_allowed_path(path: str) -> bool:
         return path.startswith(_ALLOWED_PATH_PREFIXES)
 
-    def commit(self, message: str) -> str:
-        for scope in ("sources", "knowledge"):
-            (self.root / scope).mkdir(parents=True, exist_ok=True)
-        self._validate_safe_configuration()
-        self._run("reset", "--")
-        self._run("add", "--all", "--force", "--", "sources", "knowledge")
-        self._validate_index_entries(self._run("ls-files", "--stage", "-z").stdout)
-        staged = self._run("diff", "--cached", "--quiet", check=False)
-        if staged.returncode == 0:
-            return self.head()
-        if staged.returncode != 1:
-            raise self._error("diff")
+    def _validate_scope_filesystem(self) -> None:
+        directories = [self.root / scope for scope in ("sources", "knowledge")]
+        while directories:
+            directory = directories.pop()
+            if directory.is_symlink() or not directory.is_dir():
+                raise GitStoreError("Knowledge scopes must contain only local directories")
+            try:
+                entries = list(directory.iterdir())
+            except OSError:
+                raise GitStoreError("Knowledge scopes cannot be inspected") from None
+            for entry in entries:
+                if entry.is_symlink():
+                    raise GitStoreError("Knowledge scopes must not contain symlinks")
+                try:
+                    mode = entry.stat(follow_symlinks=False).st_mode
+                except OSError:
+                    raise GitStoreError("Knowledge scopes cannot be inspected") from None
+                if stat.S_ISDIR(mode):
+                    directories.append(entry)
+                elif not stat.S_ISREG(mode) or not entry.name.lower().endswith(".md"):
+                    raise GitStoreError("Knowledge scopes contain non-Markdown files")
 
-        self._run("commit", "--message", message)
-        return self._run("rev-parse", "HEAD").stdout.strip()
+    def commit(self, message: str) -> str:
+        self._validate_repository_state(self.root / ".git")
+        self._run("reset", "--")
+        for scope in ("sources", "knowledge"):
+            scope_path = self.root / scope
+            if scope_path.exists() or scope_path.is_symlink():
+                continue
+            try:
+                scope_path.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                raise GitStoreError("Knowledge scopes cannot be created") from None
+        try:
+            self._validate_scope_filesystem()
+            self._run("add", "--all", "--force", "--", "sources", "knowledge")
+            self._validate_index_entries(self._run("ls-files", "--stage", "-z").stdout)
+            staged = self._run("diff", "--cached", "--quiet", check=False)
+            if staged.returncode == 0:
+                return self.head()
+            if staged.returncode != 1:
+                raise self._error("diff")
+
+            self._run("commit", "--message", message)
+            return self._run("rev-parse", "HEAD").stdout.strip()
+        except GitStoreError:
+            self._run("reset", "--", check=False)
+            raise
 
     def head(self) -> str:
         result = self._run("rev-parse", "--verify", "HEAD", check=False)
