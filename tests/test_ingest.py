@@ -88,6 +88,9 @@ def test_openai_ingest_writes_generated_pages_under_knowledge_and_source_is_mode
         def create_response(self, instructions: str, input_text: str) -> str:
             assert "knowledge/projects/" in instructions
             assert "optional summary suggestion" in instructions
+            assert "at most one optional sources/" in instructions
+            assert "it is not required" in instructions
+            assert "at least one source page" not in instructions
             assert "original-name.tex" in input_text
             return """
             {

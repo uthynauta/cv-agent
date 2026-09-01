@@ -70,7 +70,7 @@ Return strict JSON with this shape:
 Rules:
 - Write in English because backend wiki material is internal implementation context.
 - Use concise, source-grounded claims only.
-- Include at least one source page under sources/.
+- Include at most one optional sources/ page as a summary suggestion; it is not required.
 - Create useful pages under knowledge/projects/, knowledge/concepts/, knowledge/entities/, knowledge/education/, knowledge/credentials/, knowledge/experience/, knowledge/publications/, knowledge/skills/, knowledge/questions/, or knowledge/syntheses/ when supported.
 - Use Obsidian links between pages.
 - Put page Markdown in body_lines, one Markdown line per array item. Do not use a long escaped body string.
