@@ -61,6 +61,16 @@ def test_repository_list_pages_ignores_symlinked_root(tmp_path: Path):
     assert KnowledgeRepository(wiki_root).list_pages() == []
 
 
+def test_repository_list_pages_ignores_symlinked_root_ancestor(tmp_path: Path):
+    outside = tmp_path / "outside"
+    (outside / "repo").mkdir(parents=True)
+    (outside / "repo" / "secret.md").write_text("secret", encoding="utf-8")
+    alias = tmp_path / "alias"
+    alias.symlink_to(outside, target_is_directory=True)
+
+    assert KnowledgeRepository(alias / "repo").list_pages() == []
+
+
 def test_repository_rejects_internal_symlink_alias_without_overwrite(tmp_path: Path):
     wiki_root = tmp_path / "wiki"
     wiki_root.mkdir()

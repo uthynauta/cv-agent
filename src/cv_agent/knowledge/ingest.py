@@ -156,8 +156,9 @@ class IngestionService:
 
     def _write_index(self) -> None:
         lines = ["# Wiki Index", ""]
+        repository_root = self.repository.root.resolve()
         for page in self.repository.list_pages():
-            relative_page = page.path.relative_to(self.repository.root)
+            relative_page = page.path.resolve().relative_to(repository_root)
             if relative_page.as_posix() in {"knowledge/index.md", "knowledge/log.md"}:
                 continue
             relative = relative_page.with_suffix("")

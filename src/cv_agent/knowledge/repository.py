@@ -44,12 +44,16 @@ class KnowledgeRepository:
 
     def list_pages(self) -> list[KnowledgePage]:
         pages: list[KnowledgePage] = []
-        if self.root.is_symlink() or not self.root.exists() or not self.root.is_dir():
+        try:
+            lexical_root = resolve_directory_path(self.root)
+        except (OSError, ValueError):
             return pages
-        root = self.root.resolve()
-        for path in sorted(self.root.rglob("*.md")):
-            relative_path = path.relative_to(self.root)
-            if self._contains_symlink(relative_path):
+        if not lexical_root.exists() or not lexical_root.is_dir():
+            return pages
+        root = lexical_root.resolve()
+        for path in sorted(lexical_root.rglob("*.md")):
+            relative_path = path.relative_to(lexical_root)
+            if self._contains_symlink(relative_path, lexical_root):
                 continue
             try:
                 resolved = path.resolve()
@@ -105,8 +109,8 @@ class KnowledgeRepository:
         path.write_text(dump_frontmatter(merged, body), encoding="utf-8")
         return path
 
-    def _contains_symlink(self, relative_path: Path) -> bool:
-        current = self.root
+    def _contains_symlink(self, relative_path: Path, root: Path | None = None) -> bool:
+        current = root or self.root
         for part in relative_path.parts:
             current /= part
             if current.is_symlink():
