@@ -1,4 +1,5 @@
 from datetime import datetime
+import inspect
 from pathlib import Path
 
 import pytest
@@ -48,7 +49,7 @@ def test_ingest_file_writes_complete_versioned_source(
     assert metadata["original_filename"] == f"approved{suffix}"
     assert metadata["media_type"] == media_type
     assert metadata["content_sha256"] == "a" * 64
-    assert metadata["extractor_version"] == 1
+    assert metadata["extractor_version"] == "1"
     assert metadata["needs_ocr"] is (suffix == ".pdf")
     assert metadata["tags"] == ["source", kind]
     datetime.fromisoformat(metadata["uploaded_at"])
@@ -60,13 +61,21 @@ def test_ingest_file_writes_complete_versioned_source(
     assert (tmp_path / "knowledge" / "log.md").exists()
 
 
-@pytest.mark.parametrize("document_id", ["", ".", "..", "../escape", "/absolute", "nested/id", r"nested\\id"])
+@pytest.mark.parametrize(
+    "document_id",
+    ["", ".", "..", "../escape", "/absolute", "nested/id", r"nested\\id", "has space", "ends.md", "bad\nvalue", "é"],
+)
 def test_ingest_file_rejects_unsafe_document_id(tmp_path: Path, document_id: str):
     source = tmp_path / "source.md"
     source.write_text("source", encoding="utf-8")
 
     with pytest.raises(ValueError, match="document_id"):
         IngestionService(KnowledgeRepository(tmp_path)).ingest_file(source, document_id)
+
+
+def test_ingest_file_requires_explicit_document_id():
+    parameter = inspect.signature(IngestionService.ingest_file).parameters["document_id"]
+    assert parameter.default is inspect.Parameter.empty
 
 
 def test_openai_ingest_writes_generated_pages_under_knowledge_and_source_is_model_immutable(
@@ -78,6 +87,7 @@ def test_openai_ingest_writes_generated_pages_under_knowledge_and_source_is_mode
     class FakeTextClient:
         def create_response(self, instructions: str, input_text: str) -> str:
             assert "knowledge/projects/" in instructions
+            assert "optional summary suggestion" in instructions
             assert "original-name.tex" in input_text
             return """
             {
@@ -85,13 +95,15 @@ def test_openai_ingest_writes_generated_pages_under_knowledge_and_source_is_mode
                 {
                   "path": "sources/model-picked-wrong-slug.md",
                   "title": "Model Override",
-                  "metadata": {"kind": "evil", "document_id": "wrong", "tags": ["wrong"]},
+                  "kind": "evil",
+                  "tags": ["wrong"],
                   "body_lines": ["Model replaced source"]
                 },
                 {
                   "path": "knowledge/projects/teradata.md",
                   "title": "Teradata",
-                  "metadata": {"kind": "project", "tags": ["project"]},
+                  "kind": "project",
+                  "tags": ["project"],
                   "body_lines": ["## Summary", "Project page."]
                 }
               ]

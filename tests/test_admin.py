@@ -17,7 +17,7 @@ def test_admin_ingest_allows_file_inside_raw(tmp_path, monkeypatch):
     class Result:
         source_page = Path("sources/cv.md")
 
-    def ingest_file(self, path: Path):
+    def ingest_file(self, path: Path, document_id: str):
         assert path == source
         return Result()
 
@@ -103,7 +103,7 @@ def test_admin_document_upload_saves_pdf_and_ingests(tmp_path, monkeypatch):
         assert path.name.endswith(".pdf")
         return Extracted()
 
-    def fake_ingest_file(self, path: Path):
+    def fake_ingest_file(self, path: Path, document_id: str):
         assert path.parent == tmp_path / "raw" / "uploads"
         assert path.read_bytes() == b"%PDF-1.4 text"
         return Result()
@@ -149,7 +149,7 @@ def test_admin_document_upload_saves_markdown_and_ingests(tmp_path, monkeypatch)
         assert path.name.endswith(".md")
         return Extracted()
 
-    def fake_ingest_file(self, path: Path):
+    def fake_ingest_file(self, path: Path, document_id: str):
         assert path.parent == tmp_path / "raw" / "uploads"
         assert path.read_text(encoding="utf-8") == "# Profile\n\nMarkdown evidence."
         return Result()
@@ -195,7 +195,7 @@ def test_admin_document_upload_saves_latex_and_ingests(tmp_path, monkeypatch):
         assert path.name.endswith(".tex")
         return Extracted()
 
-    def fake_ingest_file(self, path: Path):
+    def fake_ingest_file(self, path: Path, document_id: str):
         assert path.parent == tmp_path / "raw" / "uploads"
         assert path.read_text(encoding="utf-8") == r"\section{Profile} Profile latex evidence."
         return Result()

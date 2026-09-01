@@ -32,12 +32,10 @@ class IngestionService:
         self.settings = settings
         self.text_client = text_client
 
-    def ingest_file(self, path: Path, document_id: str | None = None) -> IngestResult:
+    def ingest_file(self, path: Path, document_id: str) -> IngestResult:
         with get_tracer().start_as_current_span("wiki.ingest_file") as span:
             span.set_attribute("source.extension", path.suffix.lower())
             try:
-                if document_id is None:
-                    document_id = _default_document_id(path)
                 _validate_document_id(document_id)
                 extracted = extract_source(path)
                 span.set_attribute("source.needs_ocr", extracted.needs_ocr)
@@ -107,7 +105,7 @@ class IngestionService:
             "media_type": _media_type(extracted.kind),
             "uploaded_at": datetime.now(UTC).isoformat(),
             "content_sha256": extracted.sha256,
-            "extractor_version": 1,
+            "extractor_version": "1",
             "needs_ocr": extracted.needs_ocr,
             "tags": ["source", extracted.kind],
         }
@@ -118,7 +116,7 @@ class IngestionService:
         results: list[IngestResult] = []
         for path in sorted(root.rglob("*")):
             if path.suffix.lower() in {".tex", ".pdf", ".md"}:
-                results.append(self.ingest_file(path))
+                results.append(self.ingest_file(path, document_id_for_path(path)))
         return results
 
     def _append_log(self, path: Path, mode: str) -> None:
@@ -178,18 +176,14 @@ def _media_type(kind: str) -> str:
 def _validate_document_id(document_id: str) -> None:
     if not isinstance(document_id, str) or not document_id.strip():
         raise ValueError("document_id must be a non-empty path-safe identifier")
-    if (
-        document_id in {".", ".."}
-        or Path(document_id).is_absolute()
-        or len(Path(document_id).parts) != 1
-        or "/" in document_id
-        or "\\" in document_id
-        or "\x00" in document_id
-    ):
-        raise ValueError("document_id must be a single path-safe identifier")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", document_id):
+        raise ValueError("document_id must contain only ASCII letters, digits, '.', '_' or '-'")
+    if document_id.lower().endswith(".md"):
+        raise ValueError("document_id must not end with .md")
 
 
-def _default_document_id(path: Path) -> str:
+def document_id_for_path(path: Path) -> str:
+    """Derive a collision-resistant ID for legacy directory/caller flows."""
     candidate = _slugify(path.stem)
     path_digest = sha256(str(path.resolve()).encode("utf-8")).hexdigest()[:12]
     return f"{candidate}-{path_digest}"

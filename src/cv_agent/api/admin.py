@@ -10,7 +10,7 @@ from cv_agent.admin.github import GitHubAdminService
 from cv_agent.api.models import IngestRequest
 from cv_agent.config import Settings
 from cv_agent.knowledge.extractors import extract_source
-from cv_agent.knowledge.ingest import IngestionService
+from cv_agent.knowledge.ingest import IngestionService, document_id_for_path
 from cv_agent.knowledge.storage import safe_upload_filename, upload_directory
 
 
@@ -102,7 +102,7 @@ async def upload_document_payload(settings: Settings, ingestion: IngestionServic
             detail="PDF requires OCR before upload",
         )
 
-    result = ingestion.ingest_file(target)
+    result = ingestion.ingest_file(target, document_id_for_path(target))
     return {
         "status": "ok",
         "document": {
@@ -143,7 +143,11 @@ def build_admin_router(settings: Settings, ingestion: IngestionService) -> APIRo
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="path must be within the wiki raw directory",
             ) from exc
-        results = ingestion.ingest_directory(path) if path.is_dir() else [ingestion.ingest_file(path)]
+        results = (
+            ingestion.ingest_directory(path)
+            if path.is_dir()
+            else [ingestion.ingest_file(path, document_id_for_path(path))]
+        )
         return {
             "status": "ok",
             "count": len(results),

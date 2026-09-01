@@ -196,7 +196,7 @@ def test_ui_upload_reuses_document_upload_behavior(tmp_path, monkeypatch):
         assert path.name.endswith(".pdf")
         return Extracted()
 
-    def fake_ingest_file(self, path: Path):
+    def fake_ingest_file(self, path: Path, document_id: str):
         assert path.parent == tmp_path / "raw" / "uploads"
         assert path.read_bytes() == b"%PDF-1.4 text"
         return Result()
