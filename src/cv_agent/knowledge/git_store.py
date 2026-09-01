@@ -14,6 +14,7 @@ _SAFE_OPERATIONS = frozenset(
         "diff",
         "init",
         "ls-files",
+        "ls-tree",
         "remote",
         "rev-list",
         "reset",
@@ -24,7 +25,7 @@ _SAFE_OPERATIONS = frozenset(
 )
 
 _ALLOWED_PATH_PREFIXES = ("sources/", "knowledge/")
-_ALLOWED_TREE_NAMES = frozenset({"sources", "knowledge"})
+_REGULAR_FILE_MODES = frozenset({"100644", "100755"})
 
 
 class GitStoreError(RuntimeError):
@@ -45,6 +46,7 @@ class LocalKnowledgeGit:
             self._run("init", "--initial-branch=main", "--object-format=sha1")
         else:
             self._validate_repository_locality(git_metadata)
+        self._validate_safe_configuration()
         self._validate_object_format()
         if existing:
             self._validate_repository_invariants()
@@ -53,7 +55,18 @@ class LocalKnowledgeGit:
 
     def _run(self, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
         operation = args[0] if args and args[0] in _SAFE_OPERATIONS else "git command"
-        command = ["git", "-C", str(self.root), *args]
+        command = [
+            "git",
+            "-C",
+            str(self.root),
+            "-c",
+            f"safe.directory={self.root}",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "-c",
+            "commit.gpgSign=false",
+            *args,
+        ]
         failure: str | None = None
         try:
             result = subprocess.run(
@@ -94,6 +107,23 @@ class LocalKnowledgeGit:
         if result.stdout.strip() != "sha1":
             raise GitStoreError("Git repository object format must be sha1")
 
+    def _validate_safe_configuration(self) -> None:
+        entries = self._run(
+            "config", "--local", "--includes", "--null", "--show-origin", "--list"
+        ).stdout.split("\0")
+        for index in range(0, len(entries) - 1, 2):
+            key = entries[index + 1].split("\n", 1)[0].lower()
+            if (
+                key in {"core.hookspath", "core.fsmonitor", "diff.external"}
+                or key.startswith("filter.")
+                and key.endswith((".clean", ".smudge", ".process"))
+                or key.startswith("diff.")
+                and key.endswith(".textconv")
+                or key == "include.path"
+                or key.startswith("includeif.")
+            ):
+                raise GitStoreError("Git repository contains executable configuration")
+
     def _validate_repository_locality(self, git_metadata: Path) -> None:
         if git_metadata.is_symlink() or not git_metadata.is_dir():
             raise GitStoreError("Git repository metadata must be a local directory")
@@ -117,21 +147,41 @@ class LocalKnowledgeGit:
         if self.remotes():
             raise GitStoreError("Git repository remotes are not allowed")
 
-        indexed = self._run("ls-files", "-z").stdout.split("\0")
-        paths = [path for path in indexed if path]
-        reachable = self._run("rev-list", "--objects", "-z", "--all").stdout.split("\0")
-        for index, entry in enumerate(reachable):
-            if not entry.startswith("path="):
+        self._validate_index_entries(self._run("ls-files", "--stage", "-z").stdout)
+        commits = self._run("rev-list", "--all").stdout.splitlines()
+        for commit in commits:
+            self._validate_tree_entries(self._run("ls-tree", "-r", "-z", commit).stdout)
+
+    def _validate_index_entries(self, output: str) -> None:
+        for record in output.split("\0"):
+            if not record:
                 continue
-            path = entry[5:]
-            object_id = reachable[index - 1] if index else ""
-            if path in _ALLOWED_TREE_NAMES:
-                object_type = self._run("cat-file", "-t", object_id).stdout.strip()
-                if object_type == "tree":
-                    continue
-            paths.append(path)
-        if any(not self._is_allowed_path(path) for path in paths):
-            raise GitStoreError("Git repository contains paths outside allowed scopes")
+            try:
+                metadata, path = record.split("\t", 1)
+                mode, _object_id, _stage = metadata.split()
+            except ValueError:
+                raise GitStoreError("Git index contains invalid entries") from None
+            self._validate_file_entry(path, mode, "blob")
+
+    def _validate_tree_entries(self, output: str) -> None:
+        for record in output.split("\0"):
+            if not record:
+                continue
+            try:
+                metadata, path = record.split("\t", 1)
+                mode, object_type, _object_id = metadata.split(" ", 2)
+            except ValueError:
+                raise GitStoreError("Git tree contains invalid entries") from None
+            self._validate_file_entry(path, mode, object_type)
+
+    def _validate_file_entry(self, path: str, mode: str, object_type: str) -> None:
+        if (
+            not self._is_allowed_path(path)
+            or not path.lower().endswith(".md")
+            or mode not in _REGULAR_FILE_MODES
+            or object_type != "blob"
+        ):
+            raise GitStoreError("Git repository contains non-Markdown or out-of-scope paths")
 
     @staticmethod
     def _is_allowed_path(path: str) -> bool:
@@ -140,11 +190,10 @@ class LocalKnowledgeGit:
     def commit(self, message: str) -> str:
         for scope in ("sources", "knowledge"):
             (self.root / scope).mkdir(parents=True, exist_ok=True)
+        self._validate_safe_configuration()
         self._run("reset", "--")
         self._run("add", "--all", "--force", "--", "sources", "knowledge")
-        staged_paths = self._run("diff", "--cached", "--name-only", "-z").stdout.split("\0")
-        if any(path and not self._is_allowed_path(path) for path in staged_paths):
-            raise GitStoreError("Git staging produced paths outside allowed scopes")
+        self._validate_index_entries(self._run("ls-files", "--stage", "-z").stdout)
         staged = self._run("diff", "--cached", "--quiet", check=False)
         if staged.returncode == 0:
             return self.head()

@@ -23,6 +23,67 @@ def test_initialize_creates_repository_without_remotes(tmp_path: Path):
     assert store.remotes() == []
 
 
+def test_git_commands_set_command_scope_safe_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    commands = []
+    real_run = subprocess.run
+
+    def recording_run(command, **kwargs):
+        commands.append(command)
+        return real_run(command, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", recording_run)
+    store = LocalKnowledgeGit(tmp_path / "repository", "Test Author", "test@example.com")
+
+    store.initialize()
+
+    assert commands
+    assert all(
+        ["-c", f"safe.directory={store.root}"] == command[3:5]
+        for command in commands
+    )
+
+
+def test_commit_does_not_execute_repo_pre_commit_hook(tmp_path: Path):
+    store, _ = make_store(tmp_path)
+    store.initialize()
+    marker = tmp_path / "hook-executed"
+    hook = store.root / ".git" / "hooks" / "pre-commit"
+    hook.write_text(f"#!/bin/sh\nprintf executed > '{marker}'\n", encoding="utf-8")
+    hook.chmod(0o700)
+    (store.root / "sources" / "source.md").write_text("source", encoding="utf-8")
+
+    store.commit("commit with hook")
+
+    assert not marker.exists()
+
+
+def test_commit_rejects_filter_command_before_it_executes(tmp_path: Path):
+    store, _ = make_store(tmp_path)
+    store.initialize()
+    marker = tmp_path / "filter-executed"
+    store._run(
+        "config",
+        "--local",
+        "filter.secret.clean",
+        f"sh -c \"printf executed > '{marker}'; cat\"",
+    )
+    (store.root / "sources" / "source.md").write_text("source", encoding="utf-8")
+
+    with pytest.raises(GitStoreError):
+        store.commit("commit with filter")
+
+    assert not marker.exists()
+
+
+def test_initialize_rejects_post_init_execution_configuration(tmp_path: Path):
+    store, _ = make_store(tmp_path)
+    store.initialize()
+    store._run("config", "--local", "core.fsmonitor", "sh -c 'echo executed'")
+
+    with pytest.raises(GitStoreError):
+        LocalKnowledgeGit(store.root, "Replacement Author", "replacement@example.com").initialize()
+
+
 def test_git_environment_cannot_redirect_store_to_an_external_repository(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
@@ -67,6 +128,27 @@ def test_head_is_empty_before_first_commit(tmp_path: Path):
     assert store.head() == ""
 
 
+@pytest.mark.parametrize("filename", ["source.pdf", "source.txt"])
+def test_commit_rejects_non_markdown_files_in_allowed_scopes(tmp_path: Path, filename: str):
+    store, _ = make_store(tmp_path)
+    store.initialize()
+    (store.root / "sources" / filename).write_bytes(b"not markdown")
+
+    with pytest.raises(GitStoreError):
+        store.commit("reject non-markdown")
+
+
+def test_commit_rejects_symlink_in_allowed_scopes(tmp_path: Path):
+    store, _ = make_store(tmp_path)
+    store.initialize()
+    target = tmp_path / "outside.md"
+    target.write_text("outside", encoding="utf-8")
+    (store.root / "knowledge" / "linked.md").symlink_to(target)
+
+    with pytest.raises(GitStoreError):
+        store.commit("reject symlink")
+
+
 def test_initialize_rejects_existing_repository_with_remote_without_mutating_it(tmp_path: Path):
     store = LocalKnowledgeGit(tmp_path / "repository", "Test Author", "test@example.com")
     store.initialize()
@@ -98,6 +180,25 @@ def test_initialize_rejects_historical_unrelated_paths(tmp_path: Path):
         LocalKnowledgeGit(store.root, "Replacement Author", "replacement@example.com").initialize()
 
     assert store._run("config", "--local", "user.name").stdout.strip() == "Test Author"
+
+
+def test_initialize_rejects_historical_shared_tree_alias_outside_allowed_scopes(tmp_path: Path):
+    store = LocalKnowledgeGit(tmp_path / "repository", "Test Author", "test@example.com")
+    store.initialize()
+    allowed = store.root / "knowledge" / "shared.md"
+    outside = store.root / "zarchive" / "shared.md"
+    allowed.parent.mkdir()
+    outside.parent.mkdir()
+    allowed.write_text("shared", encoding="utf-8")
+    outside.write_text("shared", encoding="utf-8")
+    store._run("add", "--all")
+    store._run("commit", "--message", "shared tree alias")
+    outside.unlink()
+    store._run("add", "--all")
+    store._run("commit", "--message", "remove alias")
+
+    with pytest.raises(GitStoreError):
+        LocalKnowledgeGit(store.root, "Test Author", "test@example.com").initialize()
 
 
 def test_initialize_existing_allowed_repository_preserves_head_and_paths(tmp_path: Path):
