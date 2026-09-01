@@ -25,7 +25,7 @@ def test_llm_reranker_selects_hits_by_path():
     client = FakeTextClient('{"selected_paths":["wiki/education/phd.md","wiki/projects/agentic.md"]}')
     reranker = LLMReranker(client, answer_top_k=2)
 
-    selected = reranker.rerank("¿Qué educación formal posee Othón?", hits)
+    selected = reranker.rerank("¿Qué educación formal posee Candidate?", hits)
 
     assert [hit.title for hit in selected] == ["PhD", "Agentic AI"]
     assert "selected_paths" in client.instructions

@@ -8,6 +8,27 @@ from cv_agent.knowledge.repository import KnowledgeRepository
 from cv_agent.knowledge.storage import ensure_data_storage
 
 
+def _resolve_ingest_target(parser: argparse.ArgumentParser, raw_path: str, documents: Path) -> Path:
+    requested = Path(raw_path).expanduser().absolute()
+    try:
+        relative = requested.relative_to(documents)
+    except ValueError:
+        parser.error("ingestion path must be inside DATA_DIR/documents and contain no symlink components")
+
+    current = documents
+    for component in relative.parts:
+        current /= component
+        if current.is_symlink():
+            parser.error("ingestion path must be inside DATA_DIR/documents and contain no symlink components")
+
+    target = requested.resolve()
+    try:
+        target.relative_to(documents)
+    except ValueError:
+        parser.error("ingestion path must be inside DATA_DIR/documents and contain no symlink components")
+    return target
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="cv-agent")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -18,6 +39,7 @@ def main() -> None:
     if args.command == "ingest":
         settings = get_settings()
         paths = ensure_data_storage(settings.data_dir)
+        target = _resolve_ingest_target(parser, args.path, paths.documents)
         git_store = LocalKnowledgeGit(
             paths.repository,
             settings.data_git_author_name,
@@ -26,7 +48,6 @@ def main() -> None:
         git_store.initialize()
         repo = KnowledgeRepository(paths.repository)
         service = IngestionService(repo, settings)
-        target = Path(args.path).expanduser().resolve()
         results = (
             service.ingest_directory(target)
             if target.is_dir()
