@@ -284,9 +284,11 @@ async def upload_document_payload(
     result = None
     original_created = False
     try:
-        with original_path.open("xb") as handle:
-            handle.write(data)
+        handle = original_path.open("xb")
+        # Exclusive open creates the transaction-owned file before write starts.
         original_created = True
+        with handle:
+            handle.write(data)
         result = ingestion.ingest_file(original_path, document_id, filename)
         commit = git_store.commit(f"Ingest document {document_id}")
     except HTTPException:

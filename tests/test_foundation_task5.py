@@ -295,3 +295,59 @@ def test_upload_collision_preserves_existing_original_and_cleans_staging(tmp_pat
     assert existing.read_text(encoding="utf-8") == "pre-existing original"
     assert unrelated.read_text(encoding="utf-8") == "unrelated knowledge"
     assert list(paths.staging.iterdir()) == []
+
+
+def test_upload_partial_original_write_is_removed(tmp_path, monkeypatch):
+    settings = Settings(
+        _env_file=None,
+        data_dir=tmp_path,
+        admin_api_key="admin-secret",
+        ingestion_mode="deterministic",
+    )
+    paths = ensure_data_storage(tmp_path)
+
+    class Extracted:
+        kind = "markdown"
+        needs_ocr = False
+        text = "Synthetic candidate profile."
+        sha256 = "a" * 64
+
+    class Token:
+        hex = "upload-id"
+
+    monkeypatch.setattr("cv_agent.api.admin.uuid4", lambda: Token())
+    monkeypatch.setattr("cv_agent.api.admin.extract_source", lambda path: Extracted())
+    real_open = Path.open
+
+    class PartialWriter:
+        def __init__(self, handle):
+            self.handle = handle
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return self.handle.__exit__(*args)
+
+        def write(self, data):
+            self.handle.write(data[:3])
+            raise OSError("simulated write failure")
+
+    def fail_original_write(path, *args, **kwargs):
+        handle = real_open(path, *args, **kwargs)
+        if path == paths.documents / "upload-id.md":
+            return PartialWriter(handle)
+        return handle
+
+    monkeypatch.setattr(Path, "open", fail_original_write)
+    client = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok"))
+
+    response = client.post(
+        "/admin/documents",
+        headers={"Authorization": "Bearer admin-secret"},
+        files={"file": ("candidate.md", b"new original", "text/markdown")},
+    )
+
+    assert response.status_code == 503
+    assert not (paths.documents / "upload-id.md").exists()
+    assert list(paths.staging.iterdir()) == []
