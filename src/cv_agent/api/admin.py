@@ -233,11 +233,24 @@ async def upload_document_payload(
     document_id = uuid4().hex
     staging_path = staging_dir / f"{document_id}-{filename}"
     original_path = documents_dir / f"{document_id}{Path(filename).suffix.lower()}"
+    staging_created = False
     try:
-        with staging_path.open("xb") as handle:
+        handle = staging_path.open("xb")
+        staging_created = True
+        with handle:
             handle.write(data)
     except FileExistsError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="upload ID collision") from exc
+    except OSError as exc:
+        if staging_created:
+            try:
+                staging_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="upload storage is unavailable",
+        ) from exc
 
     repository = ingestion.repository
     before_markdown = _markdown_paths(repository)
@@ -318,7 +331,11 @@ async def upload_document_payload(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="document ingestion is unavailable",
         ) from exc
-    staging_path.unlink(missing_ok=True)
+    try:
+        staging_path.unlink(missing_ok=True)
+    except OSError:
+        # Commit already succeeded; leave the artifact for a later bounded cleanup.
+        pass
     source_path = str(result.source_page)
     generated_paths = [str(path) for path in getattr(result, "generated_pages", ())]
     return {
@@ -372,7 +389,8 @@ def build_admin_router(
                 detail="data storage is unavailable",
             ) from exc
         allowed_roots = (paths.documents.resolve(), paths.staging.resolve())
-        if not any(_is_relative_to(path, root) for root in allowed_roots):
+        allowed_root = next((root for root in allowed_roots if _is_relative_to(path, root)), None)
+        if allowed_root is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="path must be within the mounted data directory",
@@ -380,7 +398,7 @@ def build_admin_router(
         results = (
             ingestion.ingest_directory(path)
             if path.is_dir()
-            else [ingestion.ingest_file(path, document_id_for_path(path, paths.documents))]
+            else [ingestion.ingest_file(path, document_id_for_path(path, allowed_root))]
         )
         commit = git_store.commit("Ingest legacy document")
         return {

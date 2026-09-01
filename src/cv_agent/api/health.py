@@ -23,9 +23,29 @@ def knowledge_is_initialized(repository: KnowledgeRepository) -> bool:
         if relative.as_posix() in {"knowledge/index.md", "knowledge/log.md"}:
             continue
         if relative.parts and relative.parts[0] in {"sources", "knowledge"}:
-            if re.search(r"[A-Za-z\u00c1\u00c9\u00cd\u00d3\u00da\u00d1\u00e1\u00e9\u00ed\u00f3\u00fa\u00f1]{3,}", page.body):
+            if _has_usable_evidence(page.body):
                 return True
     return False
+
+
+def _has_usable_evidence(body: str) -> bool:
+    """Ignore Markdown structure and extractor placeholders when checking content."""
+    placeholders = {
+        "no selectable text extracted",
+        "no text extracted",
+        "ocr required",
+    }
+    evidence_lines = []
+    for line in body.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        normalized = re.sub(r"[^\w\s]", " ", stripped, flags=re.UNICODE)
+        normalized = re.sub(r"\s+", " ", normalized).strip().casefold()
+        if not normalized or normalized in placeholders:
+            continue
+        evidence_lines.append(normalized)
+    return bool(re.search(r"[^\W_]{2,}", " ".join(evidence_lines), flags=re.UNICODE))
 
 
 def build_health_router(

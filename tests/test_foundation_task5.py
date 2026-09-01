@@ -351,3 +351,139 @@ def test_upload_partial_original_write_is_removed(tmp_path, monkeypatch):
     assert response.status_code == 503
     assert not (paths.documents / "upload-id.md").exists()
     assert list(paths.staging.iterdir()) == []
+
+
+def test_heading_only_knowledge_is_not_initialized(tmp_path):
+    paths = ensure_data_storage(tmp_path)
+    (paths.knowledge / "index.md").write_text("# Index", encoding="utf-8")
+    (paths.knowledge / "log.md").write_text("# Log", encoding="utf-8")
+    (paths.sources / "empty.md").write_text("---\ntitle: Empty\n---\n\n#", encoding="utf-8")
+    settings = Settings(
+        _env_file=None,
+        data_dir=tmp_path,
+        openai_api_key="test-key",
+        openai_model="test-model",
+        agent_owner_name="Candidate",
+        agent_public_url="https://example.test",
+    )
+    called = False
+
+    def answerer(text, instructions=None):
+        nonlocal called
+        called = True
+        return "unexpected"
+
+    client = TestClient(create_app(settings=settings, agent_answerer=answerer))
+
+    assert client.get("/readyz").status_code == 503
+    response = client.post("/v1/responses", json={"input": "hello"})
+    assert response.status_code == 503
+    assert response.json() == {"detail": "candidate knowledge is not initialized"}
+    assert called is False
+
+
+def test_post_commit_staging_cleanup_failure_keeps_upload_successful(tmp_path, monkeypatch):
+    settings = Settings(
+        _env_file=None,
+        data_dir=tmp_path,
+        admin_api_key="admin-secret",
+        ingestion_mode="deterministic",
+    )
+    class Extracted:
+        kind = "markdown"
+        needs_ocr = False
+        text = "Synthetic candidate profile."
+        sha256 = "a" * 64
+
+    monkeypatch.setattr("cv_agent.api.admin.extract_source", lambda path: Extracted())
+    real_unlink = Path.unlink
+    failed = False
+
+    def fail_staging_unlink(path, *args, **kwargs):
+        nonlocal failed
+        if path.parent.name == "staging" and not failed:
+            failed = True
+            raise OSError("simulated cleanup failure")
+        return real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_staging_unlink)
+    client = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok"))
+
+    response = client.post(
+        "/admin/documents",
+        headers={"Authorization": "Bearer admin-secret"},
+        files={"file": ("candidate.md", b"profile", "text/markdown")},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["revision"]["commit"]
+    assert failed is True
+
+
+def test_partial_staging_write_is_removed_and_returns_controlled_error(tmp_path, monkeypatch):
+    settings = Settings(_env_file=None, data_dir=tmp_path, admin_api_key="admin-secret")
+    paths = ensure_data_storage(tmp_path)
+
+    class Extracted:
+        kind = "markdown"
+        needs_ocr = False
+        text = "Synthetic candidate profile."
+        sha256 = "a" * 64
+
+    monkeypatch.setattr("cv_agent.api.admin.extract_source", lambda path: Extracted())
+    real_open = Path.open
+
+    class PartialWriter:
+        def __init__(self, handle):
+            self.handle = handle
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return self.handle.__exit__(*args)
+
+        def write(self, data):
+            self.handle.write(data[:3])
+            raise OSError("simulated staging write failure")
+
+    def fail_staging_write(path, *args, **kwargs):
+        handle = real_open(path, *args, **kwargs)
+        if path.parent == paths.staging:
+            return PartialWriter(handle)
+        return handle
+
+    monkeypatch.setattr(Path, "open", fail_staging_write)
+    client = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok"))
+
+    response = client.post(
+        "/admin/documents",
+        headers={"Authorization": "Bearer admin-secret"},
+        files={"file": ("candidate.md", b"profile", "text/markdown")},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "upload storage is unavailable"
+    assert list(paths.staging.iterdir()) == []
+
+
+def test_legacy_ingest_single_staging_file_uses_staging_root_for_id(tmp_path):
+    settings = Settings(
+        _env_file=None,
+        data_dir=tmp_path,
+        admin_api_key="admin-secret",
+        ingestion_mode="deterministic",
+    )
+    paths = ensure_data_storage(tmp_path)
+    source = paths.staging / "candidate.md"
+    source.write_text("# Candidate\n\nUsable profile.", encoding="utf-8")
+    client = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok"))
+
+    response = client.post(
+        "/admin/ingest",
+        headers={"Authorization": "Bearer admin-secret"},
+        json={"path": str(source)},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["count"] == 1
