@@ -12,6 +12,10 @@ from cv_agent.knowledge.repository import KnowledgeRepository
 from cv_agent.tracing import get_tracer
 
 
+MAX_DOCUMENT_ID_BYTES = 128
+_DOCUMENT_ID_DIGEST_HEX_LENGTH = 12
+
+
 @dataclass(frozen=True)
 class IngestResult:
     document_id: str
@@ -171,6 +175,8 @@ def _media_type(kind: str) -> str:
 def _validate_document_id(document_id: str) -> None:
     if not isinstance(document_id, str) or not document_id.strip():
         raise ValueError("document_id must be a non-empty path-safe identifier")
+    if len(document_id.encode("utf-8")) > MAX_DOCUMENT_ID_BYTES:
+        raise ValueError(f"document_id length exceeds {MAX_DOCUMENT_ID_BYTES} bytes")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", document_id):
         raise ValueError("document_id must contain only ASCII letters, digits, '.', '_' or '-'")
     if document_id.lower().endswith(".md"):
@@ -181,11 +187,16 @@ def document_id_for_path(path: Path, declared_root: Path | None = None) -> str:
     """Derive a collision-resistant ID for legacy directory/caller flows."""
     candidate = _slugify(path.stem)
     if declared_root is None:
-        identity = path.read_bytes()
+        digest = sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        path_digest = digest.hexdigest()[:_DOCUMENT_ID_DIGEST_HEX_LENGTH]
     else:
         identity = path.relative_to(declared_root).as_posix().encode("utf-8")
-    path_digest = sha256(identity).hexdigest()[:12]
-    prefix = candidate[:115].rstrip("._-") or "source"
+        path_digest = sha256(identity).hexdigest()[:_DOCUMENT_ID_DIGEST_HEX_LENGTH]
+    prefix_budget = MAX_DOCUMENT_ID_BYTES - _DOCUMENT_ID_DIGEST_HEX_LENGTH - 1
+    prefix = candidate[:prefix_budget].rstrip("._-") or "source"
     return f"{prefix}-{path_digest}"
 
 

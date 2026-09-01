@@ -8,7 +8,7 @@ import cv_agent.knowledge.ingest as ingest_module
 from cv_agent.config import Settings
 from cv_agent.knowledge.extractors import ExtractedSource
 from cv_agent.knowledge.frontmatter import load_frontmatter
-from cv_agent.knowledge.ingest import IngestionService, document_id_for_path
+from cv_agent.knowledge.ingest import MAX_DOCUMENT_ID_BYTES, IngestionService, document_id_for_path
 from cv_agent.knowledge.openai_ingest import OpenAIWikiIngestionClient
 from cv_agent.knowledge.repository import KnowledgeRepository
 
@@ -100,6 +100,28 @@ def test_document_id_for_path_caps_long_stems(tmp_path: Path):
 
     assert len(document_id) <= 128
     assert not document_id.lower().endswith(".md")
+
+
+def test_document_id_length_is_rejected_before_extraction_or_writes(tmp_path: Path, monkeypatch):
+    source = tmp_path / "source.md"
+    source.write_text("source", encoding="utf-8")
+    monkeypatch.setattr(ingest_module, "extract_source", lambda _: pytest.fail("extraction should not run"))
+
+    with pytest.raises(ValueError, match="length"):
+        IngestionService(KnowledgeRepository(tmp_path)).ingest_file(source, "a" * (MAX_DOCUMENT_ID_BYTES + 1))
+
+    assert not (tmp_path / "sources").exists()
+    assert not (tmp_path / "knowledge").exists()
+
+
+def test_document_id_for_path_hashes_content_as_stream(tmp_path: Path, monkeypatch):
+    source = tmp_path / "source.md"
+    source.write_bytes(b"source")
+    monkeypatch.setattr(Path, "read_bytes", lambda _: pytest.fail("content must be streamed"))
+
+    document_id = document_id_for_path(source)
+
+    assert len(document_id.encode("utf-8")) <= MAX_DOCUMENT_ID_BYTES
 
 
 def test_openai_ingest_writes_generated_pages_under_knowledge_and_source_is_model_immutable(
