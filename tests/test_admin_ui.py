@@ -11,7 +11,7 @@ def ui_settings(tmp_path, **overrides):
     values = {
         "_env_file": None,
         "openai_api_key": "test-key",
-        "wiki_dir": str(tmp_path),
+        "data_dir": tmp_path,
         "admin_api_key": "admin-secret",
         "admin_ui_password": "ui-secret",
         "admin_ui_session_secret": "session-secret",
@@ -196,8 +196,8 @@ def test_ui_upload_reuses_document_upload_behavior(tmp_path, monkeypatch):
         assert path.name.endswith(".pdf")
         return Extracted()
 
-    def fake_ingest_file(self, path: Path, document_id: str):
-        assert path.parent == tmp_path / "raw" / "uploads"
+    def fake_ingest_file(self, path: Path, document_id: str, original_filename=None):
+        assert path.parent == tmp_path / "documents"
         assert path.read_bytes() == b"%PDF-1.4 text"
         return Result()
 
@@ -218,7 +218,9 @@ def test_ui_upload_reuses_document_upload_behavior(tmp_path, monkeypatch):
     assert payload["status"] == "ok"
     assert payload["document"]["filename"] == "Uploaded-PDF.pdf"
     assert payload["document"]["kind"] == "pdf"
-    assert payload["ingestion"] == {"count": 1, "sources": ["sources/uploaded.md"]}
+    assert payload["ingestion"] == {
+        "count": 1, "sources": ["sources/uploaded.md"], "generated": []
+    }
     assert payload["publish"] == {"pending": True}
 
 
@@ -226,16 +228,17 @@ def test_ui_upload_uses_shared_admin_ingestion(tmp_path, monkeypatch):
     settings = ui_settings(tmp_path)
     captured = {}
 
-    def fake_build_admin_router(settings_arg, ingestion):
+    def fake_build_admin_router(settings_arg, paths, git_store, ingestion):
         captured["api_ingestion"] = ingestion
         return APIRouter()
 
-    async def fake_upload_document_payload(settings_arg, ingestion, file):
+    async def fake_upload_document_payload(settings_arg, paths, git_store, ingestion, file):
         captured["ui_ingestion"] = ingestion
         return {
             "status": "ok",
-            "document": {"filename": "Uploaded-PDF.pdf", "path": "raw/uploads/Uploaded-PDF.pdf", "kind": "pdf"},
-            "ingestion": {"count": 1, "sources": ["sources/uploaded.md"]},
+            "document": {"filename": "Uploaded-PDF.pdf", "path": "documents/uploaded.pdf", "kind": "pdf"},
+            "ingestion": {"count": 1, "sources": ["sources/uploaded.md"], "generated": []},
+            "revision": {"commit": "commit"},
             "publish": {"pending": False},
         }
 

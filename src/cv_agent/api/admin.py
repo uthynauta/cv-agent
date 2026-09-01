@@ -141,20 +141,60 @@ def _markdown_paths(repository: KnowledgeRepository) -> set[Path]:
         return set()
 
 
+def _markdown_state(repository: KnowledgeRepository, paths: set[Path]) -> dict[Path, bytes]:
+    state: dict[Path, bytes] = {}
+    for path in paths:
+        try:
+            state[path] = path.read_bytes()
+        except OSError:
+            continue
+    return state
+
+
+def _resolved_repository_path(repository_root: Path, path: Path | str) -> Path:
+    candidate = Path(path)
+    if not candidate.is_absolute():
+        candidate = repository_root / candidate
+    return candidate.resolve()
+
+
 def _cleanup_upload(
     repository: KnowledgeRepository,
     before_markdown: set[Path],
+    before_state: dict[Path, bytes],
+    document_id: str,
     staging_path: Path,
     original_path: Path,
+    generated_paths: tuple[Path, ...] = (),
 ) -> None:
     for path in (staging_path, original_path):
         try:
             path.unlink(missing_ok=True)
         except OSError:
             pass
+    repository_root = repository.root.resolve()
+    transaction_paths = {
+        repository_root / "sources" / f"{document_id}.md",
+        repository_root / "knowledge" / "index.md",
+        repository_root / "knowledge" / "log.md",
+        *(_resolved_repository_path(repository_root, path) for path in generated_paths),
+    }
+    # OpenAI-generated pages may be written before ingestion raises. Identify
+    # only new pages citing this document; unrelated concurrent pages survive.
     for path in _markdown_paths(repository) - before_markdown:
         try:
-            path.unlink(missing_ok=True)
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if f"[[sources/{document_id}]]" in text or f"document_id: {document_id}" in text:
+            transaction_paths.add(path)
+    for path in transaction_paths:
+        previous = before_state.get(path)
+        try:
+            if previous is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.write_bytes(previous)
         except OSError:
             pass
 
@@ -199,28 +239,61 @@ async def upload_document_payload(
 
     repository = ingestion.repository
     before_markdown = _markdown_paths(repository)
+    repository_root = repository.root.resolve()
+    before_state = _markdown_state(repository, before_markdown)
+    before_state.update(
+        _markdown_state(
+            repository,
+            {
+                repository_root / "sources" / f"{document_id}.md",
+                repository_root / "knowledge" / "index.md",
+                repository_root / "knowledge" / "log.md",
+            },
+        )
+    )
     try:
         extracted = _extract_upload(staging_path)
     except Exception as exc:
-        _cleanup_upload(repository, before_markdown, staging_path, original_path)
+        _cleanup_upload(
+            repository, before_markdown, before_state, document_id, staging_path, original_path
+        )
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="document is unreadable") from exc
     if extracted.needs_ocr:
-        _cleanup_upload(repository, before_markdown, staging_path, original_path)
+        _cleanup_upload(
+            repository, before_markdown, before_state, document_id, staging_path, original_path
+        )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="PDF requires OCR before upload",
         )
 
+    result = None
     try:
         with original_path.open("xb") as handle:
             handle.write(data)
         result = ingestion.ingest_file(original_path, document_id, filename)
         commit = git_store.commit(f"Ingest document {document_id}")
     except HTTPException:
-        _cleanup_upload(repository, before_markdown, staging_path, original_path)
+        _cleanup_upload(
+            repository,
+            before_markdown,
+            before_state,
+            document_id,
+            staging_path,
+            original_path,
+            tuple(getattr(result, "generated_pages", ())) if result is not None else (),
+        )
         raise
     except Exception as exc:
-        _cleanup_upload(repository, before_markdown, staging_path, original_path)
+        _cleanup_upload(
+            repository,
+            before_markdown,
+            before_state,
+            document_id,
+            staging_path,
+            original_path,
+            tuple(getattr(result, "generated_pages", ())) if result is not None else (),
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="document ingestion is unavailable",

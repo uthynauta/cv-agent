@@ -162,3 +162,88 @@ def test_upload_cleans_staged_original_and_source_when_commit_fails(tmp_path, mo
     assert list((tmp_path / "staging").iterdir()) == []
     assert list((tmp_path / "documents").glob("*.md")) == []
     assert list((tmp_path / "repository" / "sources").iterdir()) == []
+
+
+def test_failed_upload_preserves_unrelated_concurrent_markdown(tmp_path, monkeypatch):
+    settings = Settings(
+        _env_file=None,
+        data_dir=tmp_path,
+        admin_api_key="admin-secret",
+        ingestion_mode="deterministic",
+    )
+    paths = ensure_data_storage(tmp_path)
+
+    class Extracted:
+        kind = "markdown"
+        needs_ocr = False
+        text = "Synthetic candidate profile."
+        sha256 = "a" * 64
+
+    class Token:
+        hex = "upload-id"
+
+    monkeypatch.setattr("cv_agent.api.admin.uuid4", lambda: Token())
+    monkeypatch.setattr("cv_agent.api.admin.extract_source", lambda path: Extracted())
+
+    def failed_ingest(self, path, document_id, original_filename=None):
+        source = self.repository.root / "sources" / f"{document_id}.md"
+        source.write_text("partial upload", encoding="utf-8")
+        (self.repository.root / "knowledge" / "concurrent.md").write_text(
+            "unrelated concurrent page", encoding="utf-8"
+        )
+        raise RuntimeError("ingestion failed")
+
+    monkeypatch.setattr("cv_agent.knowledge.ingest.IngestionService.ingest_file", failed_ingest)
+    client = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok"))
+
+    response = client.post(
+        "/admin/documents",
+        headers={"Authorization": "Bearer admin-secret"},
+        files={"file": ("candidate.md", b"profile", "text/markdown")},
+    )
+
+    assert response.status_code == 503
+    assert not (paths.repository / "sources" / "upload-id.md").exists()
+    assert (paths.repository / "knowledge" / "concurrent.md").read_text(encoding="utf-8") == (
+        "unrelated concurrent page"
+    )
+
+
+def test_failed_upload_restores_preexisting_source_version(tmp_path, monkeypatch):
+    settings = Settings(
+        _env_file=None,
+        data_dir=tmp_path,
+        admin_api_key="admin-secret",
+        ingestion_mode="deterministic",
+    )
+    paths = ensure_data_storage(tmp_path)
+    previous = paths.repository / "sources" / "upload-id.md"
+    previous.write_text("previous source", encoding="utf-8")
+
+    class Extracted:
+        kind = "markdown"
+        needs_ocr = False
+        text = "Synthetic candidate profile."
+        sha256 = "a" * 64
+
+    class Token:
+        hex = "upload-id"
+
+    monkeypatch.setattr("cv_agent.api.admin.uuid4", lambda: Token())
+    monkeypatch.setattr("cv_agent.api.admin.extract_source", lambda path: Extracted())
+
+    def failed_ingest(self, path, document_id, original_filename=None):
+        previous.write_text("overwritten source", encoding="utf-8")
+        raise RuntimeError("ingestion failed")
+
+    monkeypatch.setattr("cv_agent.knowledge.ingest.IngestionService.ingest_file", failed_ingest)
+    client = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok"))
+
+    response = client.post(
+        "/admin/documents",
+        headers={"Authorization": "Bearer admin-secret"},
+        files={"file": ("candidate.md", b"profile", "text/markdown")},
+    )
+
+    assert response.status_code == 503
+    assert previous.read_text(encoding="utf-8") == "previous source"

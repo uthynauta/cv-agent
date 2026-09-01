@@ -9,15 +9,21 @@ import pytest
 import cv_agent.api.admin as admin_module
 from cv_agent.config import Settings
 from cv_agent.knowledge.ingest import document_id_for_path
+from cv_agent.knowledge.storage import ensure_data_storage
 from cv_agent.main import create_app
 
 
-def test_admin_ingest_allows_file_inside_raw(tmp_path, monkeypatch):
-    raw_dir = tmp_path / "raw"
-    raw_dir.mkdir()
-    source = raw_dir / "cv.md"
+def mounted_settings(tmp_path, **overrides):
+    values = {"_env_file": None, "data_dir": tmp_path, "admin_api_key": "admin-secret"}
+    values.update(overrides)
+    return Settings(**values)
+
+
+def test_admin_ingest_allows_file_inside_documents(tmp_path, monkeypatch):
+    source = tmp_path / "documents" / "cv.md"
+    source.parent.mkdir()
     source.write_text("# CV", encoding="utf-8")
-    settings = Settings(wiki_dir=str(tmp_path), admin_api_key="admin-secret")
+    settings = mounted_settings(tmp_path)
 
     class Result:
         source_page = Path("sources/cv.md")
@@ -36,17 +42,21 @@ def test_admin_ingest_allows_file_inside_raw(tmp_path, monkeypatch):
     )
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "count": 1, "sources": ["sources/cv.md"]}
+    assert response.json() == {
+        "status": "ok",
+        "count": 1,
+        "sources": ["sources/cv.md"],
+        "revision": {"commit": ""},
+    }
 
 
-def test_admin_ingest_rejects_path_outside_raw(tmp_path):
-    raw_dir = tmp_path / "raw"
-    raw_dir.mkdir()
-    outside = tmp_path / "raw-other"
+def test_admin_ingest_rejects_path_outside_mounted_data_roots(tmp_path):
+    ensure_data_storage(tmp_path)
+    outside = tmp_path / "other"
     outside.mkdir()
     source = outside / "secret.md"
     source.write_text("secret", encoding="utf-8")
-    settings = Settings(wiki_dir=str(tmp_path), admin_api_key="admin-secret")
+    settings = mounted_settings(tmp_path)
     app = create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
 
     response = TestClient(app).post(
@@ -58,13 +68,12 @@ def test_admin_ingest_rejects_path_outside_raw(tmp_path):
     assert response.status_code == 400
 
 
-def test_admin_ingest_relative_wiki_dir_uses_stable_absolute_roots(tmp_path, monkeypatch):
+def test_admin_ingest_relative_data_dir_uses_stable_absolute_roots(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    raw_dir = Path("wiki/raw")
-    raw_dir.mkdir(parents=True)
-    source = raw_dir / "cv.md"
+    source = Path("data/documents/cv.md")
+    source.parent.mkdir(parents=True)
     source.write_text("# CV", encoding="utf-8")
-    settings = Settings(_env_file=None, wiki_dir="wiki", admin_api_key="admin-secret")
+    settings = Settings(_env_file=None, data_dir="data", admin_api_key="admin-secret")
     seen: list[tuple[Path, str]] = []
 
     class Result:
@@ -83,15 +92,15 @@ def test_admin_ingest_relative_wiki_dir_uses_stable_absolute_roots(tmp_path, mon
     )
 
     assert response.status_code == 200
-    assert seen == [(source.absolute(), document_id_for_path(source.absolute(), raw_dir.absolute()))]
+    assert seen == [(source.absolute(), document_id_for_path(source.absolute(), (tmp_path / "data" / "documents").absolute()))]
 
 
-def test_admin_upload_relative_wiki_dir_returns_relative_path_after_ingest(tmp_path, monkeypatch):
+def test_admin_upload_persists_original_under_documents(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    Path("wiki/raw").mkdir(parents=True)
+    Path("data").mkdir()
     settings = Settings(
         _env_file=None,
-        wiki_dir="wiki",
+        data_dir="data",
         admin_api_key="admin-secret",
         admin_upload_max_bytes=1024,
     )
@@ -110,7 +119,7 @@ def test_admin_upload_relative_wiki_dir_returns_relative_path_after_ingest(tmp_p
 
     monkeypatch.setattr(admin_module, "extract_source", lambda path: Extracted())
 
-    def ingest_file(self, path: Path, document_id: str):
+    def ingest_file(self, path: Path, document_id: str, original_filename=None):
         calls.append((path, document_id))
         return Result()
 
@@ -124,84 +133,53 @@ def test_admin_upload_relative_wiki_dir_returns_relative_path_after_ingest(tmp_p
 
     assert response.status_code == 200
     relative_path = response.json()["document"]["path"]
-    assert relative_path.startswith("raw/uploads/")
-    assert (tmp_path / "wiki" / relative_path).is_file()
+    assert relative_path.startswith("documents/")
+    assert (tmp_path / "data" / relative_path).is_file()
     assert len(calls) == 1
-    assert calls[0][0] == tmp_path / "wiki" / relative_path
+    assert calls[0][0] == tmp_path / "data" / relative_path
 
 
-def test_admin_ingest_rejects_symlinked_raw_root_without_external_access(tmp_path, monkeypatch):
+def test_admin_ingest_rejects_symlinked_data_root_without_external_access(tmp_path):
     outside = tmp_path / "outside"
     outside.mkdir()
     secret = outside / "secret.md"
     secret.write_text("secret", encoding="utf-8")
-    wiki = tmp_path / "wiki"
-    wiki.mkdir()
-    (wiki / "raw").symlink_to(outside, target_is_directory=True)
-    settings = Settings(_env_file=None, wiki_dir=str(wiki), admin_api_key="admin-secret")
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "documents").symlink_to(outside, target_is_directory=True)
+    settings = mounted_settings(data_dir)
 
-    class FakeIngestion:
-        def ingest_directory(self, path):
-            pytest.fail("symlinked raw root must not be ingested")
-
-        def ingest_file(self, path, document_id):
-            pytest.fail("symlinked raw root must not be ingested")
-
-    from cv_agent.api.admin import build_admin_router
-
-    app = FastAPI()
-    app.include_router(build_admin_router(settings, FakeIngestion()))
-    response = TestClient(app).post(
-        "/admin/ingest",
-        headers={"Authorization": "Bearer admin-secret"},
-        json={"path": str(wiki / "raw")},
-    )
-
-    assert response.status_code == 503
+    with pytest.raises(ValueError, match="symlink"):
+        create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
     assert secret.read_text(encoding="utf-8") == "secret"
 
 
-def test_admin_upload_rejects_symlinked_upload_root_without_external_write(tmp_path, monkeypatch):
+def test_admin_upload_rejects_symlinked_documents_root_without_external_write(tmp_path):
     outside = tmp_path / "outside"
     outside.mkdir()
     secret = outside / "secret.txt"
     secret.write_text("secret", encoding="utf-8")
-    wiki = tmp_path / "wiki"
-    wiki.mkdir()
-    (wiki / "raw").symlink_to(outside, target_is_directory=True)
-    settings = Settings(_env_file=None, wiki_dir=str(wiki), admin_api_key="admin-secret")
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "documents").symlink_to(outside, target_is_directory=True)
+    settings = mounted_settings(data_dir)
 
-    class FakeIngestion:
-        def ingest_file(self, path, document_id):
-            pytest.fail("symlinked upload root must not be ingested")
-
-    from cv_agent.api.admin import upload_document_payload
-
-    upload = UploadFile(filename="notes.md", file=BytesIO(b"notes"))
-    with pytest.raises(Exception) as raised:
-        import asyncio
-        asyncio.run(upload_document_payload(settings, FakeIngestion(), upload))
-
-    assert getattr(raised.value, "status_code", None) == 503
+    with pytest.raises(ValueError, match="symlink"):
+        create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
     assert secret.read_text(encoding="utf-8") == "secret"
     assert not (outside / "uploads").exists()
 
 
-def test_admin_status_rejects_symlinked_upload_root_without_external_access(tmp_path):
-    from fastapi import HTTPException
-    from cv_agent.api.admin import build_admin_status_payload
-
+def test_admin_status_rejects_symlinked_data_root_without_external_access(tmp_path):
     outside = tmp_path / "outside"
     outside.mkdir()
-    wiki = tmp_path / "wiki"
-    wiki.mkdir()
-    (wiki / "raw").symlink_to(outside, target_is_directory=True)
-    settings = Settings(_env_file=None, wiki_dir=str(wiki), admin_api_key="admin-secret")
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "documents").symlink_to(outside, target_is_directory=True)
+    settings = mounted_settings(data_dir)
 
-    with pytest.raises(HTTPException) as raised:
-        build_admin_status_payload(settings)
-
-    assert raised.value.status_code == 503
+    with pytest.raises(ValueError, match="symlink"):
+        create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
     assert not (outside / "uploads").exists()
 
 
@@ -234,12 +212,7 @@ def test_admin_ingest_is_disabled_without_configured_key(tmp_path):
 
 
 def test_admin_document_upload_saves_pdf_and_ingests(tmp_path, monkeypatch):
-    settings = Settings(
-        _env_file=None,
-        wiki_dir=str(tmp_path),
-        admin_api_key="admin-secret",
-        admin_upload_max_bytes=1024,
-    )
+    settings = mounted_settings(tmp_path, admin_upload_max_bytes=1024)
     app = create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
 
     class Extracted:
@@ -255,8 +228,8 @@ def test_admin_document_upload_saves_pdf_and_ingests(tmp_path, monkeypatch):
         assert path.name.endswith(".pdf")
         return Extracted()
 
-    def fake_ingest_file(self, path: Path, document_id: str):
-        assert path.parent == tmp_path / "raw" / "uploads"
+    def fake_ingest_file(self, path: Path, document_id: str, original_filename=None):
+        assert path.parent == tmp_path / "documents"
         assert path.read_bytes() == b"%PDF-1.4 text"
         return Result()
 
@@ -275,17 +248,14 @@ def test_admin_document_upload_saves_pdf_and_ingests(tmp_path, monkeypatch):
     assert payload["status"] == "ok"
     assert payload["document"]["filename"] == "Uploaded-PDF.pdf"
     assert payload["document"]["kind"] == "pdf"
-    assert payload["ingestion"] == {"count": 1, "sources": ["sources/uploaded.md"]}
+    assert payload["ingestion"] == {
+        "count": 1, "sources": ["sources/uploaded.md"], "generated": []
+    }
     assert payload["publish"] == {"pending": True}
 
 
 def test_admin_upload_uses_unique_exclusive_targets_and_ids(tmp_path, monkeypatch):
-    settings = Settings(
-        _env_file=None,
-        wiki_dir=str(tmp_path),
-        admin_api_key="admin-secret",
-        admin_upload_max_bytes=1024,
-    )
+    settings = mounted_settings(tmp_path, admin_upload_max_bytes=1024)
     app = create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
 
     class Extracted:
@@ -307,7 +277,7 @@ def test_admin_upload_uses_unique_exclusive_targets_and_ids(tmp_path, monkeypatc
     monkeypatch.setattr(admin_module, "uuid4", lambda: Token(next(tokens)), raising=False)
     monkeypatch.setattr(admin_module, "extract_source", lambda path: Extracted())
 
-    def fake_ingest_file(self, path: Path, document_id: str):
+    def fake_ingest_file(self, path: Path, document_id: str, original_filename=None):
         seen.append((path, document_id))
         return Result()
 
@@ -338,12 +308,7 @@ def test_admin_upload_uses_unique_exclusive_targets_and_ids(tmp_path, monkeypatc
 
 
 def test_admin_document_upload_saves_markdown_and_ingests(tmp_path, monkeypatch):
-    settings = Settings(
-        _env_file=None,
-        wiki_dir=str(tmp_path),
-        admin_api_key="admin-secret",
-        admin_upload_max_bytes=1024,
-    )
+    settings = mounted_settings(tmp_path, admin_upload_max_bytes=1024)
     app = create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
 
     class Extracted:
@@ -359,8 +324,8 @@ def test_admin_document_upload_saves_markdown_and_ingests(tmp_path, monkeypatch)
         assert path.name.endswith(".md")
         return Extracted()
 
-    def fake_ingest_file(self, path: Path, document_id: str):
-        assert path.parent == tmp_path / "raw" / "uploads"
+    def fake_ingest_file(self, path: Path, document_id: str, original_filename=None):
+        assert path.parent == tmp_path / "documents"
         assert path.read_text(encoding="utf-8") == "# Profile\n\nMarkdown evidence."
         return Result()
 
@@ -379,17 +344,14 @@ def test_admin_document_upload_saves_markdown_and_ingests(tmp_path, monkeypatch)
     assert payload["status"] == "ok"
     assert payload["document"]["filename"] == "Profile-Notes.md"
     assert payload["document"]["kind"] == "markdown"
-    assert payload["ingestion"] == {"count": 1, "sources": ["sources/profile.md"]}
+    assert payload["ingestion"] == {
+        "count": 1, "sources": ["sources/profile.md"], "generated": []
+    }
     assert payload["publish"] == {"pending": True}
 
 
 def test_admin_document_upload_saves_latex_and_ingests(tmp_path, monkeypatch):
-    settings = Settings(
-        _env_file=None,
-        wiki_dir=str(tmp_path),
-        admin_api_key="admin-secret",
-        admin_upload_max_bytes=1024,
-    )
+    settings = mounted_settings(tmp_path, admin_upload_max_bytes=1024)
     app = create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
 
     class Extracted:
@@ -405,8 +367,8 @@ def test_admin_document_upload_saves_latex_and_ingests(tmp_path, monkeypatch):
         assert path.name.endswith(".tex")
         return Extracted()
 
-    def fake_ingest_file(self, path: Path, document_id: str):
-        assert path.parent == tmp_path / "raw" / "uploads"
+    def fake_ingest_file(self, path: Path, document_id: str, original_filename=None):
+        assert path.parent == tmp_path / "documents"
         assert path.read_text(encoding="utf-8") == r"\section{Profile} Profile latex evidence."
         return Result()
 
@@ -431,12 +393,14 @@ def test_admin_document_upload_saves_latex_and_ingests(tmp_path, monkeypatch):
     assert payload["status"] == "ok"
     assert payload["document"]["filename"] == "Profile-Source.tex"
     assert payload["document"]["kind"] == "latex"
-    assert payload["ingestion"] == {"count": 1, "sources": ["sources/profile-latex.md"]}
+    assert payload["ingestion"] == {
+        "count": 1, "sources": ["sources/profile-latex.md"], "generated": []
+    }
     assert payload["publish"] == {"pending": True}
 
 
 def test_admin_document_upload_rejects_unsupported_extension(tmp_path):
-    settings = Settings(_env_file=None, wiki_dir=str(tmp_path), admin_api_key="admin-secret")
+    settings = mounted_settings(tmp_path)
     app = create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
 
     response = TestClient(app).post(
@@ -450,12 +414,7 @@ def test_admin_document_upload_rejects_unsupported_extension(tmp_path):
 
 
 def test_admin_document_upload_rejects_oversized_file(tmp_path):
-    settings = Settings(
-        _env_file=None,
-        wiki_dir=str(tmp_path),
-        admin_api_key="admin-secret",
-        admin_upload_max_bytes=4,
-    )
+    settings = mounted_settings(tmp_path, admin_upload_max_bytes=4)
     app = create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
 
     response = TestClient(app).post(
@@ -468,7 +427,7 @@ def test_admin_document_upload_rejects_oversized_file(tmp_path):
 
 
 def test_admin_document_upload_rejects_low_text_pdf(tmp_path, monkeypatch):
-    settings = Settings(_env_file=None, wiki_dir=str(tmp_path), admin_api_key="admin-secret")
+    settings = mounted_settings(tmp_path)
     app = create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
 
     class Extracted:
@@ -492,7 +451,7 @@ def test_admin_document_upload_rejects_low_text_pdf(tmp_path, monkeypatch):
 def test_admin_status_reports_storage_and_github_without_secrets(tmp_path, monkeypatch):
     settings = Settings(
         _env_file=None,
-        wiki_dir=str(tmp_path),
+        data_dir=tmp_path,
         admin_api_key="admin-secret",
         github_token="secret-token",
     )
@@ -518,15 +477,17 @@ def test_admin_status_reports_storage_and_github_without_secrets(tmp_path, monke
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["wiki"]["upload_dir"].endswith("raw/uploads")
+    assert payload["wiki"]["upload_dir"].endswith("documents")
     assert payload["wiki"]["upload_dir_writable"] is True
+    assert payload["knowledge"]["initialized"] is False
+    assert payload["repository"]["head"] == ""
     assert payload["ingestion"]["mode"] == settings.ingestion_mode
     assert payload["github"]["connected"] is True
     assert "secret-token" not in str(payload)
 
 
 def test_admin_publish_returns_noop(tmp_path, monkeypatch):
-    settings = Settings(_env_file=None, wiki_dir=str(tmp_path), admin_api_key="admin-secret")
+    settings = mounted_settings(tmp_path)
 
     class FakeGitHub:
         def __init__(self, settings):
@@ -546,12 +507,7 @@ def test_admin_publish_returns_noop(tmp_path, monkeypatch):
 
 
 def test_admin_publish_redacts_failures(tmp_path, monkeypatch):
-    settings = Settings(
-        _env_file=None,
-        wiki_dir=str(tmp_path),
-        admin_api_key="admin-secret",
-        github_token="secret-token",
-    )
+    settings = mounted_settings(tmp_path, github_token="secret-token")
 
     class FakeGitHub:
         def __init__(self, settings):
@@ -571,12 +527,7 @@ def test_admin_publish_redacts_failures(tmp_path, monkeypatch):
 
 
 def test_admin_publish_returns_redacted_github_http_errors(tmp_path, monkeypatch):
-    settings = Settings(
-        _env_file=None,
-        wiki_dir=str(tmp_path),
-        admin_api_key="admin-secret",
-        github_token="secret-token",
-    )
+    settings = mounted_settings(tmp_path, github_token="secret-token")
 
     class FakeGitHub:
         def __init__(self, settings):
@@ -630,6 +581,6 @@ def test_admin_status_payload_helper_redacts_secrets(tmp_path, monkeypatch):
     payload = build_admin_status_payload(settings)
 
     assert payload["status"] == "ok"
-    assert payload["wiki"]["upload_dir"].endswith("raw/uploads")
+    assert payload["wiki"]["upload_dir"].endswith("documents")
     assert payload["github"]["connected"] is True
     assert "secret-token" not in str(payload)
