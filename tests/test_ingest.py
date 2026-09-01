@@ -281,7 +281,29 @@ def test_openai_preflights_source_path_before_generated_writes(tmp_path: Path):
         )
 
     assert not (tmp_path / "knowledge" / "projects" / "a.md").exists()
-    assert not (outside / "doc-123.md").exists()
+
+
+def test_openai_rejects_repeated_file_component_before_any_write(tmp_path: Path):
+    source = tmp_path / "source.md"
+    source.write_text("source", encoding="utf-8")
+    parent = tmp_path / "knowledge" / "projects" / "a.md"
+    parent.parent.mkdir(parents=True)
+    parent.write_text("sentinel", encoding="utf-8")
+
+    class FakeTextClient:
+        def create_response(self, instructions: str, input_text: str) -> str:
+            return """{"pages": [
+              {"path": "knowledge/projects/a.md/a.md", "title": "A", "kind": "project", "tags": ["project"], "body_lines": ["See [[sources/doc-123]]"]}
+            ]}"""
+
+    settings = Settings(_env_file=None, openai_api_key="test-key", ingestion_mode="openai")
+    with pytest.raises(ValueError, match="directory"):
+        IngestionService(KnowledgeRepository(tmp_path), settings, FakeTextClient()).ingest_file(
+            source, "doc-123"
+        )
+
+    assert not (tmp_path / "sources").exists()
+    assert parent.read_text(encoding="utf-8") == "sentinel"
 
 
 def test_ingest_directory_rejects_external_symlink_before_extraction_or_writes(tmp_path: Path, monkeypatch):

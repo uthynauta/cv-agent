@@ -105,6 +105,19 @@ def test_repository_rejects_regular_file_parent_before_write(tmp_path: Path):
     assert parent.read_text(encoding="utf-8") == "sentinel"
 
 
+def test_repository_rejects_repeated_file_component_before_write(tmp_path: Path):
+    parent = tmp_path / "knowledge" / "projects" / "a.md"
+    parent.parent.mkdir(parents=True)
+    parent.write_text("sentinel", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="directory"):
+        KnowledgeRepository(tmp_path).write_page(
+            "knowledge/projects/a.md/a.md", "New", {}, "body"
+        )
+
+    assert parent.read_text(encoding="utf-8") == "sentinel"
+
+
 @pytest.mark.parametrize("frontmatter", ["- item\n", "value\n"])
 def test_load_frontmatter_rejects_non_mapping(frontmatter: str):
     with pytest.raises(ValueError, match="mapping"):

@@ -8,6 +8,7 @@ import pytest
 
 import cv_agent.api.admin as admin_module
 from cv_agent.config import Settings
+from cv_agent.knowledge.ingest import document_id_for_path
 from cv_agent.main import create_app
 
 
@@ -55,6 +56,78 @@ def test_admin_ingest_rejects_path_outside_raw(tmp_path):
     )
 
     assert response.status_code == 400
+
+
+def test_admin_ingest_relative_wiki_dir_uses_stable_absolute_roots(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    raw_dir = Path("wiki/raw")
+    raw_dir.mkdir(parents=True)
+    source = raw_dir / "cv.md"
+    source.write_text("# CV", encoding="utf-8")
+    settings = Settings(_env_file=None, wiki_dir="wiki", admin_api_key="admin-secret")
+    seen: list[tuple[Path, str]] = []
+
+    class Result:
+        source_page = Path("sources/cv.md")
+
+    def ingest_file(self, path: Path, document_id: str):
+        seen.append((path, document_id))
+        return Result()
+
+    monkeypatch.setattr(admin_module.IngestionService, "ingest_file", ingest_file)
+    app = create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
+    response = TestClient(app).post(
+        "/admin/ingest",
+        headers={"Authorization": "Bearer admin-secret"},
+        json={"path": str(source)},
+    )
+
+    assert response.status_code == 200
+    assert seen == [(source.absolute(), document_id_for_path(source.absolute(), raw_dir.absolute()))]
+
+
+def test_admin_upload_relative_wiki_dir_returns_relative_path_after_ingest(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    Path("wiki/raw").mkdir(parents=True)
+    settings = Settings(
+        _env_file=None,
+        wiki_dir="wiki",
+        admin_api_key="admin-secret",
+        admin_upload_max_bytes=1024,
+    )
+    app = create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
+    calls: list[tuple[Path, str]] = []
+
+    class Extracted:
+        kind = "markdown"
+        needs_ocr = False
+        text = "upload text"
+        sha256 = "a" * 64
+
+    class Result:
+        document_id = "upload-id"
+        source_page = Path("sources/upload-id.md")
+
+    monkeypatch.setattr(admin_module, "extract_source", lambda path: Extracted())
+
+    def ingest_file(self, path: Path, document_id: str):
+        calls.append((path, document_id))
+        return Result()
+
+    monkeypatch.setattr(admin_module.IngestionService, "ingest_file", ingest_file)
+    monkeypatch.setattr(admin_module, "wiki_has_changes", lambda _: False)
+    response = TestClient(app).post(
+        "/admin/documents",
+        headers={"Authorization": "Bearer admin-secret"},
+        files={"file": ("notes.md", b"notes", "text/markdown")},
+    )
+
+    assert response.status_code == 200
+    relative_path = response.json()["document"]["path"]
+    assert relative_path.startswith("raw/uploads/")
+    assert (tmp_path / "wiki" / relative_path).is_file()
+    assert len(calls) == 1
+    assert calls[0][0] == tmp_path / "wiki" / relative_path
 
 
 def test_admin_ingest_rejects_symlinked_raw_root_without_external_access(tmp_path, monkeypatch):

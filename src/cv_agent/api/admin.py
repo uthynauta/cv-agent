@@ -12,7 +12,7 @@ from cv_agent.config import Settings
 from cv_agent.knowledge.extractors import extract_source
 from cv_agent.knowledge.ingest import IngestionService, document_id_for_path
 from cv_agent.knowledge.repository import resolve_directory_path
-from cv_agent.knowledge.storage import safe_upload_filename, upload_directory
+from cv_agent.knowledge.storage import safe_upload_filename
 
 
 def wiki_has_changes(settings: Settings) -> bool:
@@ -42,7 +42,8 @@ def _redact_payload_secrets(value: object, settings: Settings) -> object:
 
 def build_admin_status_payload(settings: Settings) -> dict[str, object]:
     try:
-        uploads = resolve_directory_path(upload_directory(settings.wiki_dir), create=True)
+        wiki_root = resolve_directory_path(Path(settings.wiki_dir))
+        uploads = resolve_directory_path(wiki_root / "raw" / "uploads", create=True)
     except (OSError, ValueError) as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -91,7 +92,8 @@ async def upload_document_payload(settings: Settings, ingestion: IngestionServic
 
     data = await _read_upload(file, settings.admin_upload_max_bytes)
     try:
-        target_dir = resolve_directory_path(upload_directory(settings.wiki_dir), create=True)
+        wiki_root = resolve_directory_path(Path(settings.wiki_dir))
+        target_dir = resolve_directory_path(wiki_root / "raw" / "uploads", create=True)
     except (OSError, ValueError) as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -123,7 +125,7 @@ async def upload_document_payload(settings: Settings, ingestion: IngestionServic
         "document": {
             "document_id": getattr(result, "document_id", document_id),
             "filename": filename,
-            "path": str(target.relative_to(Path(settings.wiki_dir))),
+            "path": str(target.relative_to(wiki_root)),
             "kind": extracted.kind,
         },
         "ingestion": {
@@ -147,12 +149,11 @@ def build_admin_router(settings: Settings, ingestion: IngestionService) -> APIRo
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid bearer token")
 
     router = APIRouter(dependencies=[Depends(require_admin_key)])
-    raw_root = Path(settings.wiki_dir) / "raw"
-
     @router.post("/admin/ingest")
     def ingest(request: IngestRequest) -> dict[str, object]:
         try:
-            safe_raw_root = resolve_directory_path(raw_root)
+            wiki_root = resolve_directory_path(Path(settings.wiki_dir))
+            safe_raw_root = resolve_directory_path(wiki_root / "raw")
             requested = Path(request.path).absolute()
             resolve_directory_path(requested.parent)
             if requested.is_symlink():
@@ -173,7 +174,7 @@ def build_admin_router(settings: Settings, ingestion: IngestionService) -> APIRo
         results = (
             ingestion.ingest_directory(path)
             if path.is_dir()
-            else [ingestion.ingest_file(path, document_id_for_path(path, raw_root))]
+            else [ingestion.ingest_file(path, document_id_for_path(path, safe_raw_root))]
         )
         return {
             "status": "ok",

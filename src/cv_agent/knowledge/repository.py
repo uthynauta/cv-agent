@@ -75,11 +75,11 @@ class KnowledgeRepository:
         lexical_root = resolve_directory_path(self.root)
         root = lexical_root.resolve()
         current = lexical_root
-        for part in candidate.parts:
+        for index, part in enumerate(candidate.parts):
             current /= part
             if current.is_symlink():
                 raise ValueError(f"page path is outside wiki root or uses symlink component: {relative_path}")
-            if current.exists() and part != candidate.parts[-1] and not current.is_dir():
+            if current.exists() and index < len(candidate.parts) - 1 and not current.is_dir():
                 raise ValueError(f"page path component is not a directory: {relative_path}")
         if current.exists() and not current.is_file():
             raise ValueError(f"page path target is not a regular file: {relative_path}")
