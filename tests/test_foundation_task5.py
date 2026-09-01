@@ -247,3 +247,51 @@ def test_failed_upload_restores_preexisting_source_version(tmp_path, monkeypatch
 
     assert response.status_code == 503
     assert previous.read_text(encoding="utf-8") == "previous source"
+
+
+def test_upload_collision_preserves_existing_original_and_cleans_staging(tmp_path, monkeypatch):
+    settings = Settings(
+        _env_file=None,
+        data_dir=tmp_path,
+        admin_api_key="admin-secret",
+        ingestion_mode="deterministic",
+    )
+    paths = ensure_data_storage(tmp_path)
+    existing = paths.documents / "upload-id.md"
+    existing.write_text("pre-existing original", encoding="utf-8")
+    unrelated = paths.repository / "knowledge" / "unrelated.md"
+    unrelated.write_text("unrelated knowledge", encoding="utf-8")
+
+    class Extracted:
+        kind = "markdown"
+        needs_ocr = False
+        text = "Synthetic candidate profile."
+        sha256 = "a" * 64
+
+    class Token:
+        hex = "upload-id"
+
+    monkeypatch.setattr("cv_agent.api.admin.uuid4", lambda: Token())
+    monkeypatch.setattr("cv_agent.api.admin.extract_source", lambda path: Extracted())
+    ingest_called = False
+
+    def ingest_file(self, path, document_id, original_filename=None):
+        nonlocal ingest_called
+        ingest_called = True
+        raise AssertionError("ingestion must not run after original collision")
+
+    monkeypatch.setattr("cv_agent.knowledge.ingest.IngestionService.ingest_file", ingest_file)
+    client = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok"))
+
+    response = client.post(
+        "/admin/documents",
+        headers={"Authorization": "Bearer admin-secret"},
+        files={"file": ("candidate.md", b"new original", "text/markdown")},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "document ingestion is unavailable"
+    assert ingest_called is False
+    assert existing.read_text(encoding="utf-8") == "pre-existing original"
+    assert unrelated.read_text(encoding="utf-8") == "unrelated knowledge"
+    assert list(paths.staging.iterdir()) == []

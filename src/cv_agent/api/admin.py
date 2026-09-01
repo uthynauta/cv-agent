@@ -165,9 +165,11 @@ def _cleanup_upload(
     document_id: str,
     staging_path: Path,
     original_path: Path,
+    original_created: bool,
     generated_paths: tuple[Path, ...] = (),
 ) -> None:
-    for path in (staging_path, original_path):
+    paths_to_remove = (staging_path, original_path) if original_created else (staging_path,)
+    for path in paths_to_remove:
         try:
             path.unlink(missing_ok=True)
         except OSError:
@@ -255,12 +257,24 @@ async def upload_document_payload(
         extracted = _extract_upload(staging_path)
     except Exception as exc:
         _cleanup_upload(
-            repository, before_markdown, before_state, document_id, staging_path, original_path
+            repository,
+            before_markdown,
+            before_state,
+            document_id,
+            staging_path,
+            original_path,
+            False,
         )
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="document is unreadable") from exc
     if extracted.needs_ocr:
         _cleanup_upload(
-            repository, before_markdown, before_state, document_id, staging_path, original_path
+            repository,
+            before_markdown,
+            before_state,
+            document_id,
+            staging_path,
+            original_path,
+            False,
         )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -268,9 +282,11 @@ async def upload_document_payload(
         )
 
     result = None
+    original_created = False
     try:
         with original_path.open("xb") as handle:
             handle.write(data)
+        original_created = True
         result = ingestion.ingest_file(original_path, document_id, filename)
         commit = git_store.commit(f"Ingest document {document_id}")
     except HTTPException:
@@ -281,6 +297,7 @@ async def upload_document_payload(
             document_id,
             staging_path,
             original_path,
+            original_created,
             tuple(getattr(result, "generated_pages", ())) if result is not None else (),
         )
         raise
@@ -292,6 +309,7 @@ async def upload_document_payload(
             document_id,
             staging_path,
             original_path,
+            original_created,
             tuple(getattr(result, "generated_pages", ())) if result is not None else (),
         )
         raise HTTPException(
