@@ -4,7 +4,7 @@ from cv_agent.knowledge.documents import KnowledgePage
 from cv_agent.knowledge.frontmatter import dump_frontmatter, load_frontmatter
 
 
-MAX_PATH_COMPONENT_BYTES = 128
+MAX_PATH_COMPONENT_BYTES = 255
 MAX_RELATIVE_PATH_BYTES = 1024
 MAX_PATH_DEPTH = 8
 

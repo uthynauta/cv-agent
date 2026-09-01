@@ -115,6 +115,17 @@ def test_document_id_length_is_rejected_before_extraction_or_writes(tmp_path: Pa
     assert not (tmp_path / "knowledge").exists()
 
 
+def test_max_document_id_writes_source_page(tmp_path: Path):
+    source = tmp_path / "source.md"
+    source.write_text("source", encoding="utf-8")
+    document_id = "a" * MAX_DOCUMENT_ID_BYTES
+
+    result = IngestionService(KnowledgeRepository(tmp_path)).ingest_file(source, document_id)
+
+    assert result.source_page == tmp_path / "sources" / f"{document_id}.md"
+    assert result.source_page.exists()
+
+
 def test_document_id_for_path_hashes_content_as_stream(tmp_path: Path, monkeypatch):
     source = tmp_path / "source.md"
     source.write_bytes(b"source")
@@ -247,6 +258,29 @@ def test_openai_allows_generated_pages_without_source_suggestion(tmp_path: Path)
 
     assert result.source_page == tmp_path / "sources" / "doc-123.md"
     assert result.generated_pages == (tmp_path / "knowledge" / "projects" / "a.md",)
+
+
+def test_openai_preflights_source_path_before_generated_writes(tmp_path: Path):
+    source = tmp_path / "source.md"
+    source.write_text("source", encoding="utf-8")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (tmp_path / "sources").symlink_to(outside, target_is_directory=True)
+
+    class FakeTextClient:
+        def create_response(self, instructions: str, input_text: str) -> str:
+            return """{"pages": [
+              {"path": "knowledge/projects/a.md", "title": "A", "kind": "project", "tags": ["project"], "body_lines": ["See [[sources/doc-123]]"]}
+            ]}"""
+
+    settings = Settings(_env_file=None, openai_api_key="test-key", ingestion_mode="openai")
+    with pytest.raises(ValueError, match="symlink"):
+        IngestionService(KnowledgeRepository(tmp_path), settings, FakeTextClient()).ingest_file(
+            source, "doc-123"
+        )
+
+    assert not (tmp_path / "knowledge" / "projects" / "a.md").exists()
+    assert not (outside / "doc-123.md").exists()
 
 
 def test_ingest_directory_rejects_external_symlink_before_extraction_or_writes(tmp_path: Path, monkeypatch):

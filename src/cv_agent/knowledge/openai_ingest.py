@@ -10,6 +10,9 @@ from cv_agent.knowledge.extractors import ExtractedSource
 from cv_agent.knowledge.repository import validate_relative_path_limits
 
 
+MAX_MODEL_PAGE_COMPONENT_BYTES = 128
+
+
 ALLOWED_PAGE_ROOTS = {
     "entities",
     "education",
@@ -161,6 +164,8 @@ def _is_allowed_path(value: str) -> bool:
         return False
     if path.parts[:1] == ("sources",):
         return len(path.parts) == 2
+    if any(len(part.encode("utf-8")) > MAX_MODEL_PAGE_COMPONENT_BYTES for part in path.parts):
+        return False
     return len(path.parts) >= 3 and path.parts[0] == "knowledge" and path.parts[1] in ALLOWED_PAGE_ROOTS
 
 

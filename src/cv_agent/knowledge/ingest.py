@@ -41,6 +41,8 @@ class IngestionService:
             span.set_attribute("source.extension", path.suffix.lower())
             try:
                 _validate_document_id(document_id)
+                self.repository.resolve_write_path("knowledge/log.md")
+                self.repository.resolve_write_path("knowledge/index.md")
                 extracted = extract_source(path)
                 span.set_attribute("source.needs_ocr", extracted.needs_ocr)
                 if self._mode == "openai":
@@ -70,20 +72,27 @@ class IngestionService:
         pages = build_openai_wiki_pages(self.settings, path, extracted, text_client, document_id)
         summary = ""
         generated_pages: list[Path] = []
+        generated_records: list[dict[str, object]] = []
         for page in pages:
             relative_path = str(page["path"])
             if relative_path.startswith("sources/"):
                 summary = str(page["body"])
                 continue
+            generated_records.append(page)
+        source_relative_path = f"sources/{document_id}.md"
+        self.repository.resolve_write_path(source_relative_path)
+        for page in generated_records:
+            self.repository.resolve_write_path(str(page["path"]))
+        source_page = self._write_source_page(path, extracted, document_id, summary)
+        for page in generated_records:
             generated_pages.append(
                 self.repository.write_page(
-                    relative_path,
+                    str(page["path"]),
                     str(page["title"]),
                     dict(page["metadata"]),
                     str(page["body"]),
                 )
             )
-        source_page = self._write_source_page(path, extracted, document_id, summary)
         return source_page, tuple(generated_pages)
 
     def _ingest_deterministic(self, path: Path, extracted: object, document_id: str) -> Path:
