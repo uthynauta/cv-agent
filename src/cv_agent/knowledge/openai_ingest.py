@@ -9,7 +9,6 @@ from cv_agent.knowledge.extractors import ExtractedSource
 
 
 ALLOWED_PAGE_ROOTS = {
-    "sources",
     "entities",
     "education",
     "credentials",
@@ -66,16 +65,17 @@ def _instructions() -> str:
     return """Return strict JSON for an Obsidian-style CV wiki ingestion.
 
 Return strict JSON with this shape:
-{"pages":[{"path":"sources/<slug>.md","title":"...","kind":"source","tags":["source","cv"],"body_lines":["..."]}]}
+{"pages":[{"path":"sources/<model-suggestion>.md","title":"...","kind":"source","tags":["source","cv"],"body_lines":["..."]}]}
 
 Rules:
 - Write in English because backend wiki material is internal implementation context.
 - Use concise, source-grounded claims only.
 - Include at least one source page under sources/.
-- Create useful pages under projects/, concepts/, entities/, education/, credentials/, experience/, publications/, skills/, questions/, or syntheses/ when supported.
+- Create useful pages under knowledge/projects/, knowledge/concepts/, knowledge/entities/, knowledge/education/, knowledge/credentials/, knowledge/experience/, knowledge/publications/, knowledge/skills/, knowledge/questions/, or knowledge/syntheses/ when supported.
 - Use Obsidian links between pages.
 - Put page Markdown in body_lines, one Markdown line per array item. Do not use a long escaped body string.
-- Do not include raw PDF or Markdown full text. LaTeX source can be summarized more richly.
+- The source page is only an optional summary suggestion; its path, title, metadata, and extracted text are controlled by the ingestion service.
+- Do not include raw extracted source text in generated pages.
 - Do not wrap the JSON in Markdown fences.
 """
 
@@ -134,10 +134,14 @@ def _validated_page(page: object) -> dict[str, object]:
 
 
 def _is_allowed_path(value: str) -> bool:
+    if "\\" in value or "\x00" in value:
+        return False
     path = Path(value)
     if path.is_absolute() or ".." in path.parts or path.suffix != ".md":
         return False
-    return len(path.parts) >= 2 and path.parts[0] in ALLOWED_PAGE_ROOTS
+    if path.parts[:1] == ("sources",):
+        return len(path.parts) == 2
+    return len(path.parts) >= 3 and path.parts[0] == "knowledge" and path.parts[1] in ALLOWED_PAGE_ROOTS
 
 
 def _json_schema_format() -> dict[str, object]:
