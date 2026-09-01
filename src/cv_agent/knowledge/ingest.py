@@ -53,12 +53,6 @@ class IngestionService:
                 INGEST_EVENTS.labels("error").inc()
                 raise
 
-    def _source_reference(self, path: Path) -> str:
-        try:
-            return str(path.resolve().relative_to(self.repository.root.resolve()))
-        except ValueError:
-            return path.name
-
     @property
     def _mode(self) -> str:
         return self.settings.ingestion_mode if self.settings else "deterministic"
@@ -69,7 +63,7 @@ class IngestionService:
         if not self.settings:
             raise ValueError("settings are required for OpenAI ingestion")
         text_client = self.text_client or OpenAIWikiIngestionClient(self.settings)
-        pages = build_openai_wiki_pages(self.settings, path, extracted, text_client)
+        pages = build_openai_wiki_pages(self.settings, path, extracted, text_client, document_id)
         summary = ""
         generated_pages: list[Path] = []
         for page in pages:
@@ -116,20 +110,21 @@ class IngestionService:
         results: list[IngestResult] = []
         for path in sorted(root.rglob("*")):
             if path.suffix.lower() in {".tex", ".pdf", ".md"}:
-                results.append(self.ingest_file(path, document_id_for_path(path)))
+                results.append(self.ingest_file(path, document_id_for_path(path, root)))
         return results
 
     def _append_log(self, path: Path, mode: str) -> None:
-        log_path = self.repository.root / "knowledge" / "log.md"
-        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path = self.repository.resolve_write_path("knowledge/log.md")
         if not log_path.exists():
-            log_path.write_text("# Wiki Log\n", encoding="utf-8")
+            self.repository.write_text("knowledge/log.md", "# Wiki Log\n")
         today = datetime.now(UTC).date().isoformat()
-        with log_path.open("a", encoding="utf-8") as handle:
-            handle.write(f"\n## [{today}] ingest | {path.name}\n\n- Source: `{path}`\n- mode: {mode}\n")
+        self.repository.write_text(
+            "knowledge/log.md",
+            f"\n## [{today}] ingest | {path.name}\n\n- Source: `{path}`\n- mode: {mode}\n",
+            append=True,
+        )
 
     def _write_index(self) -> None:
-        index_path = self.repository.root / "knowledge" / "index.md"
         lines = ["# Wiki Index", ""]
         for page in self.repository.list_pages():
             relative_page = page.path.relative_to(self.repository.root)
@@ -143,7 +138,7 @@ class IngestionService:
             lines.append(
                 f"- [[{relative.as_posix()}|{page.title}]] — kind: {kind}; tags: {tag_text}; {summary}"
             )
-        index_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+        self.repository.write_text("knowledge/index.md", "\n".join(lines).rstrip() + "\n")
 
 
 def _slugify(value: str) -> str:
@@ -182,11 +177,16 @@ def _validate_document_id(document_id: str) -> None:
         raise ValueError("document_id must not end with .md")
 
 
-def document_id_for_path(path: Path) -> str:
+def document_id_for_path(path: Path, declared_root: Path | None = None) -> str:
     """Derive a collision-resistant ID for legacy directory/caller flows."""
     candidate = _slugify(path.stem)
-    path_digest = sha256(str(path.resolve()).encode("utf-8")).hexdigest()[:12]
-    return f"{candidate}-{path_digest}"
+    if declared_root is None:
+        identity = path.read_bytes()
+    else:
+        identity = path.relative_to(declared_root).as_posix().encode("utf-8")
+    path_digest = sha256(identity).hexdigest()[:12]
+    prefix = candidate[:115].rstrip("._-") or "source"
+    return f"{prefix}-{path_digest}"
 
 
 def _one_line_summary(body: str) -> str:

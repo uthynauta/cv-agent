@@ -3,6 +3,7 @@ import urllib.error
 
 from fastapi.testclient import TestClient
 
+import cv_agent.api.admin as admin_module
 from cv_agent.config import Settings
 from cv_agent.main import create_app
 
@@ -125,6 +126,64 @@ def test_admin_document_upload_saves_pdf_and_ingests(tmp_path, monkeypatch):
     assert payload["document"]["kind"] == "pdf"
     assert payload["ingestion"] == {"count": 1, "sources": ["sources/uploaded.md"]}
     assert payload["publish"] == {"pending": True}
+
+
+def test_admin_upload_uses_unique_exclusive_targets_and_ids(tmp_path, monkeypatch):
+    settings = Settings(
+        _env_file=None,
+        wiki_dir=str(tmp_path),
+        admin_api_key="admin-secret",
+        admin_upload_max_bytes=1024,
+    )
+    app = create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
+
+    class Extracted:
+        kind = "markdown"
+        needs_ocr = False
+        text = "upload text"
+        sha256 = "a" * 64
+
+    class Result:
+        source_page = Path("sources/uploaded.md")
+
+    class Token:
+        def __init__(self, value: str) -> None:
+            self.hex = value
+
+    tokens = iter(["upload-one", "upload-two"])
+    seen: list[tuple[Path, str]] = []
+
+    monkeypatch.setattr(admin_module, "uuid4", lambda: Token(next(tokens)), raising=False)
+    monkeypatch.setattr(admin_module, "extract_source", lambda path: Extracted())
+
+    def fake_ingest_file(self, path: Path, document_id: str):
+        seen.append((path, document_id))
+        return Result()
+
+    monkeypatch.setattr(admin_module.IngestionService, "ingest_file", fake_ingest_file)
+    monkeypatch.setattr(admin_module, "wiki_has_changes", lambda _: False)
+    client = TestClient(app)
+
+    first = client.post(
+        "/admin/documents",
+        headers={"Authorization": "Bearer admin-secret"},
+        files={"file": ("same.md", b"first", "text/markdown")},
+    )
+    second = client.post(
+        "/admin/documents",
+        headers={"Authorization": "Bearer admin-secret"},
+        files={"file": ("same.md", b"second", "text/markdown")},
+    )
+
+    assert first.status_code == second.status_code == 200
+    assert first.json()["document"]["document_id"] == "upload-one"
+    assert second.json()["document"]["document_id"] == "upload-two"
+    assert len(seen) == 2
+    assert seen[0][0] != seen[1][0]
+    assert seen[0][1] == "upload-one"
+    assert seen[1][1] == "upload-two"
+    assert seen[0][0].read_bytes() == b"first"
+    assert seen[1][0].read_bytes() == b"second"
 
 
 def test_admin_document_upload_saves_markdown_and_ingests(tmp_path, monkeypatch):

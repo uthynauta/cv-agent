@@ -51,6 +51,22 @@ def test_repository_rejects_symlink_escape(tmp_path: Path):
     assert not (outside / "escaped.md").exists()
 
 
+def test_repository_rejects_internal_symlink_alias_without_overwrite(tmp_path: Path):
+    wiki_root = tmp_path / "wiki"
+    wiki_root.mkdir()
+    sources = wiki_root / "sources"
+    sources.mkdir()
+    sentinel = sources / "sentinel.md"
+    sentinel.write_text("original", encoding="utf-8")
+    (wiki_root / "knowledge").mkdir()
+    (wiki_root / "knowledge" / "projects").symlink_to(sources, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="symlink"):
+        KnowledgeRepository(wiki_root).write_page("knowledge/projects/sentinel.md", "Changed", {}, "bad")
+
+    assert sentinel.read_text(encoding="utf-8") == "original"
+
+
 @pytest.mark.parametrize("frontmatter", ["- item\n", "value\n"])
 def test_load_frontmatter_rejects_non_mapping(frontmatter: str):
     with pytest.raises(ValueError, match="mapping"):

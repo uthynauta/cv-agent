@@ -1,8 +1,8 @@
-from datetime import UTC, datetime
 import os
 from pathlib import Path
 from typing import Annotated, cast
 from urllib.error import HTTPError, URLError
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile, status
 
@@ -86,9 +86,13 @@ async def upload_document_payload(settings: Settings, ingestion: IngestionServic
     data = await _read_upload(file, settings.admin_upload_max_bytes)
     target_dir = upload_directory(settings.wiki_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
-    target = target_dir / f"{timestamp}-{filename}"
-    target.write_bytes(data)
+    document_id = uuid4().hex
+    target = target_dir / f"{document_id}-{filename}"
+    try:
+        with target.open("xb") as handle:
+            handle.write(data)
+    except FileExistsError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="upload ID collision") from exc
 
     try:
         extracted = extract_source(target)
@@ -102,10 +106,11 @@ async def upload_document_payload(settings: Settings, ingestion: IngestionServic
             detail="PDF requires OCR before upload",
         )
 
-    result = ingestion.ingest_file(target, document_id_for_path(target))
+    result = ingestion.ingest_file(target, document_id)
     return {
         "status": "ok",
         "document": {
+            "document_id": getattr(result, "document_id", document_id),
             "filename": filename,
             "path": str(target.relative_to(Path(settings.wiki_dir))),
             "kind": extracted.kind,
@@ -146,7 +151,7 @@ def build_admin_router(settings: Settings, ingestion: IngestionService) -> APIRo
         results = (
             ingestion.ingest_directory(path)
             if path.is_dir()
-            else [ingestion.ingest_file(path, document_id_for_path(path))]
+            else [ingestion.ingest_file(path, document_id_for_path(path, raw_root))]
         )
         return {
             "status": "ok",

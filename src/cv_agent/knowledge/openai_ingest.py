@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import re
 from typing import Protocol
 
 from openai import OpenAI
@@ -49,38 +50,50 @@ def build_openai_wiki_pages(
     source_path: Path,
     extracted: ExtractedSource,
     text_client: TextClient,
+    document_id: str,
 ) -> list[dict[str, object]]:
+    canonical_source_path = f"sources/{document_id}.md"
     response = text_client.create_response(
-        instructions=_instructions(),
-        input_text=_input_text(settings, source_path, extracted),
+        instructions=_instructions(canonical_source_path),
+        input_text=_input_text(settings, source_path, extracted, document_id, canonical_source_path),
     )
     payload = _parse_json(response)
     pages = payload.get("pages")
     if not isinstance(pages, list) or not pages:
         raise ValueError("OpenAI ingestion response must include a non-empty pages list")
-    return [_validated_page(page) for page in pages]
+    validated = [_validated_page(page) for page in pages]
+    _validate_page_set(validated, canonical_source_path)
+    return validated
 
 
-def _instructions() -> str:
-    return """Return strict JSON for an Obsidian-style CV wiki ingestion.
+def _instructions(canonical_source_path: str) -> str:
+    canonical_source_stem = canonical_source_path.removesuffix(".md")
+    return f"""Return strict JSON for an Obsidian-style CV wiki ingestion.
 
 Return strict JSON with this shape:
-{"pages":[{"path":"sources/<model-suggestion>.md","title":"...","kind":"source","tags":["source","cv"],"body_lines":["..."]}]}
+{{"pages":[{{"path":"sources/<model-suggestion>.md","title":"...","kind":"source","tags":["source","cv"],"body_lines":["..."]}}]}}
 
 Rules:
 - Write in English because backend wiki material is internal implementation context.
 - Use concise, source-grounded claims only.
-- Include at most one optional sources/ page as a summary suggestion; it is not required.
+- Include at most one optional sources/ page as a summary suggestion; if included, use exactly `{canonical_source_path}`; it is not required.
 - Create useful pages under knowledge/projects/, knowledge/concepts/, knowledge/entities/, knowledge/education/, knowledge/credentials/, knowledge/experience/, knowledge/publications/, knowledge/skills/, knowledge/questions/, or knowledge/syntheses/ when supported.
 - Use Obsidian links between pages.
+- Any Obsidian link targeting sources/ must use `{canonical_source_stem}`.
 - Put page Markdown in body_lines, one Markdown line per array item. Do not use a long escaped body string.
-- The source page is only an optional summary suggestion; its path, title, metadata, and extracted text are controlled by the ingestion service.
+- The source page is only an optional summary suggestion; its path must be exactly `{canonical_source_path}`. Its title, metadata, and extracted text are controlled by the ingestion service.
 - Do not include raw extracted source text in generated pages.
 - Do not wrap the JSON in Markdown fences.
 """
 
 
-def _input_text(settings: Settings, source_path: Path, extracted: ExtractedSource) -> str:
+def _input_text(
+    settings: Settings,
+    source_path: Path,
+    extracted: ExtractedSource,
+    document_id: str,
+    canonical_source_path: str,
+) -> str:
     return "\n".join(
         [
             f"Configured model: {settings.openai_model}",
@@ -88,6 +101,8 @@ def _input_text(settings: Settings, source_path: Path, extracted: ExtractedSourc
             f"Source kind: {extracted.kind}",
             f"Needs OCR: {extracted.needs_ocr}",
             f"SHA256: {extracted.sha256}",
+            f"Document ID: {document_id}",
+            f"Canonical source page: {canonical_source_path}",
             "",
             "Extracted source text:",
             extracted.text,
@@ -137,11 +152,36 @@ def _is_allowed_path(value: str) -> bool:
     if "\\" in value or "\x00" in value:
         return False
     path = Path(value)
-    if path.is_absolute() or ".." in path.parts or path.suffix != ".md":
+    if path.is_absolute() or ".." in path.parts or path.suffix != ".md" or path.as_posix() != value:
         return False
     if path.parts[:1] == ("sources",):
         return len(path.parts) == 2
     return len(path.parts) >= 3 and path.parts[0] == "knowledge" and path.parts[1] in ALLOWED_PAGE_ROOTS
+
+
+def _validate_page_set(pages: list[dict[str, object]], canonical_source_path: str) -> None:
+    paths: set[str] = set()
+    source_count = 0
+    for page in pages:
+        path = str(page["path"])
+        if path in paths:
+            raise ValueError(f"OpenAI ingestion page path is duplicated: {path}")
+        paths.add(path)
+        if path.startswith("sources/"):
+            source_count += 1
+            if source_count > 1:
+                raise ValueError("OpenAI ingestion response may include at most one source suggestion")
+            if path != canonical_source_path:
+                raise ValueError(f"OpenAI source suggestion must use canonical path: {canonical_source_path}")
+        _validate_source_links(str(page["body"]), canonical_source_path)
+
+
+def _validate_source_links(body: str, canonical_source_path: str) -> None:
+    canonical_stem = canonical_source_path.removesuffix(".md")
+    for match in re.finditer(r"\[\[([^\]]+)\]\]", body):
+        target = match.group(1).split("|", 1)[0].split("#", 1)[0].strip()
+        if "sources/" in target and target not in {canonical_source_path, canonical_stem}:
+            raise ValueError(f"OpenAI source link must target {canonical_stem}: {target}")
 
 
 def _json_schema_format() -> dict[str, object]:

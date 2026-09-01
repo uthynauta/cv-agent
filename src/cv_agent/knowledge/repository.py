@@ -14,6 +14,9 @@ class KnowledgeRepository:
             return pages
         root = self.root.resolve()
         for path in sorted(self.root.rglob("*.md")):
+            relative_path = path.relative_to(self.root)
+            if self._contains_symlink(relative_path):
+                continue
             try:
                 resolved = path.resolve()
                 relative = resolved.relative_to(root)
@@ -26,7 +29,7 @@ class KnowledgeRepository:
             pages.append(KnowledgePage(path=path, title=title, metadata=metadata, body=body))
         return pages
 
-    def write_page(self, relative_path: str, title: str, metadata: dict[str, object], body: str) -> Path:
+    def resolve_write_path(self, relative_path: str) -> Path:
         root = self.root.resolve()
         if not isinstance(relative_path, str) or "\x00" in relative_path:
             raise ValueError(f"page path is not allowed: {relative_path}")
@@ -35,12 +38,40 @@ class KnowledgeRepository:
             raise ValueError(f"page path is outside wiki root: {relative_path}")
         if not candidate.parts or "\\" in relative_path:
             raise ValueError(f"page path is not allowed: {relative_path}")
-        path = (root / candidate).resolve()
+        lexical_root = self.root.absolute()
+        if lexical_root.is_symlink():
+            raise ValueError(f"page path is outside wiki root or uses symlink component: {relative_path}")
+        current = lexical_root
+        for part in candidate.parts:
+            current /= part
+            if current.is_symlink():
+                raise ValueError(f"page path is outside wiki root or uses symlink component: {relative_path}")
+        path = (lexical_root / candidate).resolve()
         try:
             path.relative_to(root)
         except ValueError as exc:
             raise ValueError(f"page path is outside wiki root: {relative_path}") from exc
+        return path
+
+    def write_text(self, relative_path: str, text: str, *, append: bool = False) -> Path:
+        path = self.resolve_write_path(relative_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        mode = "a" if append else "w"
+        with path.open(mode, encoding="utf-8") as handle:
+            handle.write(text)
+        return path
+
+    def write_page(self, relative_path: str, title: str, metadata: dict[str, object], body: str) -> Path:
+        path = self.resolve_write_path(relative_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         merged = {"title": title, **metadata}
         path.write_text(dump_frontmatter(merged, body), encoding="utf-8")
         return path
+
+    def _contains_symlink(self, relative_path: Path) -> bool:
+        current = self.root
+        for part in relative_path.parts:
+            current /= part
+            if current.is_symlink():
+                return True
+        return False

@@ -8,7 +8,7 @@ import cv_agent.knowledge.ingest as ingest_module
 from cv_agent.config import Settings
 from cv_agent.knowledge.extractors import ExtractedSource
 from cv_agent.knowledge.frontmatter import load_frontmatter
-from cv_agent.knowledge.ingest import IngestionService
+from cv_agent.knowledge.ingest import IngestionService, document_id_for_path
 from cv_agent.knowledge.openai_ingest import OpenAIWikiIngestionClient
 from cv_agent.knowledge.repository import KnowledgeRepository
 
@@ -78,6 +78,30 @@ def test_ingest_file_requires_explicit_document_id():
     assert parameter.default is inspect.Parameter.empty
 
 
+def test_document_id_for_path_is_stable_from_declared_relative_root(tmp_path: Path):
+    first_root = tmp_path / "first"
+    second_root = tmp_path / "second"
+    first = first_root / "raw" / "nested" / "cv.md"
+    second = second_root / "raw" / "nested" / "cv.md"
+    first.parent.mkdir(parents=True)
+    second.parent.mkdir(parents=True)
+    first.write_text("same", encoding="utf-8")
+    second.write_text("same", encoding="utf-8")
+
+    assert document_id_for_path(first, first_root) == document_id_for_path(second, second_root)
+    assert len(document_id_for_path(first, first_root)) <= 128
+
+
+def test_document_id_for_path_caps_long_stems(tmp_path: Path):
+    source = tmp_path / ("x" * 200 + ".md")
+    source.write_text("source", encoding="utf-8")
+
+    document_id = document_id_for_path(source)
+
+    assert len(document_id) <= 128
+    assert not document_id.lower().endswith(".md")
+
+
 def test_openai_ingest_writes_generated_pages_under_knowledge_and_source_is_model_immutable(
     tmp_path: Path,
 ):
@@ -96,7 +120,7 @@ def test_openai_ingest_writes_generated_pages_under_knowledge_and_source_is_mode
             {
               "pages": [
                 {
-                  "path": "sources/model-picked-wrong-slug.md",
+                  "path": "sources/doc-123.md",
                   "title": "Model Override",
                   "kind": "evil",
                   "tags": ["wrong"],
@@ -107,7 +131,7 @@ def test_openai_ingest_writes_generated_pages_under_knowledge_and_source_is_mode
                   "title": "Teradata",
                   "kind": "project",
                   "tags": ["project"],
-                  "body_lines": ["## Summary", "Project page."]
+                  "body_lines": ["## Summary", "Project page cites [[sources/doc-123]]."]
                 }
               ]
             }
@@ -135,6 +159,64 @@ def test_openai_ingest_writes_generated_pages_under_knowledge_and_source_is_mode
     assert "source" in body
     assert (tmp_path / "knowledge" / "projects" / "teradata.md").exists()
     assert not (tmp_path / "projects" / "teradata.md").exists()
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        """{"pages": [
+          {"path": "knowledge/projects/a.md", "title": "A", "kind": "project", "tags": ["project"], "body_lines": ["A"]},
+          {"path": "knowledge/projects/a.md", "title": "A2", "kind": "project", "tags": ["project"], "body_lines": ["A2"]}
+        ]}""",
+        """{"pages": [
+          {"path": "knowledge/projects/a.md", "title": "A", "kind": "project", "tags": ["project"], "body_lines": ["See [[sources/other-doc]]"]}
+        ]}""",
+        """{"pages": [
+          {"path": "sources/other-doc.md", "title": "Wrong", "kind": "source", "tags": ["source"], "body_lines": ["Wrong"]}
+        ]}""",
+        """{"pages": [
+          {"path": "sources/doc-123.md", "title": "One", "kind": "source", "tags": ["source"], "body_lines": ["One"]},
+          {"path": "sources/doc-123.md", "title": "Two", "kind": "source", "tags": ["source"], "body_lines": ["Two"]}
+        ]}""",
+    ],
+)
+def test_openai_rejects_invalid_pages_before_any_write(tmp_path: Path, response: str):
+    source = tmp_path / "source.md"
+    source.write_text("source", encoding="utf-8")
+
+    class FakeTextClient:
+        def create_response(self, instructions: str, input_text: str) -> str:
+            assert "sources/doc-123.md" in instructions
+            assert "sources/doc-123.md" in input_text
+            return response
+
+    settings = Settings(_env_file=None, openai_api_key="test-key", ingestion_mode="openai")
+    with pytest.raises(ValueError):
+        IngestionService(KnowledgeRepository(tmp_path), settings, FakeTextClient()).ingest_file(
+            source, "doc-123"
+        )
+
+    assert not (tmp_path / "sources").exists()
+    assert not (tmp_path / "knowledge" / "projects" / "a.md").exists()
+
+
+def test_openai_allows_generated_pages_without_source_suggestion(tmp_path: Path):
+    source = tmp_path / "source.md"
+    source.write_text("source", encoding="utf-8")
+
+    class FakeTextClient:
+        def create_response(self, instructions: str, input_text: str) -> str:
+            return """{"pages": [
+              {"path": "knowledge/projects/a.md", "title": "A", "kind": "project", "tags": ["project"], "body_lines": ["A"]}
+            ]}"""
+
+    settings = Settings(_env_file=None, openai_api_key="test-key", ingestion_mode="openai")
+    result = IngestionService(KnowledgeRepository(tmp_path), settings, FakeTextClient()).ingest_file(
+        source, "doc-123"
+    )
+
+    assert result.source_page == tmp_path / "sources" / "doc-123.md"
+    assert result.generated_pages == (tmp_path / "knowledge" / "projects" / "a.md",)
 
 
 def test_openai_ingestion_client_requests_json_schema_output():
