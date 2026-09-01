@@ -13,11 +13,11 @@ RUN pip install --no-cache-dir uv
 
 COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
-COPY wiki ./wiki
 
 RUN uv sync --frozen --no-dev
 
 ENV PATH="/app/.venv/bin:$PATH"
+ENV DATA_DIR=/data
 
 EXPOSE 8000
 

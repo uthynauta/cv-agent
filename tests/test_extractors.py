@@ -6,9 +6,6 @@ import cv_agent.knowledge.extractors as extractors
 from cv_agent.knowledge.extractors import extract_source
 
 
-FIXTURES = Path(__file__).parent / "fixtures"
-
-
 def test_extract_markdown(tmp_path: Path):
     path = tmp_path / "profile.md"
     path.write_text("# Perfil\n\nExperiencia con agentes de IA.", encoding="utf-8")
@@ -37,11 +34,20 @@ def test_extract_latex_preserves_escaped_percent(tmp_path: Path):
     assert "remove this comment" not in result.text
 
 
-@pytest.mark.parametrize("fixture_name", ["cv-header-ai.tex", "cv-header-ats.tex"])
-def test_extract_actual_cv_headers_preserves_name_and_removes_layout_debris(fixture_name: str):
-    result = extract_source(FIXTURES / fixture_name)
+@pytest.mark.parametrize("variant", ["ai", "ats"])
+def test_extract_synthetic_cv_headers_preserves_name_and_removes_layout_debris(
+    tmp_path: Path, variant: str
+):
+    path = tmp_path / f"cv-header-{variant}.tex"
+    path.write_text(
+        r"\section{Professional Summary}\textbf{Example Candidate}"
+        r"\vspace{0pt}\LARGE\textwidth\begin{center}"
+        ,
+        encoding="utf-8",
+    )
+    result = extract_source(path)
 
-    assert "Othón González" in result.text
+    assert "Example Candidate" in result.text
     assert "Professional Summary" in result.text
     assert "0pt" not in result.text
     assert "LARGE" not in result.text

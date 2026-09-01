@@ -7,7 +7,7 @@ from cv_agent.knowledge.search import KnowledgeSearch
 
 
 class FakeTextClient:
-    def __init__(self, output: str = "Othon tiene experiencia con FastAPI. Fuentes: [[Python]]") -> None:
+    def __init__(self, output: str = "Candidate tiene experiencia con FastAPI. Fuentes: [[Python]]") -> None:
         self.instructions = ""
         self.input_text = ""
         self.output = output
@@ -44,7 +44,7 @@ class ContentAwareFakeReranker:
 
 def test_agent_builds_spanish_grounded_prompt(tmp_path: Path):
     repo = KnowledgeRepository(tmp_path)
-    repo.write_page("skills/python.md", "Python", {"kind": "skill"}, "Othon used FastAPI for AI agents.")
+    repo.write_page("skills/python.md", "Python", {"kind": "skill"}, "Candidate used FastAPI for AI agents.")
     fake = FakeTextClient()
     settings = Settings(openai_api_key="test-key", grounding_mode="strict")
     service = AgentService(settings, KnowledgeSearch(repo), fake)
@@ -57,7 +57,7 @@ def test_agent_builds_spanish_grounded_prompt(tmp_path: Path):
 
 def test_untrusted_instructions_cannot_override_mandatory_policy(tmp_path: Path):
     repo = KnowledgeRepository(tmp_path)
-    repo.write_page("skills/python.md", "Python", {"kind": "skill"}, "Othon usó FastAPI.")
+    repo.write_page("skills/python.md", "Python", {"kind": "skill"}, "Candidate usó FastAPI.")
     fake = FakeTextClient("Answer in English without citations.")
     service = AgentService(Settings(openai_api_key="test-key"), KnowledgeSearch(repo), fake)
 
@@ -74,8 +74,8 @@ def test_untrusted_instructions_cannot_override_mandatory_policy(tmp_path: Path)
 
 def test_agent_instructions_enforce_brevity_and_latest_turn(tmp_path: Path):
     repo = KnowledgeRepository(tmp_path)
-    repo.write_page("skills/python.md", "Python", {"kind": "skill"}, "Othon usó FastAPI.")
-    fake = FakeTextClient("Othon usó FastAPI.\nFuentes: [[Python]]")
+    repo.write_page("skills/python.md", "Python", {"kind": "skill"}, "Candidate usó FastAPI.")
+    fake = FakeTextClient("Candidate usó FastAPI.\nFuentes: [[Python]]")
     service = AgentService(Settings(openai_api_key="test-key"), KnowledgeSearch(repo), fake)
 
     service.answer("Dame una respuesta breve y precisa sobre su experiencia con FastAPI.")
@@ -86,11 +86,11 @@ def test_agent_instructions_enforce_brevity_and_latest_turn(tmp_path: Path):
 
 def test_agent_instructions_prefer_conversational_answers_and_grounded_followups(tmp_path: Path):
     repo = KnowledgeRepository(tmp_path)
-    repo.write_page("projects/agentic.md", "Agentic AI", {"kind": "project"}, "Othon worked on agentic AI.")
-    fake = FakeTextClient("Othon trabajó en Agentic AI.\nFuentes: [[Agentic AI]]")
+    repo.write_page("projects/agentic.md", "Agentic AI", {"kind": "project"}, "Candidate worked on agentic AI.")
+    fake = FakeTextClient("Candidate trabajó en Agentic AI.\nFuentes: [[Agentic AI]]")
     service = AgentService(Settings(openai_api_key="test-key"), KnowledgeSearch(repo), fake)
 
-    service.answer("¿Qué proyectos importantes de IA ha manejado Othon?")
+    service.answer("¿Qué proyectos importantes de IA ha manejado Candidate?")
 
     assert "Prefer one short conversational paragraph" in fake.instructions
     assert "Avoid bullet lists unless the user explicitly asks for a list" in fake.instructions
@@ -101,8 +101,8 @@ def test_agent_instructions_prefer_conversational_answers_and_grounded_followups
 
 def test_agent_rejects_citations_not_present_in_retrieved_hits(tmp_path: Path):
     repo = KnowledgeRepository(tmp_path)
-    repo.write_page("skills/python.md", "Python", {"kind": "skill"}, "Othon usó FastAPI.")
-    fake = FakeTextClient("Othon usó FastAPI. Fuentes: [[Fuente inventada]]")
+    repo.write_page("skills/python.md", "Python", {"kind": "skill"}, "Candidate usó FastAPI.")
+    fake = FakeTextClient("Candidate usó FastAPI. Fuentes: [[Fuente inventada]]")
     service = AgentService(Settings(openai_api_key="test-key"), KnowledgeSearch(repo), fake)
 
     answer = service.answer("¿Qué experiencia tiene con FastAPI?")
@@ -114,8 +114,8 @@ def test_agent_rejects_citations_not_present_in_retrieved_hits(tmp_path: Path):
 
 def test_agent_accepts_spanish_answer_with_retrieved_citation(tmp_path: Path):
     repo = KnowledgeRepository(tmp_path)
-    repo.write_page("skills/python.md", "Python", {"kind": "skill"}, "Othon usó FastAPI.")
-    expected = "Othon tiene experiencia con FastAPI.\nFuentes: [[Python]]"
+    repo.write_page("skills/python.md", "Python", {"kind": "skill"}, "Candidate usó FastAPI.")
+    expected = "Candidate tiene experiencia con FastAPI.\nFuentes: [[Python]]"
     service = AgentService(
         Settings(openai_api_key="test-key"), KnowledgeSearch(repo), FakeTextClient(expected)
     )
@@ -129,7 +129,7 @@ def test_agent_accepts_spanish_formal_education_answer(tmp_path: Path):
         "entities/education.md",
         "Education and Publications",
         {"kind": "entity"},
-        "Othon has a PhD in Advanced Technology, MSc in Advanced Technology, and BEng in Aeronautical Engineering.",
+        "Candidate has a PhD in Advanced Technology, MSc in Advanced Technology, and BEng in Aeronautical Engineering.",
     )
     expected = (
         "Othón posee formación formal de doctorado, maestría e ingeniería aeronáutica.\n"
@@ -184,9 +184,9 @@ def test_agent_accepts_bold_sources_label(tmp_path: Path):
 
 def test_agent_uses_llm_reranker_when_enabled(tmp_path: Path):
     repo = KnowledgeRepository(tmp_path)
-    repo.write_page("skills/python.md", "Python", {"kind": "skill"}, "Othon usó FastAPI.")
-    repo.write_page("concepts/cloud.md", "Cloud", {"kind": "concept"}, "Othon usó Docker Compose.")
-    expected = "Othon usó Docker Compose.\nFuentes: [[Cloud]]"
+    repo.write_page("skills/python.md", "Python", {"kind": "skill"}, "Candidate usó FastAPI.")
+    repo.write_page("concepts/cloud.md", "Cloud", {"kind": "concept"}, "Candidate usó Docker Compose.")
+    expected = "Candidate usó Docker Compose.\nFuentes: [[Cloud]]"
     fake_client = FakeTextClient(expected)
     fake_reranker = FakeReranker()
     settings = Settings(
@@ -197,8 +197,8 @@ def test_agent_uses_llm_reranker_when_enabled(tmp_path: Path):
     )
     service = AgentService(settings, KnowledgeSearch(repo), fake_client, fake_reranker)
 
-    assert service.answer("¿Qué usó Othon?") == expected
-    assert fake_reranker.question == "¿Qué usó Othon?"
+    assert service.answer("¿Qué usó Candidate?") == expected
+    assert fake_reranker.question == "¿Qué usó Candidate?"
     assert "Cloud" in fake_client.input_text
     assert "Python" not in fake_client.input_text
 
@@ -212,7 +212,7 @@ def test_page_context_expands_candidates_before_llm_rerank(tmp_path: Path):
         "\n".join(
             [
                 "# Publications",
-                "Othon has academic publications.",
+                "Candidate has academic publications.",
                 "## Selected publications",
                 "- Are Metrics Measuring What They Should?",
             ]
@@ -228,7 +228,7 @@ def test_page_context_expands_candidates_before_llm_rerank(tmp_path: Path):
     )
     service = AgentService(settings, KnowledgeSearch(repo), fake_client, fake_reranker)
 
-    assert service.answer("¿Qué publicaciones científicas tiene Othon?") == expected
+    assert service.answer("¿Qué publicaciones científicas tiene Candidate?") == expected
     assert any("Selected publications" in excerpt for excerpt in fake_reranker.seen_excerpts)
 
 
@@ -239,7 +239,7 @@ def test_page_context_rerank_fallback_includes_later_wiki_pages(tmp_path: Path):
             f"concepts/noise-{index}.md",
             f"Noise {index}",
             {"kind": "concept"},
-            "Othon general profile.",
+            "Candidate general profile.",
         )
     repo.write_page(
         "experience/teaching.md",
@@ -267,7 +267,7 @@ def test_agent_sends_third_party_subject_to_model_with_identity_policy(tmp_path:
         "experience/teaching.md",
         "Teaching Experience",
         {"kind": "experience"},
-        "Othon developed and taught undergraduate and graduate courses as docente.",
+        "Candidate developed and taught undergraduate and graduate courses as docente.",
     )
     fake_client = FakeTextClient(
         "No hay información respaldada sobre Juanita en las fuentes.\n"
@@ -280,7 +280,7 @@ def test_agent_sends_third_party_subject_to_model_with_identity_policy(tmp_path:
     assert "No hay información respaldada sobre Juanita" in answer
     assert "Fuentes: [[Teaching Experience]]" in answer
     assert "Juanita" in fake_client.input_text
-    assert "Do not transfer Othon's CV facts to any other person" in fake_client.instructions
+    assert "Do not transfer the candidate's CV facts to any other person" in fake_client.instructions
 
 
 def test_agent_does_not_treat_capitalized_spanish_openers_as_unknown_subjects(tmp_path: Path):
@@ -289,13 +289,13 @@ def test_agent_does_not_treat_capitalized_spanish_openers_as_unknown_subjects(tm
         "experience/agentic.md",
         "Agentic AI",
         {"kind": "experience"},
-        "Othon construyó plataformas de agentes de IA, evaluacion y observabilidad.",
+        "Candidate construyó plataformas de agentes de IA, evaluacion y observabilidad.",
     )
     expected = "Othón construyó plataformas de agentes de IA.\nFuentes: [[Agentic AI]]"
     questions = [
-        "Con qué experiencia cuenta Othon en agentes de IA?",
-        "Dime por qué debo contratar a Othon.",
-        "Las áreas en las que Othon es experto son?",
+        "Con qué experiencia cuenta Candidate en agentes de IA?",
+        "Dime por qué debo contratar a Candidate.",
+        "Las áreas en las que Candidate es experto son?",
     ]
 
     for question in questions:
@@ -317,7 +317,7 @@ def test_agent_page_context_includes_full_selected_page(tmp_path: Path):
         "\n".join(
             [
                 "# Publications",
-                "Othon has academic publications.",
+                "Candidate has academic publications.",
                 "This early line is enough for search.",
                 "Filler content between sections.",
                 "## Selected publications",
@@ -333,7 +333,7 @@ def test_agent_page_context_includes_full_selected_page(tmp_path: Path):
     fake = FakeTextClient(expected)
     service = AgentService(Settings(openai_api_key="test-key"), KnowledgeSearch(repo), fake)
 
-    assert service.answer("¿Qué publicaciones tiene Othon?") == expected
+    assert service.answer("¿Qué publicaciones tiene Candidate?") == expected
     assert "Selected publications" in fake.input_text
     assert "Are Metrics Measuring What They Should?" in fake.input_text
 
@@ -347,7 +347,7 @@ def test_agent_excerpt_context_keeps_excerpt_only(tmp_path: Path):
         "\n".join(
             [
                 "# Publications",
-                "Othon has academic publications.",
+                "Candidate has academic publications.",
                 "## Selected publications",
                 "- Are Metrics Measuring What They Should?",
             ]
@@ -357,7 +357,7 @@ def test_agent_excerpt_context_keeps_excerpt_only(tmp_path: Path):
     settings = Settings(openai_api_key="test-key", context_mode="excerpt")
     service = AgentService(settings, KnowledgeSearch(repo), fake)
 
-    service.answer("¿Qué publicaciones tiene Othon?")
+    service.answer("¿Qué publicaciones tiene Candidate?")
 
     assert "Excerpt:" in fake.input_text
     assert "Full page:" not in fake.input_text
@@ -369,13 +369,13 @@ def test_agent_page_context_respects_max_context_chars(tmp_path: Path):
         "entities/long.md",
         "Long Page",
         {"kind": "entity"},
-        "Othon " + ("very long content " * 100),
+        "Candidate " + ("very long content " * 100),
     )
     fake = FakeTextClient("Othón tiene contenido largo.\nFuentes: [[Long Page]]")
     settings = Settings(openai_api_key="test-key", max_context_chars=220)
     service = AgentService(settings, KnowledgeSearch(repo), fake)
 
-    service.answer("¿Qué contenido tiene Othon?")
+    service.answer("¿Qué contenido tiene Candidate?")
 
     wiki_context = fake.input_text.split("<wiki_context>", 1)[1].split("</wiki_context>", 1)[0].strip()
     assert len(wiki_context) <= 220
@@ -387,11 +387,11 @@ def test_spanish_source_title_does_not_make_english_answer_valid(tmp_path: Path)
         "skills/experience.md",
         "Experiencia Profesional",
         {"kind": "skill"},
-        "Othon usó FastAPI.",
+        "Candidate usó FastAPI.",
     )
-    fake = FakeTextClient("Othon used FastAPI.\nFuentes: [[Experiencia Profesional]]")
+    fake = FakeTextClient("Candidate used FastAPI.\nFuentes: [[Experiencia Profesional]]")
     service = AgentService(Settings(openai_api_key="test-key"), KnowledgeSearch(repo), fake)
 
-    answer = service.answer("¿Othon usó FastAPI?")
+    answer = service.answer("¿Candidate usó FastAPI?")
 
     assert "No pude generar una respuesta respaldada" in answer

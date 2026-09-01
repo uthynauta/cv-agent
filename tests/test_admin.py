@@ -1,7 +1,4 @@
 from pathlib import Path
-import urllib.error
-from io import BytesIO
-
 from fastapi import FastAPI, UploadFile
 from fastapi.testclient import TestClient
 import pytest
@@ -124,7 +121,6 @@ def test_admin_upload_persists_original_under_documents(tmp_path, monkeypatch):
         return Result()
 
     monkeypatch.setattr(admin_module.IngestionService, "ingest_file", ingest_file)
-    monkeypatch.setattr(admin_module, "wiki_has_changes", lambda _: False)
     response = TestClient(app).post(
         "/admin/documents",
         headers={"Authorization": "Bearer admin-secret"},
@@ -188,7 +184,7 @@ def test_admin_ingest_requires_admin_key(tmp_path):
     raw_dir.mkdir()
     source = raw_dir / "cv.md"
     source.write_text("# CV", encoding="utf-8")
-    settings = Settings(wiki_dir=str(tmp_path), admin_api_key="admin-secret")
+    settings = Settings(data_dir=tmp_path, admin_api_key="admin-secret")
     app = create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
 
     response = TestClient(app).post("/admin/ingest", json={"path": str(source)})
@@ -201,7 +197,7 @@ def test_admin_ingest_is_disabled_without_configured_key(tmp_path):
     raw_dir.mkdir()
     source = raw_dir / "cv.md"
     source.write_text("# CV", encoding="utf-8")
-    settings = Settings(wiki_dir=str(tmp_path), admin_api_key=None)
+    settings = Settings(data_dir=tmp_path, admin_api_key=None)
 
     response = TestClient(
         create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
@@ -235,7 +231,6 @@ def test_admin_document_upload_saves_pdf_and_ingests(tmp_path, monkeypatch):
 
     monkeypatch.setattr("cv_agent.api.admin.extract_source", fake_extract)
     monkeypatch.setattr("cv_agent.api.admin.IngestionService.ingest_file", fake_ingest_file)
-    monkeypatch.setattr("cv_agent.api.admin.wiki_has_changes", lambda _: True)
 
     response = TestClient(app).post(
         "/admin/documents",
@@ -251,7 +246,6 @@ def test_admin_document_upload_saves_pdf_and_ingests(tmp_path, monkeypatch):
     assert payload["ingestion"] == {
         "count": 1, "sources": ["sources/uploaded.md"], "generated": []
     }
-    assert payload["publish"] == {"pending": True}
 
 
 def test_admin_upload_uses_unique_exclusive_targets_and_ids(tmp_path, monkeypatch):
@@ -282,7 +276,6 @@ def test_admin_upload_uses_unique_exclusive_targets_and_ids(tmp_path, monkeypatc
         return Result()
 
     monkeypatch.setattr(admin_module.IngestionService, "ingest_file", fake_ingest_file)
-    monkeypatch.setattr(admin_module, "wiki_has_changes", lambda _: False)
     client = TestClient(app)
 
     first = client.post(
@@ -331,7 +324,6 @@ def test_admin_document_upload_saves_markdown_and_ingests(tmp_path, monkeypatch)
 
     monkeypatch.setattr("cv_agent.api.admin.extract_source", fake_extract)
     monkeypatch.setattr("cv_agent.api.admin.IngestionService.ingest_file", fake_ingest_file)
-    monkeypatch.setattr("cv_agent.api.admin.wiki_has_changes", lambda _: True)
 
     response = TestClient(app).post(
         "/admin/documents",
@@ -347,7 +339,6 @@ def test_admin_document_upload_saves_markdown_and_ingests(tmp_path, monkeypatch)
     assert payload["ingestion"] == {
         "count": 1, "sources": ["sources/profile.md"], "generated": []
     }
-    assert payload["publish"] == {"pending": True}
 
 
 def test_admin_document_upload_saves_latex_and_ingests(tmp_path, monkeypatch):
@@ -374,7 +365,6 @@ def test_admin_document_upload_saves_latex_and_ingests(tmp_path, monkeypatch):
 
     monkeypatch.setattr("cv_agent.api.admin.extract_source", fake_extract)
     monkeypatch.setattr("cv_agent.api.admin.IngestionService.ingest_file", fake_ingest_file)
-    monkeypatch.setattr("cv_agent.api.admin.wiki_has_changes", lambda _: True)
 
     response = TestClient(app).post(
         "/admin/documents",
@@ -396,7 +386,6 @@ def test_admin_document_upload_saves_latex_and_ingests(tmp_path, monkeypatch):
     assert payload["ingestion"] == {
         "count": 1, "sources": ["sources/profile-latex.md"], "generated": []
     }
-    assert payload["publish"] == {"pending": True}
 
 
 def test_admin_document_upload_rejects_unsupported_extension(tmp_path):
@@ -448,28 +437,12 @@ def test_admin_document_upload_rejects_low_text_pdf(tmp_path, monkeypatch):
     assert "OCR" in response.json()["detail"]
 
 
-def test_admin_status_reports_storage_and_github_without_secrets(tmp_path, monkeypatch):
+def test_admin_status_reports_storage_and_local_repository(tmp_path):
     settings = Settings(
         _env_file=None,
         data_dir=tmp_path,
         admin_api_key="admin-secret",
-        github_token="secret-token",
     )
-
-    class FakeGitHub:
-        def __init__(self, settings):
-            pass
-
-        def status(self):
-            return {
-                "configured": True,
-                "connected": True,
-                "base_branch": "main",
-                "pending_wiki_changes": True,
-                "error": None,
-            }
-
-    monkeypatch.setattr("cv_agent.api.admin.GitHubAdminService", FakeGitHub)
     response = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")).get(
         "/admin/status",
         headers={"Authorization": "Bearer admin-secret"},
@@ -477,110 +450,21 @@ def test_admin_status_reports_storage_and_github_without_secrets(tmp_path, monke
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["wiki"]["upload_dir"].endswith("documents")
-    assert payload["wiki"]["upload_dir_writable"] is True
+    assert payload["storage"]["documents_dir"].endswith("documents")
+    assert payload["storage"]["documents_dir_writable"] is True
     assert payload["knowledge"]["initialized"] is False
     assert payload["repository"]["head"] == ""
     assert payload["ingestion"]["mode"] == settings.ingestion_mode
-    assert payload["github"]["connected"] is True
-    assert "secret-token" not in str(payload)
-
-
-def test_admin_publish_returns_noop(tmp_path, monkeypatch):
-    settings = mounted_settings(tmp_path)
-
-    class FakeGitHub:
-        def __init__(self, settings):
-            pass
-
-        def publish(self):
-            return {"status": "noop", "changed_files": []}
-
-    monkeypatch.setattr("cv_agent.api.admin.GitHubAdminService", FakeGitHub)
-    response = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")).post(
-        "/admin/publish",
-        headers={"Authorization": "Bearer admin-secret"},
-    )
-
-    assert response.status_code == 200
-    assert response.json() == {"status": "noop", "changed_files": []}
-
-
-def test_admin_publish_redacts_failures(tmp_path, monkeypatch):
-    settings = mounted_settings(tmp_path, github_token="secret-token")
-
-    class FakeGitHub:
-        def __init__(self, settings):
-            pass
-
-        def publish(self):
-            raise RuntimeError("push failed for secret-token")
-
-    monkeypatch.setattr("cv_agent.api.admin.GitHubAdminService", FakeGitHub)
-    response = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")).post(
-        "/admin/publish",
-        headers={"Authorization": "Bearer admin-secret"},
-    )
-
-    assert response.status_code == 503
-    assert "secret-token" not in response.text
-
-
-def test_admin_publish_returns_redacted_github_http_errors(tmp_path, monkeypatch):
-    settings = mounted_settings(tmp_path, github_token="secret-token")
-
-    class FakeGitHub:
-        def __init__(self, settings):
-            pass
-
-        def publish(self):
-            raise urllib.error.HTTPError(
-                "https://api.github.com/repos/uthynauta/cv-agent/git/refs",
-                403,
-                "Resource not accessible by personal access token secret-token",
-                {},
-                None,
-            )
-
-    monkeypatch.setattr("cv_agent.api.admin.GitHubAdminService", FakeGitHub)
-    response = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")).post(
-        "/admin/publish",
-        headers={"Authorization": "Bearer admin-secret"},
-    )
-
-    assert response.status_code == 502
-    assert "GitHub publish failed" in response.json()["detail"]
-    assert "secret-token" not in response.text
-
-
-def test_admin_status_payload_helper_redacts_secrets(tmp_path, monkeypatch):
+def test_admin_status_payload_helper_reports_local_storage(tmp_path):
     from cv_agent.api.admin import build_admin_status_payload
 
     settings = Settings(
         _env_file=None,
-        wiki_dir=str(tmp_path),
         admin_api_key="admin-secret",
-        github_token="secret-token",
     )
-
-    class FakeGitHub:
-        def __init__(self, settings):
-            pass
-
-        def status(self):
-            return {
-                "configured": True,
-                "connected": True,
-                "base_branch": "main",
-                "pending_wiki_changes": False,
-                "error": "failed secret-token",
-            }
-
-    monkeypatch.setattr("cv_agent.api.admin.GitHubAdminService", FakeGitHub)
 
     payload = build_admin_status_payload(settings)
 
     assert payload["status"] == "ok"
-    assert payload["wiki"]["upload_dir"].endswith("documents")
-    assert payload["github"]["connected"] is True
-    assert "secret-token" not in str(payload)
+    assert payload["storage"]["documents_dir"].endswith("documents")
+    assert "github" not in payload

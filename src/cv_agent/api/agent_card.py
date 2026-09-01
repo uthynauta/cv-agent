@@ -10,12 +10,10 @@ def build_agent_card_router(settings: Settings) -> APIRouter:
     def agent_card() -> dict[str, object]:
         public_url = (settings.agent_public_url or "").rstrip("/")
         responses_url = f"{public_url}/v1/responses"
+        owner = settings.agent_owner_name or "the candidate"
         card: dict[str, object] = {
-            "name": "CV Agent - Othon Gonzalez",
-            "description": (
-                "Agente de CV de Othon Gonzalez para responder preguntas sobre su perfil "
-                "profesional, experiencia, habilidades, proyectos, educacion y publicaciones."
-            ),
+            "name": settings.agent_display_name,
+            "description": settings.agent_description,
             "version": "1.0.0",
             "supportedInterfaces": [
                 {
@@ -33,9 +31,9 @@ def build_agent_card_router(settings: Settings) -> APIRouter:
                     "name": "CV Q&A",
                     "description": (
                         "Responde preguntas sobre trayectoria profesional, experiencia, "
-                        "habilidades, proyectos, educacion y publicaciones de Othon Gonzalez."
+                        f"habilidades, proyectos, educacion y publicaciones de {owner}."
                     ),
-                    "tags": ["cv", "career", "ai", "banorte"],
+                    "tags": ["cv", "career", "ai"],
                 }
             ],
         }

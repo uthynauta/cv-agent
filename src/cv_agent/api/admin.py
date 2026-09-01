@@ -1,12 +1,10 @@
 import os
 from pathlib import Path
-from typing import Annotated, cast
-from urllib.error import HTTPError, URLError
+from typing import Annotated
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile, status
 
-from cv_agent.admin.github import GitHubAdminService
 from cv_agent.api.models import IngestRequest
 from cv_agent.config import Settings
 from cv_agent.knowledge.extractors import extract_source
@@ -25,31 +23,6 @@ def _extract_upload(path: Path):
     # or the extractor used by IngestionService.
     extractor = extract_source if extract_source is not _DEFAULT_EXTRACT_SOURCE else ingest_module.extract_source
     return extractor(path)
-
-
-def wiki_has_changes(settings: Settings) -> bool:
-    return GitHubAdminService(settings).wiki_has_changes()
-
-
-def _redact_detail(detail: str, settings: Settings) -> str:
-    if settings.github_token:
-        detail = detail.replace(settings.github_token, "[redacted]")
-    return detail
-
-
-def _github_http_error_detail(exc: HTTPError, settings: Settings) -> str:
-    reason = exc.reason or str(exc)
-    return _redact_detail(f"GitHub publish failed: {exc.code} {reason}", settings)
-
-
-def _redact_payload_secrets(value: object, settings: Settings) -> object:
-    if isinstance(value, str):
-        return _redact_detail(value, settings)
-    if isinstance(value, dict):
-        return {key: _redact_payload_secrets(item, settings) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_redact_payload_secrets(item, settings) for item in value]
-    return value
 
 
 def _knowledge_initialized(repository: KnowledgeRepository) -> bool:
@@ -83,10 +56,9 @@ def build_admin_status_payload(
     return {
         "status": "ok",
         "admin": {"enabled": bool(settings.admin_api_key)},
-        "wiki": {
-            "dir": settings.wiki_dir,
-            "upload_dir": str(documents),
-            "upload_dir_writable": documents.exists() and os.access(documents, os.W_OK),
+        "storage": {
+            "documents_dir": str(documents),
+            "documents_dir_writable": documents.exists() and os.access(documents, os.W_OK),
         },
         "ingestion": {"mode": settings.ingestion_mode},
         "knowledge": {
@@ -102,21 +74,7 @@ def build_admin_status_payload(
             "knowledge": str(paths.knowledge),
             "staging": str(paths.staging),
         },
-        "github": _redact_payload_secrets(GitHubAdminService(settings).status(), settings),
     }
-
-
-def publish_wiki_payload(settings: Settings) -> dict[str, object]:
-    try:
-        return cast(dict[str, object], _redact_payload_secrets(GitHubAdminService(settings).publish(), settings))
-    except RuntimeError as exc:
-        detail = _redact_detail(str(exc), settings)
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail) from exc
-    except HTTPError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=_github_http_error_detail(exc, settings)) from exc
-    except (URLError, OSError) as exc:
-        detail = _redact_detail(f"GitHub publish failed: {exc}", settings)
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail) from exc
 
 
 async def _read_upload(file: UploadFile, max_bytes: int) -> bytes:
@@ -354,9 +312,6 @@ async def upload_document_payload(
             "generated": generated_paths,
         },
         "revision": {"commit": commit},
-        "publish": {
-            "pending": wiki_has_changes(settings),
-        },
     }
 
 
@@ -415,9 +370,5 @@ def build_admin_router(
     @router.get("/admin/status")
     def admin_status() -> dict[str, object]:
         return build_admin_status_payload(settings, paths, git_store, ingestion.repository)
-
-    @router.post("/admin/publish")
-    def publish_wiki() -> dict[str, object]:
-        return publish_wiki_payload(settings)
 
     return router

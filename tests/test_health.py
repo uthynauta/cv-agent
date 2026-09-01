@@ -89,18 +89,16 @@ def test_readyz_reports_stable_missing_configuration_order(tmp_path):
     ]
 
 
-def test_create_app_uses_only_data_dir_and_does_not_seed_wiki(tmp_path):
-    wiki_dir = tmp_path / "obsolete-wiki"
-    settings = Settings(_env_file=None, data_dir=tmp_path / "data", wiki_dir=str(wiki_dir))
+def test_create_app_uses_only_data_dir_and_does_not_seed_corpus(tmp_path):
+    settings = Settings(_env_file=None, data_dir=tmp_path / "data")
 
     app = create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
 
     assert app.title == "CV Agent"
-    assert not wiki_dir.exists()
     assert app.state.data_paths.root == (tmp_path / "data").resolve()
 
 
-def test_readyz_does_not_require_github(tmp_path):
-    settings = seeded_settings(tmp_path, github_token=None)
+def test_readyz_does_not_require_remote_configuration(tmp_path):
+    settings = seeded_settings(tmp_path)
     response = TestClient(create_app(settings=settings)).get("/readyz")
     assert response.status_code == 200

@@ -3,14 +3,18 @@ import json
 from cv_agent.config import GroundingMode
 
 
-def build_instructions(grounding_mode: GroundingMode, extra_instructions: str | None = None) -> str:
+def build_instructions(
+    grounding_mode: GroundingMode,
+    extra_instructions: str | None = None,
+    owner_name: str | None = None,
+) -> str:
     mode_rule = (
         "Use strict grounding mode: answer only from the supplied wiki context and say clearly when information is missing."
         if grounding_mode == "strict"
         else "Use inference grounding mode: answer from supplied wiki facts and label cautious inferences when useful."
     )
     parts = [
-        "You are Othon's CV agent for Banorte technical reviewers.",
+        f"You are the CV agent for {owner_name or 'the candidate'}.",
     ]
     if extra_instructions:
         encoded = _safe_json_string(extra_instructions)
@@ -33,7 +37,7 @@ def build_instructions(grounding_mode: GroundingMode, extra_instructions: str | 
             "Only suggest follow-ups that can be answered from the supplied wiki context; do not suggest unsupported budgets, team sizes, dates, or leadership claims.",
             "Cite only supplied wiki page names using Obsidian links in a final 'Fuentes:' line.",
             "Do not invent unsupported dates, employers, credentials, or project outcomes.",
-            "Do not transfer Othon's CV facts to any other person; if asked about another person, say the wiki only supports Othon's CV.",
+            "Do not transfer the candidate's CV facts to any other person; if asked about another person, say the knowledge base only supports the candidate's CV.",
             mode_rule,
         ]
     )

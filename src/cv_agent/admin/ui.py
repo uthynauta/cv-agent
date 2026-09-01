@@ -9,7 +9,7 @@ from fastapi import APIRouter, File, Request, UploadFile, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from starlette.responses import Response
 
-from cv_agent.api.admin import build_admin_status_payload, publish_wiki_payload, upload_document_payload
+from cv_agent.api.admin import build_admin_status_payload, upload_document_payload
 from cv_agent.config import Settings
 from cv_agent.knowledge.git_store import LocalKnowledgeGit
 from cv_agent.knowledge.ingest import IngestionService
@@ -235,19 +235,19 @@ button, input {
           <small>Protected admin routes</small>
         </article>
         <article class="tile">
-          <span>Wiki Uploads</span>
+          <span>Document Storage</span>
           <strong data-upload-status>Checking</strong>
           <small data-upload-dir>Upload directory</small>
         </article>
         <article class="tile">
-          <span>GitHub</span>
-          <strong data-github-status>Checking</strong>
-          <small data-github-detail>Repository connection</small>
+          <span>Local Repository</span>
+          <strong data-repository-status>Checking</strong>
+          <small data-repository-detail>Mounted Git repository</small>
         </article>
         <article class="tile">
-          <span>Pending Changes</span>
-          <strong data-pending-status>Checking</strong>
-          <small data-branch-status>Base branch</small>
+          <span>Knowledge</span>
+          <strong data-knowledge-status>Checking</strong>
+          <small data-knowledge-detail>Knowledge index</small>
         </article>
       </div>
       <p class="message" data-status-message></p>
@@ -265,11 +265,6 @@ button, input {
           </div>
         </form>
         <p class="message" data-upload-message></p>
-      </section>
-      <section class="panel">
-        <h2>Publish Wiki</h2>
-        <button class="button primary" type="button" data-publish-button>Publish</button>
-        <p class="message" data-publish-message></p>
       </section>
     </aside>
   </section>
@@ -292,15 +287,16 @@ async function refreshStatus() {
     const response = await fetch("/admin/ui/status", {headers: {"Accept": "application/json"}});
     if (!response.ok) throw new Error(`Status request failed: ${response.status}`);
     const payload = await response.json();
-    const github = payload.github || {};
-    const wiki = payload.wiki || {};
+    const storage = payload.storage || {};
+    const repository = payload.repository || {};
+    const knowledge = payload.knowledge || {};
     text("[data-admin-status]", payload.admin && payload.admin.enabled ? "Enabled" : "Disabled");
-    text("[data-upload-status]", wiki.upload_dir_writable ? "Writable" : "Unavailable");
-    text("[data-upload-dir]", wiki.upload_dir || "Upload directory");
-    text("[data-github-status]", github.connected ? "Connected" : (github.configured ? "Configured" : "Not configured"));
-    text("[data-github-detail]", github.error || "Repository connection");
-    text("[data-pending-status]", github.pending_wiki_changes ? "Pending" : "Clean");
-    text("[data-branch-status]", github.base_branch ? `Base branch: ${github.base_branch}` : "Base branch");
+    text("[data-upload-status]", storage.documents_dir_writable ? "Writable" : "Unavailable");
+    text("[data-upload-dir]", storage.documents_dir || "Document storage");
+    text("[data-repository-status]", repository.head ? "Ready" : "Initialized");
+    text("[data-repository-detail]", repository.head ? `Revision: ${repository.head}` : "No committed knowledge yet");
+    text("[data-knowledge-status]", knowledge.initialized ? "Ready" : "Empty");
+    text("[data-knowledge-detail]", knowledge.repository_head ? `Revision: ${knowledge.repository_head}` : "Upload a source to initialize");
     text("[data-last-updated]", new Date().toLocaleString());
     setMessage("[data-status-message]", "");
   } catch (error) {
@@ -322,17 +318,6 @@ document.querySelector("[data-upload-form]")?.addEventListener("submit", async (
     refreshStatus();
   } catch (error) {
     setMessage("[data-upload-message]", error.message, "error");
-  }
-});
-document.querySelector("[data-publish-button]")?.addEventListener("click", async () => {
-  setMessage("[data-publish-message]", "Publishing...");
-  try {
-    const response = await fetch("/admin/ui/publish", {method: "POST"});
-    if (!response.ok) throw new Error(`Publish failed: ${response.status}`);
-    setMessage("[data-publish-message]", "Publish complete", "success");
-    refreshStatus();
-  } catch (error) {
-    setMessage("[data-publish-message]", error.message, "error");
   }
 });
 refreshStatus();
@@ -452,13 +437,5 @@ setInterval(refreshStatus, 10000);
         if not verify_session_token(request.cookies.get(SESSION_COOKIE)):
             return JSONResponse({"detail": "invalid session"}, status_code=status.HTTP_401_UNAUTHORIZED)
         return await upload_document_payload(settings, paths, git_store, ingestion, file)
-
-    @router.post("/admin/ui/publish")
-    async def post_ui_publish(request: Request) -> Any:
-        if not ui_enabled():
-            return disabled_response()
-        if not verify_session_token(request.cookies.get(SESSION_COOKIE)):
-            return JSONResponse({"detail": "invalid session"}, status_code=status.HTTP_401_UNAUTHORIZED)
-        return publish_wiki_payload(settings)
 
     return router

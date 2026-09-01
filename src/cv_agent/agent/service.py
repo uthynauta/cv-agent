@@ -50,8 +50,12 @@ class AgentService:
             span.set_attribute("search.hit_count", len(hits))
             context = _build_context(hits, self.search, self.settings)
             if not context:
-                context = "No relevant wiki context found."
-            instructions = build_instructions(self.settings.grounding_mode, extra_instructions)
+                context = "No relevant knowledge context found."
+            instructions = build_instructions(
+                self.settings.grounding_mode,
+                extra_instructions,
+                self.settings.agent_owner_name,
+            )
             model_input = (
                 f"<wiki_context>\n{context}\n</wiki_context>\n\n"
                 f"<untrusted_reviewer_question>\n{encode_untrusted_text(input_text)}\n"
@@ -173,7 +177,7 @@ def _normalize_text(value: str) -> str:
 def _safe_fallback(hit_titles: list[str]) -> str:
     if not hit_titles:
         return (
-            "No pude generar una respuesta respaldada por la wiki. "
+            "No pude generar una respuesta respaldada por la base de conocimiento. "
             "No hay fuentes disponibles para esta pregunta.\nFuentes disponibles: ninguna."
         )
     citations = ", ".join(f"[[{title}]]" for title in hit_titles)

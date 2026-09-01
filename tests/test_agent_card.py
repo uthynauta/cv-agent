@@ -8,7 +8,10 @@ def test_agent_card_exposes_public_a2a_metadata_without_auth():
     settings = Settings(
         openai_api_key="test-key",
         agent_api_key="agent-secret",
-        agent_public_url="https://banorte-cv-agent.onrender.com",
+        agent_public_url="https://cv-agent.example.com",
+        agent_owner_name="Example Candidate",
+        agent_display_name="Example CV Agent",
+        agent_description="Questions about Example Candidate's CV.",
     )
     app = create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
 
@@ -16,14 +19,11 @@ def test_agent_card_exposes_public_a2a_metadata_without_auth():
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["name"] == "CV Agent - Othon Gonzalez"
-    assert payload["description"] == (
-        "Agente de CV de Othon Gonzalez para responder preguntas sobre su perfil "
-        "profesional, experiencia, habilidades, proyectos, educacion y publicaciones."
-    )
+    assert payload["name"] == "Example CV Agent"
+    assert payload["description"] == "Questions about Example Candidate's CV."
     assert payload["supportedInterfaces"] == [
         {
-            "url": "https://banorte-cv-agent.onrender.com/v1/responses",
+            "url": "https://cv-agent.example.com/v1/responses",
             "protocolBinding": "HTTP+JSON",
             "protocolVersion": "1.0",
         }

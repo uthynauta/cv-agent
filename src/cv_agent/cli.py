@@ -4,6 +4,7 @@ import argparse
 from cv_agent.config import get_settings
 from cv_agent.knowledge.ingest import IngestionService, document_id_for_path
 from cv_agent.knowledge.repository import KnowledgeRepository
+from cv_agent.knowledge.storage import ensure_data_storage
 
 
 def main() -> None:
@@ -15,9 +16,10 @@ def main() -> None:
 
     if args.command == "ingest":
         settings = get_settings()
-        repo = KnowledgeRepository(Path(settings.wiki_dir))
+        paths = ensure_data_storage(settings.data_dir)
+        repo = KnowledgeRepository(paths.repository)
         service = IngestionService(repo, settings)
-        target = Path(args.path)
+        target = Path(args.path).expanduser().resolve()
         results = (
             service.ingest_directory(target)
             if target.is_dir()

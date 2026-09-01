@@ -46,17 +46,6 @@ class Settings(BaseSettings):
         alias="ADMIN_BACKUP_MAX_BYTES",
     )
     backup_retention_count: int = Field(default=10, ge=1, alias="BACKUP_RETENTION_COUNT")
-    github_token: str | None = Field(default=None, alias="GITHUB_TOKEN")
-    github_repository: str = Field(default="uthynauta/cv-agent", alias="GITHUB_REPOSITORY")
-    github_base_branch: str = Field(default="main", alias="GITHUB_BASE_BRANCH")
-    github_commit_author_name: str = Field(
-        default="Banorte Agent Admin",
-        alias="GITHUB_COMMIT_AUTHOR_NAME",
-    )
-    github_commit_author_email: str | None = Field(
-        default=None,
-        alias="GITHUB_COMMIT_AUTHOR_EMAIL",
-    )
     agent_model_name: str = Field(default="cv-agent", alias="AGENT_MODEL_NAME")
     data_dir: Path = Field(default=Path("data"), alias="DATA_DIR")
     agent_owner_name: str | None = Field(default=None, alias="AGENT_OWNER_NAME")
@@ -73,7 +62,6 @@ class Settings(BaseSettings):
     public_request_body_limit_bytes: int = Field(
         default=16 * 1024, gt=0, alias="PUBLIC_REQUEST_BODY_LIMIT_BYTES"
     )
-    wiki_dir: str = Field(default="wiki", alias="WIKI_DIR")
     otel_enabled: bool = Field(default=False, alias="OTEL_ENABLED")
     otel_service_name: str = Field(default="cv-agent", alias="OTEL_SERVICE_NAME")
     otel_exporter_otlp_endpoint: str = Field(default="http://tempo:4317", alias="OTEL_EXPORTER_OTLP_ENDPOINT")
@@ -159,8 +147,6 @@ class Settings(BaseSettings):
     @field_validator(
         "admin_ui_password",
         "admin_ui_session_secret",
-        "github_token",
-        "github_commit_author_email",
         mode="before",
     )
     @classmethod

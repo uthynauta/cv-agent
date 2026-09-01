@@ -130,7 +130,7 @@ def test_dashboard_renders_status_tiles_and_actions(tmp_path):
     assert 'data-upload-form' in response.text
     assert 'accept=".pdf,.md,.tex,application/pdf,text/markdown,text/x-tex,application/x-tex"' in response.text
     assert "Document file" in response.text
-    assert 'data-publish-button' in response.text
+    assert 'data-repository-status' in response.text
     assert 'Last updated' in response.text
 
 
@@ -142,31 +142,16 @@ def test_ui_status_requires_session(tmp_path):
     assert response.status_code == 401
 
 
-def test_ui_status_returns_payload_without_secrets(tmp_path, monkeypatch):
-    settings = ui_settings(tmp_path, github_token="secret-token")
-
-    class FakeGitHub:
-        def __init__(self, settings):
-            pass
-
-        def status(self):
-            return {
-                "configured": True,
-                "connected": True,
-                "base_branch": "main",
-                "pending_wiki_changes": True,
-                "error": None,
-            }
-
-    monkeypatch.setattr("cv_agent.api.admin.GitHubAdminService", FakeGitHub)
+def test_ui_status_returns_local_repository_payload(tmp_path):
+    settings = ui_settings(tmp_path)
     client = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok"))
     client.post("/admin/login", data={"password": "ui-secret"})
 
     response = client.get("/admin/ui/status")
 
     assert response.status_code == 200
-    assert response.json()["github"]["pending_wiki_changes"] is True
-    assert "secret-token" not in response.text
+    assert "repository" in response.json()
+    assert "github" not in response.text.lower()
 
 
 def test_ui_upload_requires_session(tmp_path):
@@ -203,7 +188,6 @@ def test_ui_upload_reuses_document_upload_behavior(tmp_path, monkeypatch):
 
     monkeypatch.setattr("cv_agent.api.admin.extract_source", fake_extract)
     monkeypatch.setattr("cv_agent.api.admin.IngestionService.ingest_file", fake_ingest_file)
-    monkeypatch.setattr("cv_agent.api.admin.wiki_has_changes", lambda _: True)
 
     client = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok"))
     client.post("/admin/login", data={"password": "ui-secret"})
@@ -221,7 +205,6 @@ def test_ui_upload_reuses_document_upload_behavior(tmp_path, monkeypatch):
     assert payload["ingestion"] == {
         "count": 1, "sources": ["sources/uploaded.md"], "generated": []
     }
-    assert payload["publish"] == {"pending": True}
 
 
 def test_ui_upload_uses_shared_admin_ingestion(tmp_path, monkeypatch):
@@ -239,7 +222,6 @@ def test_ui_upload_uses_shared_admin_ingestion(tmp_path, monkeypatch):
             "document": {"filename": "Uploaded-PDF.pdf", "path": "documents/uploaded.pdf", "kind": "pdf"},
             "ingestion": {"count": 1, "sources": ["sources/uploaded.md"], "generated": []},
             "revision": {"commit": "commit"},
-            "publish": {"pending": False},
         }
 
     monkeypatch.setattr("cv_agent.main.build_admin_router", fake_build_admin_router)
@@ -256,42 +238,3 @@ def test_ui_upload_uses_shared_admin_ingestion(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert captured["ui_ingestion"] is captured["api_ingestion"]
 
-
-def test_ui_publish_requires_session(tmp_path):
-    response = TestClient(
-        create_app(settings=ui_settings(tmp_path), agent_answerer=lambda text, instructions=None: "ok")
-    ).post("/admin/ui/publish")
-
-    assert response.status_code == 401
-
-
-def test_ui_publish_returns_redacted_result(tmp_path, monkeypatch):
-    settings = ui_settings(tmp_path, github_token="secret-token")
-
-    class FakeGitHub:
-        def __init__(self, settings):
-            pass
-
-        def publish(self):
-            return {
-                "status": "published",
-                "changed_files": ["wiki/index.md", "logs/secret-token.txt"],
-                "remote_url": "https://github.com/example/repo",
-                "error": "publish detail secret-token",
-            }
-
-    monkeypatch.setattr("cv_agent.api.admin.GitHubAdminService", FakeGitHub)
-    client = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok"))
-    client.post("/admin/login", data={"password": "ui-secret"})
-
-    response = client.post("/admin/ui/publish")
-
-    assert response.status_code == 200
-    assert response.json() == {
-        "status": "published",
-        "changed_files": ["wiki/index.md", "logs/[redacted].txt"],
-        "remote_url": "https://github.com/example/repo",
-        "error": "publish detail [redacted]",
-    }
-    assert "secret-token" not in response.text
-    assert "[redacted]" in response.text

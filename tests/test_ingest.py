@@ -162,8 +162,8 @@ def test_openai_ingest_writes_generated_pages_under_knowledge_and_source_is_mode
                   "body_lines": ["Model replaced source"]
                 },
                 {
-                  "path": "knowledge/projects/teradata.md",
-                  "title": "Teradata",
+                  "path": "knowledge/projects/example-systems.md",
+                  "title": "Example Systems",
                   "kind": "project",
                   "tags": ["project"],
                   "body_lines": ["## Summary", "Project page cites [[sources/doc-123]]."]
@@ -183,7 +183,7 @@ def test_openai_ingest_writes_generated_pages_under_knowledge_and_source_is_mode
     )
 
     assert result.source_page == tmp_path / "sources" / "doc-123.md"
-    assert result.generated_pages == (tmp_path / "knowledge" / "projects" / "teradata.md",)
+    assert result.generated_pages == (tmp_path / "knowledge" / "projects" / "example-systems.md",)
     source_text = result.source_page.read_text(encoding="utf-8")
     metadata, body = load_frontmatter(source_text)
     assert metadata["title"] == "original-name"
@@ -192,8 +192,8 @@ def test_openai_ingest_writes_generated_pages_under_knowledge_and_source_is_mode
     assert metadata["tags"] == ["source", "latex"]
     assert "Model replaced source" in body
     assert "source" in body
-    assert (tmp_path / "knowledge" / "projects" / "teradata.md").exists()
-    assert not (tmp_path / "projects" / "teradata.md").exists()
+    assert (tmp_path / "knowledge" / "projects" / "example-systems.md").exists()
+    assert not (tmp_path / "projects" / "example-systems.md").exists()
 
 
 @pytest.mark.parametrize(

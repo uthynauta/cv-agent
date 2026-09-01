@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
 import re
-import shutil
 import unicodedata
 
 from cv_agent.knowledge.repository import resolve_directory_path
@@ -72,31 +71,6 @@ def ensure_data_storage(root: str | Path) -> DataPaths:
     ):
         resolve_directory_path(directory, create=True)
     return paths
-
-
-def upload_directory(wiki_dir: str | Path) -> Path:
-    return Path(wiki_dir) / "raw" / "uploads"
-
-
-def ensure_wiki_storage(wiki_dir: str | Path, bundled_wiki_dir: str | Path | None = None) -> None:
-    wiki_path = Path(wiki_dir)
-    bundled_path = Path(bundled_wiki_dir) if bundled_wiki_dir else None
-
-    if not wiki_path.exists():
-        try:
-            resolve_directory_path(wiki_path.parent)
-            if bundled_path and bundled_path.exists():
-                shutil.copytree(bundled_path, wiki_path)
-            else:
-                resolve_directory_path(wiki_path, create=True)
-        except (OSError, ValueError):
-            return
-
-    try:
-        resolve_directory_path(upload_directory(wiki_path), create=True)
-    except (OSError, ValueError):
-        # Keep the app available; admin requests report the unavailable storage as 503.
-        return
 
 
 def safe_upload_filename(filename: str) -> str:
