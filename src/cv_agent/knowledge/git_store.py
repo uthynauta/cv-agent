@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import subprocess
 
@@ -13,12 +14,15 @@ _SAFE_OPERATIONS = frozenset(
         "init",
         "ls-files",
         "remote",
+        "rev-list",
         "reset",
         "rev-parse",
         "status",
         "symbolic-ref",
     }
 )
+
+_ALLOWED_PATH_PREFIXES = ("sources/", "knowledge/")
 
 
 class GitStoreError(RuntimeError):
@@ -33,15 +37,19 @@ class LocalKnowledgeGit:
 
     def initialize(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
-        if not (self.root / ".git").exists():
+        existing = (self.root / ".git").exists()
+        if not existing:
             self._run("init", "--initial-branch=main", "--object-format=sha1")
         self._validate_object_format()
+        if existing:
+            self._validate_repository_invariants()
         self._run("config", "--local", "user.name", self.author_name)
         self._run("config", "--local", "user.email", self.author_email)
 
     def _run(self, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
         operation = args[0] if args and args[0] in _SAFE_OPERATIONS else "git command"
         command = ["git", "-C", str(self.root), *args]
+        failure: str | None = None
         try:
             result = subprocess.run(
                 command,
@@ -49,17 +57,28 @@ class LocalKnowledgeGit:
                 capture_output=True,
                 text=True,
                 timeout=30,
+                env=self._git_environment(),
             )
-        except FileNotFoundError as exc:
-            raise GitStoreError(f"Git operation '{operation}' failed: git executable not found") from exc
-        except subprocess.TimeoutExpired as exc:
-            raise GitStoreError(f"Git operation '{operation}' timed out") from exc
-        except OSError as exc:
-            raise GitStoreError(f"Git operation '{operation}' failed") from exc
+        except FileNotFoundError:
+            failure = f"Git operation '{operation}' failed: git executable not found"
+        except subprocess.TimeoutExpired:
+            failure = f"Git operation '{operation}' timed out"
+        except OSError:
+            failure = f"Git operation '{operation}' failed"
+
+        if failure is not None:
+            raise GitStoreError(failure) from None
 
         if check and result.returncode:
             raise self._error(operation)
         return result
+
+    @staticmethod
+    def _git_environment() -> dict[str, str]:
+        environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+        environment["GIT_CONFIG_GLOBAL"] = os.devnull
+        environment["GIT_CONFIG_NOSYSTEM"] = "1"
+        return environment
 
     @staticmethod
     def _error(operation: str) -> GitStoreError:
@@ -70,11 +89,28 @@ class LocalKnowledgeGit:
         if result.stdout.strip() != "sha1":
             raise GitStoreError("Git repository object format must be sha1")
 
+    def _validate_repository_invariants(self) -> None:
+        if self.remotes():
+            raise GitStoreError("Git repository remotes are not allowed")
+
+        indexed = self._run("ls-files", "-z").stdout.split("\0")
+        reachable = self._run("rev-list", "--objects", "-z", "--all").stdout.split("\0")
+        paths = [path for path in indexed + [entry[5:] for entry in reachable if entry.startswith("path=")] if path]
+        if any(not self._is_allowed_path(path) for path in paths):
+            raise GitStoreError("Git repository contains paths outside allowed scopes")
+
+    @staticmethod
+    def _is_allowed_path(path: str) -> bool:
+        return path.startswith(_ALLOWED_PATH_PREFIXES)
+
     def commit(self, message: str) -> str:
         for scope in ("sources", "knowledge"):
             (self.root / scope).mkdir(parents=True, exist_ok=True)
         self._run("reset", "--")
-        self._run("add", "--all", "--", "sources", "knowledge")
+        self._run("add", "--all", "--force", "--", "sources", "knowledge")
+        staged_paths = self._run("diff", "--cached", "--name-only", "-z").stdout.split("\0")
+        if any(path and not self._is_allowed_path(path) for path in staged_paths):
+            raise GitStoreError("Git staging produced paths outside allowed scopes")
         staged = self._run("diff", "--cached", "--quiet", check=False)
         if staged.returncode == 0:
             return self.head()
