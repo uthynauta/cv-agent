@@ -74,12 +74,13 @@ class DocumentService:
         git: LocalKnowledgeGit,
         ingestion: IngestionService,
         active: ActiveKnowledge,
+        repository: KnowledgeRepository | None = None,
     ) -> None:
         self.paths = paths
         self.git = git
         self.ingestion = ingestion
         self.active = active
-        self.repository = ingestion.repository
+        self.repository = repository or ingestion.repository
 
     def list_documents(self) -> list[DocumentRecord]:
         records: list[DocumentRecord] = []
@@ -235,6 +236,8 @@ class DocumentService:
         target = candidate.documents / f"{document_id}{Path(filename).suffix.lower()}"
         self._write_exclusive(target, data)
         result = candidate.ingestion.ingest_file(target, document_id, filename)
+        if result.needs_ocr:
+            raise DocumentMutationError(candidate.operation_id, "document requires OCR")
         return document_id, sha256(data).hexdigest()
 
     def _stage_delete(self, candidate: _Candidate, document_id: str) -> tuple[str, str]:
