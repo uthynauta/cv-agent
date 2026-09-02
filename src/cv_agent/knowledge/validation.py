@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import errno
+import html
 import os
 from pathlib import Path
 import re
@@ -21,7 +22,6 @@ MAX_DOCUMENT_ID_BYTES = 128
 _DOCUMENT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 _EXTRACTED_HEADING_RE = re.compile(r"(?m)^[ \t]*##[ \t]+Extracted Text[ \t]*$")
-_NEXT_HEADING_RE = re.compile(r"(?m)^[ \t]*#{1,6}[ \t]+\S.*$")
 _SOURCE_LINK_RE = re.compile(r"\[\[([^\]\r\n]+)\]\]")
 _PLACEHOLDERS = {
     "no extracted text",
@@ -90,6 +90,7 @@ def _read_pages(root_fd: int) -> list[_Page]:
             for entry in entries:
                 relative_parts = prefix + (entry.name,)
                 relative = _relative(relative_parts)
+                _validate_path_limits(relative)
                 try:
                     mode = entry.stat(follow_symlinks=False).st_mode
                 except OSError:
@@ -114,7 +115,6 @@ def _read_pages(root_fd: int) -> list[_Page]:
                 if relative_parts[0] == "sources" and len(relative_parts) != 2:
                     _fail(relative, "path", "source pages must be direct children")
                 try:
-                    _validate_path_limits(relative)
                     metadata, body = _load_page(directory_fd, entry.name, relative)
                 except KnowledgeValidationError:
                     raise
@@ -236,20 +236,21 @@ def _has_meaningful_extracted_text(body: str) -> bool:
     if heading is None:
         return False
     section = body[heading.end() :]
-    next_heading = _NEXT_HEADING_RE.search(section)
-    if next_heading is not None:
-        section = section[: next_heading.start()]
+    section = html.unescape(section)
     section = re.sub(r"<!--.*?-->", " ", section, flags=re.DOTALL)
+    section = re.sub(r"<[^>]*>", " ", section)
     lines = [line.strip() for line in section.splitlines() if line.strip()]
     lines = [line for line in lines if not re.match(r"^#{1,6}(?:\s|$)", line)]
     if not lines:
         return False
-    normalized = unicodedata.normalize("NFKD", " ".join(lines)).casefold()
+    evidence = " ".join(lines)
+    evidence = "".join(" " if char.isspace() else char for char in evidence)
+    normalized = unicodedata.normalize("NFKD", evidence).casefold()
     normalized = "".join(char for char in normalized if not unicodedata.combining(char))
     normalized = re.sub(r"[^\w]+", " ", normalized, flags=re.UNICODE).strip()
     if normalized in _PLACEHOLDERS:
         return False
-    return any(char.isalnum() for char in " ".join(lines))
+    return any(char.isalnum() for char in evidence)
 
 
 def _is_safe_document_id(value: object) -> bool:

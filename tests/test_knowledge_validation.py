@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import stat
 import time
+from types import SimpleNamespace
 
 import pytest
 
+import cv_agent.knowledge.validation as validation_module
 from cv_agent.knowledge.frontmatter import dump_frontmatter
 from cv_agent.knowledge.validation import KnowledgeValidationError, validate_knowledge
 
@@ -61,6 +64,88 @@ def test_extracted_text_uses_unicode_aware_meaningful_evidence(
     else:
         with pytest.raises(KnowledgeValidationError, match="extracted_text"):
             validate_knowledge(tmp_path)
+
+
+def test_rejects_deep_empty_directory_before_traversal(tmp_path: Path):
+    directory = tmp_path / "knowledge"
+    directory.mkdir()
+    for index in range(8):
+        directory /= f"level-{index}"
+        directory.mkdir()
+
+    with pytest.raises(KnowledgeValidationError, match="path"):
+        validate_knowledge(tmp_path)
+
+
+def test_rejects_oversized_empty_directory_component_before_open(tmp_path: Path, monkeypatch):
+    (tmp_path / "knowledge").mkdir()
+    oversized = "x" * 256
+    original_scandir = os.scandir
+
+    class FakeEntry:
+        name = oversized
+
+        def stat(self, *, follow_symlinks):
+            return SimpleNamespace(st_mode=stat.S_IFDIR | 0o700)
+
+    class FakeScanner:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def __iter__(self):
+            return iter([FakeEntry()])
+
+    scans = 0
+
+    def fake_scandir(directory_fd):
+        nonlocal scans
+        if isinstance(directory_fd, int):
+            scans += 1
+            if scans == 2:
+                return FakeScanner()
+        return original_scandir(directory_fd)
+
+    monkeypatch.setattr(validation_module.os, "scandir", fake_scandir)
+    original_open_directory_at = validation_module._open_directory_at
+
+    def fail_if_opened(parent_fd, name, relative):
+        if relative not in {"root", "knowledge"}:
+            pytest.fail("oversized directory must fail before open")
+        return original_open_directory_at(parent_fd, name, relative)
+
+    monkeypatch.setattr(validation_module, "_open_directory_at", fail_if_opened)
+
+    with pytest.raises(KnowledgeValidationError, match="path"):
+        validate_knowledge(tmp_path)
+
+
+def test_extracted_text_retains_evidence_after_embedded_heading(tmp_path: Path):
+    _write_page(
+        tmp_path,
+        "sources/doc-123.md",
+        _source_metadata(),
+        "## Extracted Text\n\n# Experience\n\nPython and Rust experience.",
+    )
+
+    assert validate_knowledge(tmp_path) is None
+
+
+@pytest.mark.parametrize("evidence", ["&nbsp;", "&ensp;", "&#160;", "<!-- &nbsp; -->", "<p></p>"])
+def test_html_entity_or_tag_only_extracted_text_is_not_meaningful(
+    tmp_path: Path, evidence: str
+):
+    _write_page(
+        tmp_path,
+        "sources/doc-123.md",
+        _source_metadata(),
+        f"## Extracted Text\n\n{evidence}",
+    )
+
+    with pytest.raises(KnowledgeValidationError, match="extracted_text"):
+        validate_knowledge(tmp_path)
 
 
 @pytest.mark.parametrize(
