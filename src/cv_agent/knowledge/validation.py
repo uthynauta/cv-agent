@@ -1,18 +1,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import errno
 import os
 from pathlib import Path
 import re
 import stat
 from typing import Any
+import unicodedata
 
 from cv_agent.knowledge.frontmatter import load_frontmatter
 from cv_agent.knowledge.repository import (
     MAX_PATH_DEPTH,
     MAX_PATH_COMPONENT_BYTES,
     MAX_RELATIVE_PATH_BYTES,
-    resolve_directory_path,
 )
 
 
@@ -53,13 +54,12 @@ def validate_knowledge(root: str | Path) -> None:
 
     try:
         candidate = Path(root).expanduser()
-        lexical_root = resolve_directory_path(candidate)
-    except (OSError, TypeError, ValueError):
+        lexical_root = candidate.absolute()
+        root_fd = _open_directory_path(lexical_root)
+    except (OSError, TypeError, ValueError, KnowledgeValidationError):
         _fail("root", "path", "is unsafe")
-    if not lexical_root.exists() or not lexical_root.is_dir():
-        _fail("root", "path", "is not a directory")
 
-    pages = _read_pages(lexical_root)
+    pages = _read_pages(root_fd)
     source_pages = [page for page in pages if page.relative_path.startswith("sources/")]
     generated_pages = [
         page
@@ -75,56 +75,112 @@ def validate_knowledge(root: str | Path) -> None:
         _validate_generated_page(page, source_ids)
 
 
-def _read_pages(root: Path) -> list[_Page]:
+def _read_pages(root_fd: int) -> list[_Page]:
     pages: list[_Page] = []
-    pending: list[tuple[Path, tuple[str, ...]]] = [(root, ())]
-    while pending:
-        directory, prefix = pending.pop()
-        try:
-            entries = sorted(os.scandir(directory), key=lambda entry: entry.name)
-        except OSError:
-            _fail(_relative(prefix), "path", "cannot be inspected")
-        for entry in entries:
-            relative_parts = prefix + (entry.name,)
-            relative = _relative(relative_parts)
+    pending: list[tuple[int, tuple[str, ...]]] = [(root_fd, ())]
+    open_fds = {root_fd}
+    try:
+        while pending:
+            directory_fd, prefix = pending.pop()
             try:
-                mode = entry.stat(follow_symlinks=False).st_mode
+                with os.scandir(directory_fd) as scanner:
+                    entries = sorted(scanner, key=lambda entry: entry.name)
             except OSError:
-                _fail(relative, "path", "cannot be inspected")
-            if stat.S_ISLNK(mode):
-                _fail(relative, "path", "uses a symlink")
-            if stat.S_ISDIR(mode):
-                if len(relative_parts) == 1 and entry.name not in {"sources", "knowledge"}:
-                    _fail(relative, "path", "is outside the knowledge scopes")
+                _fail(_relative(prefix), "path", "cannot be inspected")
+            for entry in entries:
+                relative_parts = prefix + (entry.name,)
+                relative = _relative(relative_parts)
+                try:
+                    mode = entry.stat(follow_symlinks=False).st_mode
+                except OSError:
+                    _fail(relative, "path", "cannot be inspected")
+                if stat.S_ISLNK(mode):
+                    _fail(relative, "path", "uses a symlink")
+                if stat.S_ISDIR(mode):
+                    if len(relative_parts) == 1 and entry.name not in {"sources", "knowledge"}:
+                        _fail(relative, "path", "is outside the knowledge scopes")
+                    if relative_parts[0] not in {"sources", "knowledge"}:
+                        _fail(relative, "path", "is outside the knowledge scopes")
+                    child_fd = _open_directory_at(directory_fd, entry.name, relative)
+                    open_fds.add(child_fd)
+                    pending.append((child_fd, relative_parts))
+                    continue
+                if not stat.S_ISREG(mode):
+                    _fail(relative, "path", "is not a regular file")
                 if relative_parts[0] not in {"sources", "knowledge"}:
                     _fail(relative, "path", "is outside the knowledge scopes")
-                pending.append((Path(entry.path), relative_parts))
-                continue
-            if not stat.S_ISREG(mode):
-                _fail(relative, "path", "is not a regular file")
-            if relative_parts[0] not in {"sources", "knowledge"}:
-                _fail(relative, "path", "is outside the knowledge scopes")
-            if not entry.name.endswith(".md"):
-                _fail(relative, "path", "must be Markdown")
-            if relative_parts[0] == "sources" and len(relative_parts) != 2:
-                _fail(relative, "path", "source pages must be direct children")
+                if not entry.name.endswith(".md"):
+                    _fail(relative, "path", "must be Markdown")
+                if relative_parts[0] == "sources" and len(relative_parts) != 2:
+                    _fail(relative, "path", "source pages must be direct children")
+                try:
+                    _validate_path_limits(relative)
+                    metadata, body = _load_page(directory_fd, entry.name, relative)
+                except KnowledgeValidationError:
+                    raise
+                except Exception:
+                    _fail(relative, "frontmatter", "is invalid")
+                pages.append(_Page(relative, metadata, body))
+    finally:
+        for descriptor in open_fds:
             try:
-                _validate_path_limits(relative)
-                metadata, body = _load_page(entry.path)
-            except KnowledgeValidationError:
-                raise
-            except Exception:
-                _fail(relative, "frontmatter", "is invalid")
-            pages.append(_Page(relative, metadata, body))
+                os.close(descriptor)
+            except OSError:
+                pass
     return pages
 
 
-def _load_page(path: str) -> tuple[dict[str, Any], str]:
-    flags = os.O_RDONLY
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    descriptor = os.open(path, flags)
+def _directory_flags() -> int:
+    return os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+
+
+def _open_directory_path(path: Path) -> int:
+    if path.anchor != "/" or ".." in path.parts:
+        raise KnowledgeValidationError("root: path is unsafe")
+    current = os.open("/", _directory_flags())
     try:
+        for component in path.parts[1:]:
+            child = _open_directory_at(current, component, "root")
+            os.close(current)
+            current = child
+        return current
+    except Exception:
+        try:
+            os.close(current)
+        except OSError:
+            pass
+        raise
+
+
+def _open_directory_at(parent_fd: int, name: str, relative: str) -> int:
+    try:
+        descriptor = os.open(name, _directory_flags(), dir_fd=parent_fd)
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            _fail(relative, "path", "uses a symlink")
+        _fail(relative, "path", "is not a local directory")
+    try:
+        mode = os.fstat(descriptor).st_mode
+    except OSError:
+        os.close(descriptor)
+        _fail(relative, "path", "cannot be inspected")
+    if not stat.S_ISDIR(mode):
+        os.close(descriptor)
+        _fail(relative, "path", "is not a local directory")
+    return descriptor
+
+
+def _load_page(directory_fd: int, name: str, relative: str) -> tuple[dict[str, Any], str]:
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(name, flags, dir_fd=directory_fd)
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            _fail(relative, "path", "uses a symlink")
+        _fail(relative, "path", "cannot be opened")
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            _fail(relative, "path", "is not a regular file")
         with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
             descriptor = -1
             return load_frontmatter(handle.read())
@@ -188,10 +244,12 @@ def _has_meaningful_extracted_text(body: str) -> bool:
     lines = [line for line in lines if not re.match(r"^#{1,6}(?:\s|$)", line)]
     if not lines:
         return False
-    normalized = re.sub(r"[^0-9a-z]+", " ", " ".join(lines).casefold()).strip()
+    normalized = unicodedata.normalize("NFKD", " ".join(lines)).casefold()
+    normalized = "".join(char for char in normalized if not unicodedata.combining(char))
+    normalized = re.sub(r"[^\w]+", " ", normalized, flags=re.UNICODE).strip()
     if normalized in _PLACEHOLDERS:
         return False
-    return re.search(r"\w", normalized, flags=re.UNICODE) is not None
+    return any(char.isalnum() for char in " ".join(lines))
 
 
 def _is_safe_document_id(value: object) -> bool:

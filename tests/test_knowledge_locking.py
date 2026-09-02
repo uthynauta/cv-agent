@@ -146,3 +146,30 @@ def test_lock_rejects_symlinked_parent(tmp_path: Path):
     with pytest.raises((ValueError, RuntimeError), match="lock|symlink"):
         with MutationLock(tmp_path / "locks" / "mutation.lock"):
             pass
+
+
+def test_lock_final_open_survives_parent_ancestor_swap(tmp_path: Path, monkeypatch):
+    locks = tmp_path / "locks"
+    outside = tmp_path / "outside"
+    locks.mkdir()
+    outside.mkdir()
+    path = locks / "mutation.lock"
+    original_open = os.open
+    swapped = False
+
+    def race_open(name, flags, mode=0o777, *, dir_fd=None):
+        nonlocal swapped
+        if name == path.name and dir_fd is not None and not swapped:
+            locks.rename(tmp_path / "locks.real")
+            locks.symlink_to(outside, target_is_directory=True)
+            swapped = True
+        if mode == 0o777:
+            return original_open(name, flags, dir_fd=dir_fd)
+        return original_open(name, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(locking_module.os, "open", race_open)
+    with MutationLock(path):
+        pass
+
+    assert (tmp_path / "locks.real" / "mutation.lock").is_file()
+    assert not (outside / "mutation.lock").exists()

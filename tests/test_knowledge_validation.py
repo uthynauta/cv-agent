@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import time
 
 import pytest
 
@@ -39,6 +40,27 @@ def test_validates_source_identity_and_generated_citation(tmp_path: Path):
     )
 
     assert validate_knowledge(tmp_path) is None
+
+
+@pytest.mark.parametrize(
+    ("evidence", "valid"),
+    [("中文经历", True), ("áéíóú", True), ("🙂🙂", False), ("!!!", False)],
+)
+def test_extracted_text_uses_unicode_aware_meaningful_evidence(
+    tmp_path: Path, evidence: str, valid: bool
+):
+    _write_page(
+        tmp_path,
+        "sources/doc-123.md",
+        _source_metadata(),
+        f"## Extracted Text\n\n{evidence}",
+    )
+
+    if valid:
+        assert validate_knowledge(tmp_path) is None
+    else:
+        with pytest.raises(KnowledgeValidationError, match="extracted_text"):
+            validate_knowledge(tmp_path)
 
 
 @pytest.mark.parametrize(
@@ -129,6 +151,67 @@ def test_rejects_symlinked_knowledge_tree(tmp_path: Path, directory: str):
 
     with pytest.raises(KnowledgeValidationError, match="path"):
         validate_knowledge(tmp_path)
+
+
+def test_rejects_ancestor_swap_between_scan_and_descent(tmp_path: Path, monkeypatch):
+    _write_page(
+        tmp_path,
+        "sources/doc-123.md",
+        _source_metadata(),
+        "## Extracted Text\n\nsource text",
+    )
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    _write_page(
+        outside,
+        "secret.md",
+        _source_metadata("secret"),
+        "## Extracted Text\n\noutside source",
+    )
+    original_scandir = os.scandir
+    swapped = False
+
+    def race_scandir(path):
+        nonlocal swapped
+        iterator = original_scandir(path)
+        if not swapped:
+            sources = tmp_path / "sources"
+            moved = tmp_path / "sources.real"
+            sources.rename(moved)
+            sources.symlink_to(outside, target_is_directory=True)
+            swapped = True
+        return iterator
+
+    monkeypatch.setattr("cv_agent.knowledge.validation.os.scandir", race_scandir)
+    with pytest.raises(KnowledgeValidationError, match="path"):
+        validate_knowledge(tmp_path)
+
+
+def test_rejects_fifo_replacement_without_blocking(tmp_path: Path, monkeypatch):
+    _write_page(
+        tmp_path,
+        "sources/doc-123.md",
+        _source_metadata(),
+        "## Extracted Text\n\nsource text",
+    )
+    original_open = os.open
+    replaced = False
+
+    def race_open(path, flags, mode=0o777, *, dir_fd=None):
+        nonlocal replaced
+        if dir_fd is not None and path == "doc-123.md" and not replaced:
+            (tmp_path / "sources" / "doc-123.md").unlink()
+            os.mkfifo(tmp_path / "sources" / "doc-123.md")
+            replaced = True
+        if mode == 0o777:
+            return original_open(path, flags, dir_fd=dir_fd)
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr("cv_agent.knowledge.validation.os.open", race_open)
+    started = time.monotonic()
+    with pytest.raises(KnowledgeValidationError, match="path|frontmatter"):
+        validate_knowledge(tmp_path)
+    assert time.monotonic() - started < 1
 
 
 def test_rejects_special_files_and_out_of_scope_markdown(tmp_path: Path):
