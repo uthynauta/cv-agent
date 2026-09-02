@@ -7,7 +7,6 @@ import cv_agent.api.admin as admin_module
 import cv_agent.main as main_module
 from cv_agent.config import Settings
 from cv_agent.knowledge.documents_service import DocumentMutationError
-from cv_agent.knowledge.ingest import document_id_for_path
 from cv_agent.knowledge.storage import ensure_data_storage
 from cv_agent.main import create_app
 
@@ -33,21 +32,13 @@ def legacy_upload_app(settings, monkeypatch):
     return create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
 
 
-def test_admin_ingest_allows_file_inside_documents(tmp_path, monkeypatch):
+def test_admin_ingest_route_is_unavailable(tmp_path):
     source = tmp_path / "documents" / "cv.md"
     source.parent.mkdir()
     source.write_text("# CV", encoding="utf-8")
     settings = mounted_settings(tmp_path)
 
-    class Result:
-        source_page = Path("sources/cv.md")
-
-    def ingest_file(self, path: Path, document_id: str):
-        assert path == source
-        return Result()
-
     app = create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
-    monkeypatch.setattr("cv_agent.api.admin.IngestionService.ingest_file", ingest_file)
 
     response = TestClient(app).post(
         "/admin/ingest",
@@ -55,13 +46,7 @@ def test_admin_ingest_allows_file_inside_documents(tmp_path, monkeypatch):
         json={"path": str(source)},
     )
 
-    assert response.status_code == 200
-    assert response.json() == {
-        "status": "ok",
-        "count": 1,
-        "sources": ["sources/cv.md"],
-        "revision": {"commit": ""},
-    }
+    assert response.status_code == 404
 
 
 def test_admin_ingest_rejects_path_outside_mounted_data_roots(tmp_path):
@@ -79,7 +64,7 @@ def test_admin_ingest_rejects_path_outside_mounted_data_roots(tmp_path):
         json={"path": str(source)},
     )
 
-    assert response.status_code == 400
+    assert response.status_code == 404
 
 
 def test_admin_ingest_relative_data_dir_uses_stable_absolute_roots(tmp_path, monkeypatch):
@@ -88,16 +73,6 @@ def test_admin_ingest_relative_data_dir_uses_stable_absolute_roots(tmp_path, mon
     source.parent.mkdir(parents=True)
     source.write_text("# CV", encoding="utf-8")
     settings = Settings(_env_file=None, data_dir="data", admin_api_key="admin-secret")
-    seen: list[tuple[Path, str]] = []
-
-    class Result:
-        source_page = Path("sources/cv.md")
-
-    def ingest_file(self, path: Path, document_id: str):
-        seen.append((path, document_id))
-        return Result()
-
-    monkeypatch.setattr(admin_module.IngestionService, "ingest_file", ingest_file)
     app = create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
     response = TestClient(app).post(
         "/admin/ingest",
@@ -105,8 +80,7 @@ def test_admin_ingest_relative_data_dir_uses_stable_absolute_roots(tmp_path, mon
         json={"path": str(source)},
     )
 
-    assert response.status_code == 200
-    assert seen == [(source.absolute(), document_id_for_path(source.absolute(), (tmp_path / "data" / "documents").absolute()))]
+    assert response.status_code == 404
 
 
 def test_admin_upload_persists_original_under_documents(tmp_path, monkeypatch):
@@ -150,6 +124,26 @@ def test_admin_upload_persists_original_under_documents(tmp_path, monkeypatch):
     assert (tmp_path / "data" / relative_path).is_file()
     assert len(calls) == 1
     assert calls[0][0] == tmp_path / "data" / relative_path
+
+
+def test_admin_documents_upload_remains_available_after_legacy_ingest_removal(tmp_path):
+    settings = mounted_settings(tmp_path, ingestion_mode="deterministic", admin_upload_max_bytes=1024)
+    client = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok"))
+
+    unavailable = client.post(
+        "/admin/ingest",
+        headers={"Authorization": "Bearer admin-secret"},
+        json={"path": str(tmp_path / "documents" / "candidate.md")},
+    )
+    available = client.post(
+        "/admin/documents",
+        headers={"Authorization": "Bearer admin-secret"},
+        files={"file": ("candidate.md", b"# Candidate\n\nPython", "text/markdown")},
+    )
+
+    assert unavailable.status_code == 404
+    assert available.status_code == 200
+    assert available.json()["document"]["filename"] == "candidate.md"
 
 
 def test_admin_upload_does_not_bypass_document_service_when_ingestion_is_patched(
@@ -221,7 +215,7 @@ def test_admin_status_rejects_symlinked_data_root_without_external_access(tmp_pa
     assert not (outside / "uploads").exists()
 
 
-def test_admin_ingest_requires_admin_key(tmp_path):
+def test_admin_ingest_route_is_unavailable_without_admin_key(tmp_path):
     raw_dir = tmp_path / "raw"
     raw_dir.mkdir()
     source = raw_dir / "cv.md"
@@ -231,10 +225,10 @@ def test_admin_ingest_requires_admin_key(tmp_path):
 
     response = TestClient(app).post("/admin/ingest", json={"path": str(source)})
 
-    assert response.status_code == 401
+    assert response.status_code == 404
 
 
-def test_admin_ingest_is_disabled_without_configured_key(tmp_path):
+def test_admin_ingest_route_is_unavailable_when_admin_is_disabled(tmp_path):
     raw_dir = tmp_path / "raw"
     raw_dir.mkdir()
     source = raw_dir / "cv.md"
@@ -245,8 +239,7 @@ def test_admin_ingest_is_disabled_without_configured_key(tmp_path):
         create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
     ).post("/admin/ingest", json={"path": str(source)})
 
-    assert response.status_code == 503
-    assert response.json()["detail"] == "admin ingest is disabled"
+    assert response.status_code == 404
 
 
 def test_admin_document_upload_saves_pdf_and_ingests(tmp_path, monkeypatch):

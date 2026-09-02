@@ -496,5 +496,4 @@ def test_legacy_ingest_single_staging_file_uses_staging_root_for_id(tmp_path):
         json={"path": str(source)},
     )
 
-    assert response.status_code == 200
-    assert response.json()["count"] == 1
+    assert response.status_code == 404

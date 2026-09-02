@@ -49,10 +49,6 @@ class ResponseRequest(BaseModel):
         return text[:MAX_INSTRUCTIONS_CHARS]
 
 
-class IngestRequest(BaseModel):
-    path: str
-
-
 def _extract_input_text(value: Any) -> str | None:
     if isinstance(value, str):
         return value

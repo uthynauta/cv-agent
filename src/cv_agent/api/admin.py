@@ -5,10 +5,9 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile, status
 
-from cv_agent.api.models import IngestRequest
 from cv_agent.config import Settings
 from cv_agent.knowledge.extractors import extract_source
-from cv_agent.knowledge.ingest import IngestionService, document_id_for_path
+from cv_agent.knowledge.ingest import IngestionService
 from cv_agent.knowledge import ingest as ingest_module
 from cv_agent.knowledge.git_store import LocalKnowledgeGit
 from cv_agent.knowledge.repository import KnowledgeRepository, resolve_directory_path
@@ -158,14 +157,6 @@ def _cleanup_upload(
                 path.write_bytes(previous)
         except OSError:
             pass
-
-
-def _is_relative_to(path: Path, root: Path) -> bool:
-    try:
-        path.relative_to(root)
-    except ValueError:
-        return False
-    return True
 
 
 async def upload_document_payload(
@@ -370,38 +361,6 @@ def build_admin_router(
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid bearer token")
 
     router = APIRouter(dependencies=[Depends(require_admin_key)])
-    @router.post("/admin/ingest")
-    def ingest(request: IngestRequest) -> dict[str, object]:
-        try:
-            requested = Path(request.path).absolute()
-            resolve_directory_path(requested.parent)
-            path = requested.resolve()
-            path.relative_to(paths.root.resolve())
-        except (OSError, ValueError) as exc:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="data storage is unavailable",
-            ) from exc
-        allowed_roots = (paths.documents.resolve(), paths.staging.resolve())
-        allowed_root = next((root for root in allowed_roots if _is_relative_to(path, root)), None)
-        if allowed_root is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="path must be within the mounted data directory",
-            )
-        results = (
-            ingestion.ingest_directory(path)
-            if path.is_dir()
-            else [ingestion.ingest_file(path, document_id_for_path(path, allowed_root))]
-        )
-        commit = git_store.commit("Ingest legacy document")
-        return {
-            "status": "ok",
-            "count": len(results),
-            "sources": [str(result.source_page) for result in results],
-            "revision": {"commit": commit},
-        }
-
     @router.post("/admin/documents")
     async def upload_document(file: UploadFile = File(...)) -> dict[str, object]:
         return await upload_document_payload(settings, paths, git_store, ingestion, file, document_service)
