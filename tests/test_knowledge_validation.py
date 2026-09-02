@@ -248,6 +248,45 @@ def test_validation_closes_directory_descriptors_after_each_subtree(
     assert max_live_directories <= 3
 
 
+def test_validation_bounds_scandir_consumption_before_sorting(tmp_path: Path, monkeypatch):
+    (tmp_path / "knowledge").mkdir()
+    original_scandir = validation_module.os.scandir
+    scans = 0
+
+    class FakeEntry:
+        def __init__(self, name: str):
+            self.name = name
+
+        def stat(self, *, follow_symlinks):
+            pytest.fail("entry beyond budget must not be stat'ed")
+
+    class BoundedScanner:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def __iter__(self):
+            yield FakeEntry("candidate-1")
+            yield FakeEntry("candidate-2")
+            pytest.fail("scanner consumed past budget + 1")
+
+    def bounded_scandir(directory_fd):
+        nonlocal scans
+        if isinstance(directory_fd, int):
+            scans += 1
+            if scans == 2:
+                return BoundedScanner()
+        return original_scandir(directory_fd)
+
+    monkeypatch.setattr(validation_module.os, "scandir", bounded_scandir)
+    monkeypatch.setattr(validation_module, "MAX_VALIDATION_ENTRIES", 2)
+
+    with pytest.raises(KnowledgeValidationError, match="resource"):
+        validate_knowledge(tmp_path)
+
+
 def test_validation_rejects_markdown_above_byte_limit_before_parsing(tmp_path: Path, monkeypatch):
     _write_page(
         tmp_path,

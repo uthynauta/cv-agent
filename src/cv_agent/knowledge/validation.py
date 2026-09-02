@@ -115,18 +115,23 @@ def _read_directory(
     pages: list[_Page],
     budget: _ValidationBudget,
 ) -> None:
+    entries: list[os.DirEntry[str]] = []
     try:
         with os.scandir(directory_fd) as scanner:
-            entries = sorted(scanner, key=lambda entry: entry.name)
+            for entry in scanner:
+                relative_parts = prefix + (entry.name,)
+                relative = _relative(relative_parts)
+                _validate_path_limits(relative)
+                budget.entries += 1
+                if budget.entries > MAX_VALIDATION_ENTRIES:
+                    _fail(relative, "resource", "entry limit exceeded")
+                entries.append(entry)
+            entries.sort(key=lambda entry: entry.name)
     except OSError:
         _fail(_relative(prefix), "path", "cannot be inspected")
     for entry in entries:
         relative_parts = prefix + (entry.name,)
         relative = _relative(relative_parts)
-        _validate_path_limits(relative)
-        budget.entries += 1
-        if budget.entries > MAX_VALIDATION_ENTRIES:
-            _fail(relative, "resource", "entry limit exceeded")
         try:
             mode = entry.stat(follow_symlinks=False).st_mode
         except OSError:
