@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from pathlib import Path
 import re
 import stat
@@ -18,6 +19,7 @@ _SAFE_OPERATIONS = frozenset(
         "for-each-ref",
         "fsck",
         "init",
+        "log",
         "ls-files",
         "ls-tree",
         "remote",
@@ -34,6 +36,14 @@ _SAFE_OPERATIONS = frozenset(
 _ALLOWED_PATH_PREFIXES = ("sources/", "knowledge/")
 _REGULAR_FILE_MODES = frozenset({"100644", "100755"})
 _FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
+
+
+@dataclass(frozen=True)
+class Revision:
+    commit: str
+    authored_at: str
+    subject: str
+    changed_paths: tuple[str, ...]
 
 
 class GitStoreError(RuntimeError):
@@ -249,18 +259,26 @@ class LocalKnowledgeGit:
                 raise GitStoreError("Git tree contains invalid entries") from None
             self._validate_file_entry(path, mode, object_type)
 
-    def _validate_file_entry(self, path: str, mode: str, object_type: str) -> None:
+    def _validate_file_entry(
+        self, path: str, mode: str, object_type: str, object_id: str | None = None
+    ) -> None:
         if (
             not self._is_allowed_path(path)
             or not path.lower().endswith(".md")
             or mode not in _REGULAR_FILE_MODES
             or object_type != "blob"
+            or (object_id is not None and _FULL_SHA.fullmatch(object_id) is None)
         ):
             raise GitStoreError("Git repository contains non-Markdown or out-of-scope paths")
 
     @staticmethod
     def _is_allowed_path(path: str) -> bool:
-        return path.startswith(_ALLOWED_PATH_PREFIXES)
+        if not isinstance(path, str) or "\x00" in path or "\\" in path:
+            return False
+        if not path.startswith(_ALLOWED_PATH_PREFIXES):
+            return False
+        parts = path.split("/")
+        return all(part not in {"", ".", ".."} for part in parts)
 
     def _validate_scope_filesystem(self) -> None:
         directories = [self.root / scope for scope in ("sources", "knowledge")]
@@ -347,6 +365,112 @@ class LocalKnowledgeGit:
                 raise GitStoreError("Git commit contains non-Markdown or out-of-scope paths")
             paths.append(path)
         return tuple(sorted(set(paths)))
+
+    def history(self, limit: int = 20) -> list[Revision]:
+        """Return bounded local history, newest revision first."""
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit < 0:
+            raise GitStoreError("Git history limit is invalid")
+        if limit == 0:
+            return []
+        count = min(limit, 100)
+        listed = self._run("rev-list", f"--max-count={count}", "HEAD", check=False)
+        if listed.returncode:
+            if listed.returncode == 128 and not self.head():
+                return []
+            raise self._error("rev-list")
+        revisions: list[Revision] = []
+        for commit in listed.stdout.splitlines():
+            if not _FULL_SHA.fullmatch(commit):
+                raise GitStoreError("Git history contains an invalid commit")
+            metadata = self._run(
+                "log", "-1", "--format=%H%x00%aI%x00%s", commit
+            ).stdout.rstrip("\n")
+            fields = metadata.split("\0")
+            if len(fields) != 3 or fields[0] != commit:
+                raise GitStoreError("Git history metadata is invalid")
+            revisions.append(Revision(commit, fields[1], fields[2], self.changed_paths(commit)))
+        return revisions
+
+    def contains_commit(self, commit: str) -> bool:
+        self._require_full_sha(commit, "Git commit ID")
+        verified = self._run("rev-parse", "--verify", f"{commit}^{{commit}}", check=False)
+        return verified.returncode == 0 and verified.stdout.strip() == commit
+
+    def checkout_tree(self, commit: str, destination: Path) -> None:
+        """Materialize a validated commit tree into a new confined directory."""
+        self._require_full_sha(commit, "Git checkout commit ID")
+        if not self.contains_commit(commit):
+            raise GitStoreError("Git checkout commit is invalid")
+        entries = self._tree_entries(commit)
+        target = self._safe_checkout_destination(destination)
+        try:
+            for mode, object_id, path in entries:
+                blob = self._run("cat-file", "blob", object_id).stdout
+                output = target / Path(path)
+                output.parent.mkdir(parents=True, exist_ok=True)
+                descriptor = os.open(
+                    output,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                    0o600,
+                )
+                try:
+                    os.fchmod(descriptor, 0o600)
+                    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                        descriptor = -1
+                        handle.write(blob)
+                finally:
+                    if descriptor >= 0:
+                        os.close(descriptor)
+            for scope in (target / "sources", target / "knowledge"):
+                scope.mkdir(exist_ok=True)
+        except (OSError, UnicodeError):
+            raise GitStoreError("Git checkout tree could not be materialized") from None
+
+    def _tree_entries(self, commit: str) -> list[tuple[str, str, str]]:
+        output = self._run("ls-tree", "-r", "-z", commit).stdout
+        entries: list[tuple[str, str, str]] = []
+        for record in output.split("\0"):
+            if not record:
+                continue
+            try:
+                metadata, path = record.split("\t", 1)
+                mode, object_type, object_id = metadata.split(" ", 2)
+            except ValueError:
+                raise GitStoreError("Git tree contains invalid entries") from None
+            self._validate_file_entry(path, mode, object_type, object_id)
+            entries.append((mode, object_id, path))
+        return entries
+
+    @staticmethod
+    def _require_full_sha(commit: str, label: str) -> None:
+        if not isinstance(commit, str) or _FULL_SHA.fullmatch(commit) is None:
+            raise GitStoreError(f"{label} requires a full lowercase commit ID")
+
+    def _safe_checkout_destination(self, destination: Path) -> Path:
+        if not isinstance(destination, Path):
+            destination = Path(destination)
+        if not destination.is_absolute():
+            raise GitStoreError("Git checkout destination must be absolute")
+        base = self.root.parent.absolute()
+        target = destination.absolute()
+        try:
+            relative = target.relative_to(base)
+        except ValueError:
+            raise GitStoreError("Git checkout destination is outside the data store") from None
+        if not relative.parts or target == self.root.absolute():
+            raise GitStoreError("Git checkout destination is not isolated")
+        current = base
+        for part in relative.parts:
+            current /= part
+            if current.is_symlink() or (current.exists() and not current.is_dir()):
+                raise GitStoreError("Git checkout destination uses an unsafe path")
+        try:
+            target.mkdir(parents=True, exist_ok=False)
+        except FileExistsError:
+            raise GitStoreError("Git checkout destination must be new") from None
+        except OSError:
+            raise GitStoreError("Git checkout destination is unavailable") from None
+        return target
 
     def restore_head(self, expected_current: str, prior: str) -> None:
         """Atomically restore a transaction's prior commit and Markdown tree."""
