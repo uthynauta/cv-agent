@@ -20,6 +20,7 @@ _SAFE_OPERATIONS = frozenset(
         "fsck",
         "init",
         "log",
+        "merge-base",
         "ls-files",
         "ls-tree",
         "remote",
@@ -302,7 +303,7 @@ class LocalKnowledgeGit:
                 elif not stat.S_ISREG(mode) or not entry.name.lower().endswith(".md"):
                     raise GitStoreError("Knowledge scopes contain non-Markdown files")
 
-    def commit(self, message: str) -> str:
+    def commit(self, message: str, *, allow_empty: bool = False) -> str:
         self._validate_repository_state(self.root / ".git")
         self._run("reset", "--")
         for scope in ("sources", "knowledge"):
@@ -318,12 +319,15 @@ class LocalKnowledgeGit:
             self._run("add", "--all", "--force", "--", "sources", "knowledge")
             self._validate_index_entries(self._run("ls-files", "--stage", "-z").stdout)
             staged = self._run("diff", "--cached", "--quiet", check=False)
-            if staged.returncode == 0:
+            if staged.returncode == 0 and not allow_empty:
                 return self.head()
-            if staged.returncode != 1:
+            if staged.returncode not in (0, 1):
                 raise self._error("diff")
 
-            self._run("commit", "--message", message)
+            args = ["commit", "--message", message]
+            if allow_empty:
+                args.insert(1, "--allow-empty")
+            self._run(*args)
             return self._run("rev-parse", "HEAD").stdout.strip()
         except GitStoreError:
             self._run("reset", "--", check=False)
@@ -394,7 +398,17 @@ class LocalKnowledgeGit:
     def contains_commit(self, commit: str) -> bool:
         self._require_full_sha(commit, "Git commit ID")
         verified = self._run("rev-parse", "--verify", f"{commit}^{{commit}}", check=False)
-        return verified.returncode == 0 and verified.stdout.strip() == commit
+        if verified.returncode != 0 or verified.stdout.strip() != commit:
+            return False
+        head = self.head()
+        if not head:
+            return False
+        reachable = self._run("merge-base", "--is-ancestor", commit, head, check=False)
+        if reachable.returncode == 0:
+            return True
+        if reachable.returncode == 1:
+            return False
+        raise self._error("merge-base")
 
     def checkout_tree(self, commit: str, destination: Path) -> None:
         """Materialize a validated commit tree into a new confined directory."""

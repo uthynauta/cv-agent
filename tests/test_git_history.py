@@ -94,6 +94,18 @@ def test_checkout_tree_rejects_malicious_tree_paths(tmp_path: Path, monkeypatch:
         store.checkout_tree(commit, tmp_path / "data" / "staging" / "bad")
 
 
+def test_history_operations_reject_unreachable_dangling_commit(tmp_path: Path):
+    store = make_store(tmp_path)
+    first = commit_page(store, "first.md", "first", "first")
+    second = commit_page(store, "second.md", "second", "second")
+    store.restore_head(second, first)
+
+    assert store.head() == first
+    assert not store.contains_commit(second)
+    with pytest.raises(GitStoreError):
+        store.checkout_tree(second, tmp_path / "data" / "staging" / "dangling")
+
+
 def test_service_history_delegates_to_local_git(document_service: DocumentService):
     first = document_service.add("candidate.md", b"Python")
     second = document_service.replace(first.document_id, "candidate.md", b"Rust")
@@ -170,3 +182,24 @@ def test_rollback_lock_contention_does_not_mutate(document_service: DocumentServ
             document_service.rollback(added.commit, confirmed=True)
 
     assert document_service.git.head() == added.commit
+
+
+def test_rollback_current_head_creates_distinct_empty_audit_commit(document_service: DocumentService):
+    added = document_service.add("candidate.md", b"Python")
+
+    rolled_back = document_service.rollback(added.commit, confirmed=True)
+
+    assert rolled_back.commit != added.commit
+    assert rolled_back.changed_paths == ()
+    assert document_service.history(1)[0].commit == rolled_back.commit
+    assert document_service.history(1)[0].subject == f"Rollback knowledge to {added.commit[:8]}"
+
+
+def test_rollback_rejects_dangling_commit(document_service: DocumentService):
+    first = document_service.add("first.md", b"Python")
+    second = document_service.add("second.md", b"Rust")
+    document_service.git.restore_head(second.commit, first.commit)
+
+    with pytest.raises(DocumentMutationError):
+        document_service.rollback(second.commit, confirmed=True)
+    assert document_service.git.head() == first.commit

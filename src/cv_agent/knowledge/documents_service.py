@@ -238,10 +238,13 @@ class DocumentService:
                         self._restore_directory(self.repository.root / "sources", scopes_backup / "sources")
                         raise
                     replaced = True
-                    commit = self.git.commit(
-                        candidate.commit_message
-                        or f"{operation.title()} document {result_id or 'knowledge'} operation {operation_id}"
+                    message = candidate.commit_message or (
+                        f"{operation.title()} document {result_id or 'knowledge'} operation {operation_id}"
                     )
+                    if candidate.commit_message is not None:
+                        commit = self.git.commit(message, allow_empty=True)
+                    else:
+                        commit = self.git.commit(message)
                     changed = () if commit == prior_head else self.git.changed_paths(commit)
 
                     documents_backup = root / "documents-backup"
