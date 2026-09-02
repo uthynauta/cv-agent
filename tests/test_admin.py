@@ -124,6 +124,103 @@ def test_admin_documents_upload_supported_formats_use_document_service(
     assert list((tmp_path / "documents").glob(f"{document_id}.*"))
 
 
+def test_admin_pdf_upload_keeps_original_outside_markdown_git(tmp_path, monkeypatch):
+    settings = mounted_settings(tmp_path, ingestion_mode="deterministic", admin_upload_max_bytes=1024)
+    app = create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
+
+    class Extracted:
+        kind = "pdf"
+        needs_ocr = False
+        text = "Synthetic searchable PDF profile"
+        sha256 = "a" * 64
+
+    monkeypatch.setattr("cv_agent.knowledge.ingest.extract_source", lambda path: Extracted())
+    response = TestClient(app).post(
+        "/admin/documents",
+        headers={"Authorization": "Bearer admin-secret"},
+        files={"file": ("candidate.pdf", b"synthetic pdf", "application/pdf")},
+    )
+
+    assert response.status_code == 200
+    document_id = response.json()["document"]["document_id"]
+    original = next((tmp_path / "documents").glob(f"{document_id}.pdf"))
+    assert original.is_file()
+    tracked = app.state.git_store.tracked_paths()
+    assert tracked
+    assert all(path.startswith(("sources/", "knowledge/")) and path.endswith(".md") for path in tracked)
+
+
+def test_admin_partial_original_write_is_compensated(tmp_path, monkeypatch):
+    settings = mounted_settings(tmp_path, admin_upload_max_bytes=1024)
+    app = create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
+    paths = app.state.data_paths
+
+    def partial_write(path, data):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data[:2])
+        raise OSError("simulated document write failure")
+
+    monkeypatch.setattr(admin_module.DocumentService, "_write_exclusive", staticmethod(partial_write))
+    response = TestClient(app).post(
+        "/admin/documents",
+        headers={"Authorization": "Bearer admin-secret"},
+        files={"file": ("candidate.md", b"candidate", "text/markdown")},
+    )
+
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert detail.startswith("document mutation failed; operation ")
+    assert str(tmp_path) not in response.text
+    assert app.state.git_store.head() == ""
+    assert [path for path in paths.documents.iterdir() if path.name != "quarantine"] == []
+    assert list(paths.sources.iterdir()) == []
+    assert list(paths.staging.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    ("filename", "payload"),
+    [("broken.md", b"bad\xff"), ("broken.tex", b"bad\xff"), ("broken.pdf", b"not a PDF")],
+)
+def test_admin_documents_upload_maps_malformed_files_to_422(tmp_path, filename, payload):
+    settings = mounted_settings(tmp_path, admin_upload_max_bytes=1024)
+    response = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")).post(
+        "/admin/documents",
+        headers={"Authorization": "Bearer admin-secret"},
+        files={"file": (filename, payload, "application/octet-stream")},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] in {"document text is invalid", "document PDF is invalid"}
+
+
+def test_admin_documents_failure_does_not_change_live_state(tmp_path, monkeypatch):
+    settings = mounted_settings(tmp_path, admin_upload_max_bytes=1024)
+    app = create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
+    paths = app.state.data_paths
+    prior_head = app.state.git_store.head()
+
+    monkeypatch.setattr(
+        admin_module.DocumentService,
+        "add",
+        lambda self, original_filename, data, media_type=None: (_ for _ in ()).throw(
+            DocumentMutationError("b" * 32, "backend failed")
+        ),
+    )
+    response = TestClient(app).post(
+        "/admin/documents",
+        headers={"Authorization": "Bearer admin-secret"},
+        files={"file": ("candidate.md", b"candidate", "text/markdown")},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == f"document mutation failed; operation {'b' * 32}"
+    assert str(tmp_path) not in response.text
+    assert app.state.git_store.head() == prior_head
+    assert [path for path in paths.documents.iterdir() if path.name != "quarantine"] == []
+    assert list(paths.sources.iterdir()) == []
+    assert list(paths.staging.iterdir()) == []
+
+
 def test_admin_upload_does_not_bypass_document_service_when_ingestion_is_patched(
     tmp_path, monkeypatch
 ):

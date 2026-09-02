@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from hashlib import sha256
+import os
 import shutil
 from pathlib import Path
 import re
 from typing import Callable
 from uuid import uuid4
 
-from cv_agent.knowledge.extractors import ExtractedSource
+from cv_agent.knowledge.extractors import ExtractedSource, SourceExtractionError
 from cv_agent.knowledge.frontmatter import load_frontmatter
 from cv_agent.knowledge.git_store import LocalKnowledgeGit
 from cv_agent.knowledge.index import ActiveKnowledge, KnowledgeSnapshot
@@ -262,7 +263,10 @@ class DocumentService:
                     old.unlink()
         target = candidate.documents / f"{document_id}{Path(filename).suffix.lower()}"
         self._write_exclusive(target, data)
-        result = candidate.ingestion.ingest_file(target, document_id, filename)
+        try:
+            result = candidate.ingestion.ingest_file(target, document_id, filename)
+        except SourceExtractionError as exc:
+            raise DocumentValidationError(candidate.operation_id, str(exc)) from exc
         if result.needs_ocr:
             raise DocumentValidationError(candidate.operation_id, "document requires OCR")
         return document_id, sha256(data).hexdigest()
@@ -370,8 +374,19 @@ class DocumentService:
     @staticmethod
     def _write_exclusive(path: Path, data: bytes) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("xb") as handle:
-            handle.write(data)
+        descriptor = os.open(
+            path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+        )
+        try:
+            os.fchmod(descriptor, 0o600)
+            with os.fdopen(descriptor, "wb") as handle:
+                descriptor = -1
+                handle.write(data)
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
 
     @staticmethod
     def _swap_directory(candidate: Path, live: Path, backup: Path) -> None:

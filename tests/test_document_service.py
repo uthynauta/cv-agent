@@ -34,10 +34,12 @@ def document_service(tmp_path: Path) -> DocumentService:
 
 def test_add_and_replace_preserve_id_and_activate_snapshot(document_service: DocumentService):
     first = document_service.add("candidate.md", b"Python experience")
+    assert stat.S_IMODE(next(document_service.paths.documents.glob(f"{first.document_id}.*")).stat().st_mode) == 0o600
     second = document_service.replace(first.document_id, "candidate.md", b"Rust experience")
 
     assert second.document_id == first.document_id
     assert second.content_sha256 != first.content_sha256
+    assert stat.S_IMODE(next(document_service.paths.documents.glob(f"{second.document_id}.*")).stat().st_mode) == 0o600
     assert document_service.active.search("Rust")
     assert document_service.active.search("Python") == []
     assert all(
@@ -71,6 +73,17 @@ def test_add_rejects_documents_that_require_ocr(
 
     assert error.value.operation_id
     assert "OCR" in str(error.value)
+    assert document_service.list_documents() == []
+
+
+@pytest.mark.parametrize("filename,data", [("broken.md", b"bad\xff"), ("broken.tex", b"bad\xff"), ("broken.pdf", b"not a PDF")])
+def test_add_rejects_malformed_user_files_as_validation(
+    document_service: DocumentService, filename: str, data: bytes
+):
+    with pytest.raises(DocumentValidationError) as error:
+        document_service.add(filename, data)
+
+    assert error.value.operation_id
     assert document_service.list_documents() == []
 
 

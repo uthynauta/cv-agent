@@ -5,6 +5,7 @@ import re
 import unicodedata
 
 from pypdf import PdfReader
+from pypdf.errors import PdfReadError
 
 
 @dataclass(frozen=True)
@@ -16,16 +17,35 @@ class ExtractedSource:
     sha256: str
 
 
+class SourceExtractionError(ValueError):
+    """Raised when submitted source bytes cannot be decoded or parsed."""
+
+    def __init__(self, message: str) -> None:
+        bounded = str(message).replace("\n", " ").replace("\r", " ")[:120]
+        super().__init__(bounded)
+
+
 def extract_source(path: Path) -> ExtractedSource:
     suffix = path.suffix.lower()
     raw_bytes = path.read_bytes()
     digest = sha256(raw_bytes).hexdigest()
     if suffix == ".md":
-        return ExtractedSource(path, path.read_text(encoding="utf-8"), "markdown", False, digest)
+        try:
+            text = raw_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise SourceExtractionError("document text is invalid") from exc
+        return ExtractedSource(path, text, "markdown", False, digest)
     if suffix == ".tex":
-        return ExtractedSource(path, _clean_latex(path.read_text(encoding="utf-8")), "latex", False, digest)
+        try:
+            text = raw_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise SourceExtractionError("document text is invalid") from exc
+        return ExtractedSource(path, _clean_latex(text), "latex", False, digest)
     if suffix == ".pdf":
-        text = _extract_pdf_text(path)
+        try:
+            text = _extract_pdf_text(path)
+        except PdfReadError as exc:
+            raise SourceExtractionError("document PDF is invalid") from exc
         return ExtractedSource(path, text, "pdf", len(text.strip()) < 120, digest)
     raise ValueError(f"unsupported source extension: {suffix}")
 

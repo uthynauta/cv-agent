@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 import cv_agent.knowledge.extractors as extractors
-from cv_agent.knowledge.extractors import extract_source
+from cv_agent.knowledge.extractors import SourceExtractionError, extract_source
 
 
 def test_extract_markdown(tmp_path: Path):
@@ -14,6 +14,23 @@ def test_extract_markdown(tmp_path: Path):
     assert "Experiencia con agentes" in result.text
     assert result.needs_ocr is False
     assert len(result.sha256) == 64
+
+
+@pytest.mark.parametrize("suffix", [".md", ".tex"])
+def test_extract_rejects_invalid_utf8_text(tmp_path: Path, suffix: str):
+    path = tmp_path / f"profile{suffix}"
+    path.write_bytes(b"valid prefix\xff")
+
+    with pytest.raises(SourceExtractionError, match="text is invalid"):
+        extract_source(path)
+
+
+def test_extract_rejects_malformed_pdf(tmp_path: Path):
+    path = tmp_path / "profile.pdf"
+    path.write_bytes(b"not a PDF")
+
+    with pytest.raises(SourceExtractionError, match="PDF is invalid"):
+        extract_source(path)
 
 
 def test_extract_latex_strips_common_commands(tmp_path: Path):
