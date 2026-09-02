@@ -1,4 +1,5 @@
 from pathlib import Path
+import stat
 
 import pytest
 
@@ -195,6 +196,7 @@ def test_partial_original_activation_restores_prior_state(
     prior_head = document_service.git.head()
     original = next(document_service.paths.documents.glob(f"{added.document_id}.*"))
     prior_bytes = original.read_bytes()
+    original.chmod(0o640)
 
     def partially_activate(candidate: Path, backup: Path) -> None:
         document_service.paths.documents.rename(backup)
@@ -209,6 +211,7 @@ def test_partial_original_activation_restores_prior_state(
     assert document_service.git.head() == prior_head
     assert original.read_bytes() == prior_bytes
     assert not (document_service.paths.documents / "partial.md").exists()
+    assert stat.S_IMODE(original.stat().st_mode) == 0o640
     assert document_service.active.search("Python")
     assert document_service.active.search("Rust") == []
 
@@ -223,14 +226,25 @@ def test_compensation_failure_is_explicit_and_snapshot_still_restored(
     document_service: DocumentService, monkeypatch: pytest.MonkeyPatch
 ):
     added = document_service.add("candidate.md", b"Python")
+    prior_head = document_service.git.head()
     prior_snapshot = document_service.active._snapshot
+    restore_heads: list[tuple[str, str]] = []
     monkeypatch.setattr(document_service.active, "reload", lambda repository: (_ for _ in ()).throw(ValueError("activation")))
     monkeypatch.setattr(document_service, "_restore_directory_from_backup", lambda live, backup: (_ for _ in ()).throw(OSError("restore")))
+    original_restore_head = document_service.git.restore_head
+
+    def observe_restore_head(expected_current: str, prior: str) -> None:
+        restore_heads.append((expected_current, prior))
+        original_restore_head(expected_current, prior)
+
+    monkeypatch.setattr(document_service.git, "restore_head", observe_restore_head)
 
     with pytest.raises(DocumentCompensationError) as error:
         document_service.replace(added.document_id, "candidate.md", b"Rust")
 
     assert error.value.operation_id
+    assert restore_heads and restore_heads[0][1] == prior_head
+    assert document_service.git.head() == prior_head
     assert document_service.active._snapshot is prior_snapshot
 
 
@@ -241,6 +255,7 @@ def test_failure_before_original_activation_keeps_original_directory_untouched(
     original_directory = document_service.paths.documents
     original = next(original_directory.glob(f"{added.document_id}.*"))
     prior_bytes = original.read_bytes()
+    original.chmod(0o640)
     restore_calls: list[tuple[Path, Path]] = []
 
     def record_restore(live: Path, backup: Path) -> None:
@@ -252,6 +267,7 @@ def test_failure_before_original_activation_keeps_original_directory_untouched(
     with pytest.raises(DocumentMutationError):
         document_service.replace(added.document_id, "candidate.md", b"Rust")
 
-    assert restore_calls == []
+    assert all(live != document_service.paths.documents for live, _backup in restore_calls)
     assert document_service.paths.documents == original_directory
     assert original.read_bytes() == prior_bytes
+    assert stat.S_IMODE(original.stat().st_mode) == 0o640

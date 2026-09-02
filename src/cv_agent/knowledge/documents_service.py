@@ -315,33 +315,43 @@ class DocumentService:
         scopes_backup: Path | None, documents_backup: Path | None, replaced: bool,
         documents_activation_attempted: bool, originals_backup: Path
     ) -> None:
-        try:
-            if documents_activation_attempted:
-                self._restore_directory_from_backup(self.paths.documents, originals_backup)
-            if scopes_backup is not None and replaced:
-                for scope in ("sources", "knowledge"):
-                    live = self.repository.root / scope
-                    backup = scopes_backup / scope
-                    if live.exists():
-                        shutil.rmtree(live, ignore_errors=True)
-                    if backup.exists():
-                        backup.rename(live)
+        failures: list[Exception] = []
+
+        def attempt(action: Callable[[], None]) -> None:
+            try:
+                action()
+            except Exception as exc:
+                failures.append(exc)
+
+        if documents_activation_attempted:
+            attempt(lambda: self._restore_documents(documents_backup, originals_backup))
+        if scopes_backup is not None and replaced:
+            for scope in ("sources", "knowledge"):
+                live = self.repository.root / scope
+                backup = scopes_backup / scope
+                attempt(lambda live=live, backup=backup: self._restore_scope(live, backup))
+
+        def restore_git() -> None:
             current = self.git.head()
             if current and current != prior_head:
                 self.git.restore_head(current, prior_head)
             elif current == prior_head:
                 self.git._run("reset", "--", check=False)
-        except Exception as exc:
-            failure: Exception | None = exc
+
+        attempt(restore_git)
+        attempt(lambda: self._restore_snapshot(prior_snapshot))
+        if failures:
+            raise DocumentCompensationError(operation_id) from failures[0]
+
+    def _restore_documents(self, documents_backup: Path | None, originals_backup: Path) -> None:
+        if documents_backup is not None and documents_backup.is_dir() and any(documents_backup.iterdir()):
+            self._restore_directory_from_backup(self.paths.documents, documents_backup)
         else:
-            failure = None
-        finally:
-            try:
-                self._restore_snapshot(prior_snapshot)
-            except Exception as exc:
-                failure = failure or exc
-        if failure is not None:
-            raise DocumentCompensationError(operation_id) from failure
+            self._restore_directory_from_backup(self.paths.documents, originals_backup)
+
+    def _restore_scope(self, live: Path, backup: Path) -> None:
+        if backup.exists():
+            self._restore_directory_from_backup(live, backup)
 
     def _snapshot(self) -> KnowledgeSnapshot:
         return self.active._snapshot
@@ -391,16 +401,22 @@ class DocumentService:
                 raise ValueError("staged tree contains a symlink")
             if entry.is_dir():
                 cls._copy_tree(entry, target)
+                shutil.copystat(entry, target, follow_symlinks=False)
             elif entry.is_file():
-                shutil.copyfile(entry, target)
+                shutil.copy2(entry, target)
             else:
                 raise ValueError("staged tree contains a special file")
 
     @classmethod
     def _restore_directory_from_backup(cls, live: Path, backup: Path) -> None:
-        if live.exists():
-            shutil.rmtree(live, ignore_errors=True)
-        cls._copy_tree(backup, live)
+        if backup.is_symlink() or live.is_symlink():
+            raise ValueError("document directory uses a symlink")
+        if not backup.is_dir():
+            raise ValueError("document backup is not a directory")
+        failed_live = backup.parent / f"{backup.name}-failed-live"
+        if failed_live.exists() or failed_live.is_symlink():
+            raise ValueError("document backup restore path already exists")
+        cls._swap_directory(backup, live, failed_live)
 
 def _extracted_text(body: str) -> str:
     marker = "## Extracted Text"
