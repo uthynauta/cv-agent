@@ -173,3 +173,52 @@ def test_lock_final_open_survives_parent_ancestor_swap(tmp_path: Path, monkeypat
 
     assert (tmp_path / "locks.real" / "mutation.lock").is_file()
     assert not (outside / "mutation.lock").exists()
+
+
+def test_lock_open_permission_error_is_not_contention(tmp_path: Path, monkeypatch):
+    path = tmp_path / "locks" / "mutation.lock"
+    original_open = locking_module.os.open
+
+    def deny_final(name, flags, mode=0o777, *, dir_fd=None):
+        if name == path.name and dir_fd is not None:
+            raise PermissionError(13, "permission denied")
+        if mode == 0o777:
+            return original_open(name, flags, dir_fd=dir_fd)
+        return original_open(name, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(locking_module.os, "open", deny_final)
+    with pytest.raises(locking_module.MutationLockError) as error:
+        with MutationLock(path):
+            pass
+    assert not isinstance(error.value, MutationBusyError)
+
+
+def test_lock_flock_permission_error_is_not_contention(tmp_path: Path, monkeypatch):
+    path = tmp_path / "locks" / "mutation.lock"
+    original_flock = locking_module.fcntl.flock
+
+    def deny_exclusive(fd: int, operation: int) -> None:
+        if operation & locking_module.fcntl.LOCK_EX:
+            raise PermissionError(13, "permission denied")
+        original_flock(fd, operation)
+
+    monkeypatch.setattr(locking_module.fcntl, "flock", deny_exclusive)
+    with pytest.raises(locking_module.MutationLockError) as error:
+        with MutationLock(path):
+            pass
+    assert not isinstance(error.value, MutationBusyError)
+
+
+def test_lock_fdopen_blocking_error_is_not_contention(tmp_path: Path, monkeypatch):
+    path = tmp_path / "locks" / "mutation.lock"
+    original_fdopen = locking_module.os.fdopen
+
+    def fail_fdopen(*args, **kwargs):
+        raise BlockingIOError("injected descriptor failure")
+
+    monkeypatch.setattr(locking_module.os, "fdopen", fail_fdopen)
+    with pytest.raises(locking_module.MutationLockError) as error:
+        with MutationLock(path):
+            pass
+    assert not isinstance(error.value, MutationBusyError)
+    monkeypatch.setattr(locking_module.os, "fdopen", original_fdopen)

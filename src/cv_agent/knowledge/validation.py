@@ -23,6 +23,13 @@ _DOCUMENT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 _EXTRACTED_HEADING_RE = re.compile(r"(?m)^[ \t]*##[ \t]+Extracted Text[ \t]*$")
 _SOURCE_LINK_RE = re.compile(r"\[\[([^\]\r\n]+)\]\]")
+_HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+_HTML_TAG_RE = re.compile(
+    r"</?(?:a|abbr|article|aside|b|blockquote|br|code|div|em|figcaption|figure|footer|"
+    r"h[1-6]|header|hr|i|li|main|nav|ol|p|pre|section|small|span|strong|sub|sup|"
+    r"table|tbody|td|th|thead|tr|ul)(?:\s+[^<>]*)?/?>",
+    re.IGNORECASE,
+)
 _PLACEHOLDERS = {
     "no extracted text",
     "no selectable text extracted",
@@ -36,6 +43,12 @@ _PLACEHOLDERS = {
     "todo",
     "unknown",
 }
+MAX_VALIDATION_ENTRIES = 10_000
+MAX_VALIDATION_PAGES = 8_000
+MAX_VALIDATION_DIRECTORIES = 2_000
+MAX_MARKDOWN_BYTES = 16 * 1024 * 1024
+MAX_TOTAL_MARKDOWN_BYTES = 128 * 1024 * 1024
+_READ_CHUNK_BYTES = 64 * 1024
 
 
 class KnowledgeValidationError(ValueError):
@@ -47,6 +60,14 @@ class _Page:
     relative_path: str
     metadata: dict[str, Any]
     body: str
+
+
+@dataclass
+class _ValidationBudget:
+    entries: int = 0
+    pages: int = 0
+    directories: int = 0
+    markdown_bytes: int = 0
 
 
 def validate_knowledge(root: str | Path) -> None:
@@ -77,57 +98,78 @@ def validate_knowledge(root: str | Path) -> None:
 
 def _read_pages(root_fd: int) -> list[_Page]:
     pages: list[_Page] = []
-    pending: list[tuple[int, tuple[str, ...]]] = [(root_fd, ())]
-    open_fds = {root_fd}
+    budget = _ValidationBudget()
     try:
-        while pending:
-            directory_fd, prefix = pending.pop()
-            try:
-                with os.scandir(directory_fd) as scanner:
-                    entries = sorted(scanner, key=lambda entry: entry.name)
-            except OSError:
-                _fail(_relative(prefix), "path", "cannot be inspected")
-            for entry in entries:
-                relative_parts = prefix + (entry.name,)
-                relative = _relative(relative_parts)
-                _validate_path_limits(relative)
-                try:
-                    mode = entry.stat(follow_symlinks=False).st_mode
-                except OSError:
-                    _fail(relative, "path", "cannot be inspected")
-                if stat.S_ISLNK(mode):
-                    _fail(relative, "path", "uses a symlink")
-                if stat.S_ISDIR(mode):
-                    if len(relative_parts) == 1 and entry.name not in {"sources", "knowledge"}:
-                        _fail(relative, "path", "is outside the knowledge scopes")
-                    if relative_parts[0] not in {"sources", "knowledge"}:
-                        _fail(relative, "path", "is outside the knowledge scopes")
-                    child_fd = _open_directory_at(directory_fd, entry.name, relative)
-                    open_fds.add(child_fd)
-                    pending.append((child_fd, relative_parts))
-                    continue
-                if not stat.S_ISREG(mode):
-                    _fail(relative, "path", "is not a regular file")
-                if relative_parts[0] not in {"sources", "knowledge"}:
-                    _fail(relative, "path", "is outside the knowledge scopes")
-                if not entry.name.endswith(".md"):
-                    _fail(relative, "path", "must be Markdown")
-                if relative_parts[0] == "sources" and len(relative_parts) != 2:
-                    _fail(relative, "path", "source pages must be direct children")
-                try:
-                    metadata, body = _load_page(directory_fd, entry.name, relative)
-                except KnowledgeValidationError:
-                    raise
-                except Exception:
-                    _fail(relative, "frontmatter", "is invalid")
-                pages.append(_Page(relative, metadata, body))
+        _read_directory(root_fd, (), pages, budget)
     finally:
-        for descriptor in open_fds:
-            try:
-                os.close(descriptor)
-            except OSError:
-                pass
+        try:
+            os.close(root_fd)
+        except OSError:
+            pass
     return pages
+
+
+def _read_directory(
+    directory_fd: int,
+    prefix: tuple[str, ...],
+    pages: list[_Page],
+    budget: _ValidationBudget,
+) -> None:
+    try:
+        with os.scandir(directory_fd) as scanner:
+            entries = sorted(scanner, key=lambda entry: entry.name)
+    except OSError:
+        _fail(_relative(prefix), "path", "cannot be inspected")
+    for entry in entries:
+        relative_parts = prefix + (entry.name,)
+        relative = _relative(relative_parts)
+        _validate_path_limits(relative)
+        budget.entries += 1
+        if budget.entries > MAX_VALIDATION_ENTRIES:
+            _fail(relative, "resource", "entry limit exceeded")
+        try:
+            mode = entry.stat(follow_symlinks=False).st_mode
+        except OSError:
+            _fail(relative, "path", "cannot be inspected")
+        if stat.S_ISLNK(mode):
+            _fail(relative, "path", "uses a symlink")
+        if stat.S_ISDIR(mode):
+            if len(relative_parts) == 1 and entry.name not in {"sources", "knowledge"}:
+                _fail(relative, "path", "is outside the knowledge scopes")
+            if relative_parts[0] not in {"sources", "knowledge"}:
+                _fail(relative, "path", "is outside the knowledge scopes")
+            budget.directories += 1
+            if budget.directories > MAX_VALIDATION_DIRECTORIES:
+                _fail(relative, "resource", "directory limit exceeded")
+            child_fd = _open_directory_at(directory_fd, entry.name, relative)
+            try:
+                _read_directory(child_fd, relative_parts, pages, budget)
+            finally:
+                try:
+                    os.close(child_fd)
+                except OSError:
+                    pass
+            continue
+        if not stat.S_ISREG(mode):
+            _fail(relative, "path", "is not a regular file")
+        if relative_parts[0] not in {"sources", "knowledge"}:
+            _fail(relative, "path", "is outside the knowledge scopes")
+        if not entry.name.endswith(".md"):
+            _fail(relative, "path", "must be Markdown")
+        if relative_parts[0] == "sources" and len(relative_parts) != 2:
+            _fail(relative, "path", "source pages must be direct children")
+        budget.pages += 1
+        if budget.pages > MAX_VALIDATION_PAGES:
+            _fail(relative, "resource", "page limit exceeded")
+        raw_text = _load_page(directory_fd, entry.name, relative)
+        budget.markdown_bytes += len(raw_text)
+        if budget.markdown_bytes > MAX_TOTAL_MARKDOWN_BYTES:
+            _fail(relative, "resource", "total Markdown size exceeded")
+        try:
+            metadata, body = load_frontmatter(raw_text.decode("utf-8"))
+        except Exception:
+            _fail(relative, "frontmatter", "is invalid")
+        pages.append(_Page(relative, metadata, body))
 
 
 def _directory_flags() -> int:
@@ -170,7 +212,7 @@ def _open_directory_at(parent_fd: int, name: str, relative: str) -> int:
     return descriptor
 
 
-def _load_page(directory_fd: int, name: str, relative: str) -> tuple[dict[str, Any], str]:
+def _load_page(directory_fd: int, name: str, relative: str) -> bytes:
     flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
         descriptor = os.open(name, flags, dir_fd=directory_fd)
@@ -181,9 +223,15 @@ def _load_page(directory_fd: int, name: str, relative: str) -> tuple[dict[str, A
     try:
         if not stat.S_ISREG(os.fstat(descriptor).st_mode):
             _fail(relative, "path", "is not a regular file")
-        with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
+        with os.fdopen(descriptor, "rb") as handle:
             descriptor = -1
-            return load_frontmatter(handle.read())
+            data = bytearray()
+            while len(data) <= MAX_MARKDOWN_BYTES:
+                chunk = handle.read(min(_READ_CHUNK_BYTES, MAX_MARKDOWN_BYTES + 1 - len(data)))
+                if not chunk:
+                    return bytes(data)
+                data.extend(chunk)
+            _fail(relative, "resource", "Markdown size exceeded")
     finally:
         if descriptor >= 0:
             os.close(descriptor)
@@ -236,9 +284,13 @@ def _has_meaningful_extracted_text(body: str) -> bool:
     if heading is None:
         return False
     section = body[heading.end() :]
-    section = re.sub(r"<!--.*?-->", " ", section, flags=re.DOTALL)
-    section = re.sub(r"<[^>]*>", " ", section)
-    section = html.unescape(section)
+    for _ in range(3):
+        cleaned = _HTML_COMMENT_RE.sub(" ", section)
+        cleaned = _HTML_TAG_RE.sub(" ", cleaned)
+        decoded = html.unescape(cleaned)
+        section = decoded
+        if decoded == cleaned:
+            break
     lines = [line.strip() for line in section.splitlines() if line.strip()]
     lines = [line for line in lines if not re.match(r"^#{1,6}(?:\s|$)", line)]
     if not lines:

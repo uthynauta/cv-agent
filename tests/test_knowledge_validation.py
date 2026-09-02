@@ -190,6 +190,127 @@ def test_invalid_bytes_filename_has_bounded_utf8_safe_error(tmp_path: Path):
 
 
 @pytest.mark.parametrize(
+    ("attribute", "limit", "relative"),
+    [
+        ("MAX_VALIDATION_ENTRIES", 1, "sources/doc-123.md"),
+        ("MAX_VALIDATION_PAGES", 0, "sources/doc-123.md"),
+        ("MAX_VALIDATION_DIRECTORIES", 0, "sources"),
+    ],
+)
+def test_validation_enforces_monkeypatched_resource_limits(
+    tmp_path: Path, monkeypatch, attribute: str, limit: int, relative: str
+):
+    _write_page(
+        tmp_path,
+        "sources/doc-123.md",
+        _source_metadata(),
+        "## Extracted Text\n\nsource text",
+    )
+    monkeypatch.setattr(validation_module, attribute, limit)
+
+    with pytest.raises(KnowledgeValidationError, match="resource|path"):
+        validate_knowledge(tmp_path)
+
+
+def test_validation_closes_directory_descriptors_after_each_subtree(
+    tmp_path: Path, monkeypatch
+):
+    knowledge = tmp_path / "knowledge"
+    knowledge.mkdir()
+    for index in range(20):
+        (knowledge / f"section-{index}").mkdir()
+
+    original_open = validation_module.os.open
+    original_close = validation_module.os.close
+    live_directories: set[int] = set()
+    max_live_directories = 0
+
+    def tracked_open(path, flags, mode=0o777, *, dir_fd=None):
+        nonlocal max_live_directories
+        if mode == 0o777:
+            descriptor = original_open(path, flags, dir_fd=dir_fd)
+        else:
+            descriptor = original_open(path, flags, mode, dir_fd=dir_fd)
+        if flags & getattr(os, "O_DIRECTORY", 0):
+            live_directories.add(descriptor)
+            max_live_directories = max(max_live_directories, len(live_directories))
+        return descriptor
+
+    def tracked_close(descriptor: int) -> None:
+        live_directories.discard(descriptor)
+        original_close(descriptor)
+
+    monkeypatch.setattr(validation_module.os, "open", tracked_open)
+    monkeypatch.setattr(validation_module.os, "close", tracked_close)
+    validate_knowledge(tmp_path)
+
+    assert not live_directories
+    assert max_live_directories <= 3
+
+
+def test_validation_rejects_markdown_above_byte_limit_before_parsing(tmp_path: Path, monkeypatch):
+    _write_page(
+        tmp_path,
+        "sources/doc-123.md",
+        _source_metadata(),
+        "## Extracted Text\n\nsource text",
+    )
+    monkeypatch.setattr(validation_module, "MAX_MARKDOWN_BYTES", 32)
+
+    with pytest.raises(KnowledgeValidationError, match="resource"):
+        validate_knowledge(tmp_path)
+
+
+def test_validation_rejects_cumulative_markdown_byte_limit(tmp_path: Path, monkeypatch):
+    _write_page(
+        tmp_path,
+        "sources/first.md",
+        _source_metadata("first"),
+        "## Extracted Text\n\nfirst source",
+    )
+    _write_page(
+        tmp_path,
+        "sources/second.md",
+        _source_metadata("second"),
+        "## Extracted Text\n\nsecond source",
+    )
+    monkeypatch.setattr(validation_module, "MAX_TOTAL_MARKDOWN_BYTES", 100)
+
+    with pytest.raises(KnowledgeValidationError, match="resource"):
+        validate_knowledge(tmp_path)
+
+
+def test_validation_nested_entities_and_recognized_tags_follow_literal_text_rules(
+    tmp_path: Path,
+):
+    cases = [
+        ("&amp;nbsp;", False),
+        ("&amp;amp;nbsp;", False),
+        ("&lt;p&gt;&lt;/p&gt;", False),
+        ("&lt;p&gt;No text&lt;/p&gt;", False),
+        ("&lt;C++&gt;", True),
+        ("<p>Python</p>", True),
+    ]
+    for evidence, valid in cases:
+        source = tmp_path / "sources" / "doc-123.md"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text(
+            dump_frontmatter(
+                _source_metadata(), f"## Extracted Text\n\n{evidence}"
+            ),
+            encoding="utf-8",
+        )
+        try:
+            if valid:
+                assert validate_knowledge(tmp_path) is None
+            else:
+                with pytest.raises(KnowledgeValidationError, match="extracted_text"):
+                    validate_knowledge(tmp_path)
+        finally:
+            source.unlink()
+
+
+@pytest.mark.parametrize(
     ("metadata", "body", "field"),
     [
         ({"kind": "source", "content_sha256": "a" * 64}, "## Extracted Text\n\ntext", "document_id"),

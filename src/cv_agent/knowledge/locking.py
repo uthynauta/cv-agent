@@ -45,8 +45,6 @@ class MutationLock:
                 flags |= os.O_NOFOLLOW
             descriptor = os.open(self.path.name, flags, 0o600, dir_fd=parent_fd)
         except OSError as exc:
-            if exc.errno in {errno.EACCES, errno.EAGAIN}:
-                raise MutationBusyError("another knowledge mutation is running") from None
             if exc.errno == errno.ELOOP:
                 raise MutationLockError("mutation lock path uses a symlink") from None
             if exc.errno in {errno.EISDIR, errno.ENXIO}:
@@ -68,28 +66,29 @@ class MutationLock:
             mode = os.fstat(descriptor).st_mode
             if not stat.S_ISREG(mode):
                 raise MutationLockError("mutation lock must be a regular file")
+        except MutationLockError:
+            os.close(descriptor)
+            raise
+        except OSError as exc:
+            os.close(descriptor)
+            raise MutationLockError("mutation lock cannot be acquired") from None
+
+        try:
             handle = os.fdopen(descriptor, "a+", encoding="utf-8")
+        except OSError:
+            os.close(descriptor)
+            raise MutationLockError("mutation lock cannot be acquired") from None
+
+        try:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
-            if handle is not None:
-                handle.close()
-            else:
-                os.close(descriptor)
+            handle.close()
             raise MutationBusyError("another knowledge mutation is running") from exc
         except OSError as exc:
-            if handle is not None:
-                handle.close()
-            else:
-                os.close(descriptor)
-            if exc.errno in {errno.EACCES, errno.EAGAIN}:
+            handle.close()
+            if exc.errno in {errno.EAGAIN, errno.EWOULDBLOCK}:
                 raise MutationBusyError("another knowledge mutation is running") from None
             raise MutationLockError("mutation lock cannot be acquired") from None
-        except MutationLockError:
-            if handle is not None:
-                handle.close()
-            else:
-                os.close(descriptor)
-            raise
 
         self._handle = handle
         return self
