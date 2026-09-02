@@ -62,6 +62,21 @@ def test_ingest_file_writes_complete_versioned_source(
     assert (tmp_path / "knowledge" / "log.md").exists()
 
 
+def test_ingest_log_uses_original_filename_when_source_path_is_staged(tmp_path: Path):
+    source = tmp_path / "staging" / "operation" / "document.md"
+    source.parent.mkdir(parents=True)
+    source.write_text("source", encoding="utf-8")
+
+    settings = Settings(_env_file=None, ingestion_mode="deterministic")
+    IngestionService(KnowledgeRepository(tmp_path), settings).ingest_file(
+        source, "doc-123", "candidate.md"
+    )
+
+    log = (tmp_path / "knowledge" / "log.md").read_text(encoding="utf-8")
+    assert "Source: `candidate.md`" in log
+    assert str(source) not in log
+
+
 @pytest.mark.parametrize(
     "document_id",
     ["", ".", "..", "../escape", "/absolute", "nested/id", r"nested\\id", "has space", "ends.md", "bad\nvalue", "é"],

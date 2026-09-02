@@ -185,10 +185,10 @@ class DocumentService:
                 self._copy_tree(self.paths.documents, originals_backup)
                 self._copy_tree(originals_backup, candidate_docs)
                 candidate_repo = KnowledgeRepository(candidate_root)
-                candidate_ingestion = self.ingestion
-                original_repository = candidate_ingestion.repository
+                candidate_ingestion = IngestionService(
+                    candidate_repo, self.ingestion.settings, self.ingestion.text_client
+                )
                 try:
-                    candidate_ingestion.repository = candidate_repo
                     candidate = _Candidate(operation_id, root, candidate_repo, candidate_docs, candidate_ingestion)
                     result_id, digest = action(candidate)
                     self._validate_staged(candidate_root)
@@ -227,8 +227,6 @@ class DocumentService:
                         documents_backup, replaced, documents_activation_attempted, originals_backup,
                     )
                     raise DocumentMutationError(operation_id) from exc
-                finally:
-                    candidate_ingestion.repository = original_repository
             # The lock scope intentionally includes all compensation below.
         except MutationBusyError:
             raise
@@ -420,9 +418,11 @@ class DocumentService:
 
 def _extracted_text(body: str) -> str:
     marker = "## Extracted Text"
-    if marker not in body:
-        raise ValueError("source page is missing extracted text")
-    return body.split(marker, 1)[1].strip()
+    lines = body.splitlines()
+    for index, line in enumerate(lines):
+        if line.strip() == marker:
+            return "\n".join(lines[index + 1 :]).strip()
+    raise ValueError("source page is missing extracted text")
 
 
 def _kind_for_media_type(media_type: str) -> str:

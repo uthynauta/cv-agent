@@ -189,6 +189,46 @@ def test_rebuild_preserves_source_identity_and_text(document_service: DocumentSe
     assert body_after == body_before
 
 
+def test_mutation_uses_isolated_candidate_ingestion_service(
+    document_service: DocumentService, monkeypatch: pytest.MonkeyPatch
+):
+    original_ingest_file = IngestionService.ingest_file
+    original_repository = document_service.ingestion.repository
+    observed: list[IngestionService] = []
+
+    def observe_ingest(service, path, document_id, original_filename=None):
+        observed.append(service)
+        return original_ingest_file(service, path, document_id, original_filename)
+
+    monkeypatch.setattr(IngestionService, "ingest_file", observe_ingest)
+    document_service.add("candidate.md", b"Python experience")
+
+    assert observed
+    assert observed[0] is not document_service.ingestion
+    assert observed[0].repository is not original_repository
+    assert document_service.ingestion.repository is original_repository
+
+
+def test_rebuild_preserves_extracted_text_with_reserved_heading(document_service: DocumentService):
+    added = document_service.add("candidate.md", b"Intro\n## Extracted Text\nTail")
+
+    document_service.rebuild()
+
+    source = document_service.repository.root / "sources" / f"{added.document_id}.md"
+    assert "Intro\n## Extracted Text\nTail" in source.read_text(encoding="utf-8")
+
+
+def test_lifecycle_log_uses_logical_filename_not_staging_path(document_service: DocumentService):
+    added = document_service.add("candidate.md", b"Python experience")
+    document_service.rebuild()
+    log = (document_service.repository.root / "knowledge" / "log.md").read_text(encoding="utf-8")
+
+    assert "Source: `candidate.md`" in log
+    assert str(document_service.paths.root) not in log
+    assert str(document_service.paths.staging) not in log
+    assert added.operation_id not in log
+
+
 def test_partial_original_activation_restores_prior_state(
     document_service: DocumentService, monkeypatch: pytest.MonkeyPatch
 ):

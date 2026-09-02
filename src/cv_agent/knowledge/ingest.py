@@ -56,7 +56,7 @@ class IngestionService:
                         path, extracted, document_id, original_filename
                     )
                     generated_pages = ()
-                self._append_log(path, self._mode)
+                self._append_log(original_filename or path.name, self._mode)
                 self._write_index()
                 span.set_attribute("source.page", str(source_page))
                 INGEST_EVENTS.labels("success").inc()
@@ -84,7 +84,7 @@ class IngestionService:
                     source_path, extracted, document_id, original_filename
                 )
                 generated_pages = ()
-            self._append_log(source_path, self._mode)
+            self._append_log(original_filename or source_path.name, self._mode)
             self._write_index()
             return IngestResult(
                 document_id,
@@ -187,14 +187,14 @@ class IngestionService:
             results.append(self.ingest_file(path, document_id_for_path(path, scan_root)))
         return results
 
-    def _append_log(self, path: Path, mode: str) -> None:
+    def _append_log(self, source_identifier: str, mode: str) -> None:
         log_path = self.repository.resolve_write_path("knowledge/log.md")
         if not log_path.exists():
             self.repository.write_text("knowledge/log.md", "# Wiki Log\n")
         today = datetime.now(UTC).date().isoformat()
         self.repository.write_text(
             "knowledge/log.md",
-            f"\n## [{today}] ingest | {path.name}\n\n- Source: `{path}`\n- mode: {mode}\n",
+            f"\n## [{today}] ingest | {source_identifier}\n\n- Source: `{source_identifier}`\n- mode: {mode}\n",
             append=True,
         )
 
@@ -225,7 +225,7 @@ def _source_page_body(path: Path, text: str, summary: str = "") -> str:
     extracted = _normalize_extracted_text(text) or "No selectable text extracted."
     parts = [f"# {path.stem}"]
     if summary.strip():
-        parts.extend(["", "## LLM Summary", "", summary.strip()])
+        parts.extend(["", "## LLM Summary", "", _sanitize_summary(summary)])
     parts.extend(["", "## Extracted Text", "", extracted])
     return "\n".join(parts)
 
@@ -233,6 +233,16 @@ def _source_page_body(path: Path, text: str, summary: str = "") -> str:
 def _normalize_extracted_text(text: str) -> str:
     normalized = text.replace("\r\n", "\n").replace("\r", "\n")
     return "\n".join(line.rstrip() for line in normalized.split("\n")).strip()
+
+
+def _sanitize_summary(summary: str) -> str:
+    marker = "## Extracted Text"
+    lines = []
+    for line in summary.splitlines():
+        if line.strip() == marker:
+            line = line.replace(marker, "## Extracted Text Summary", 1)
+        lines.append(line)
+    return "\n".join(lines).strip()
 
 
 def _media_type(kind: str) -> str:
