@@ -2,9 +2,10 @@ from dataclasses import dataclass
 from pathlib import Path
 import re
 import unicodedata
+from typing import Protocol
 
 from cv_agent.metrics import SEARCH_HITS
-from cv_agent.knowledge.repository import KnowledgeRepository
+from cv_agent.knowledge.documents import KnowledgePage
 from cv_agent.tracing import get_tracer, safe_count_attribute
 
 
@@ -40,8 +41,13 @@ class SearchHit:
     score: float
 
 
+class PageSource(Protocol):
+    def list_pages(self) -> list[KnowledgePage]:
+        ...
+
+
 class KnowledgeSearch:
-    def __init__(self, repository: KnowledgeRepository) -> None:
+    def __init__(self, repository: PageSource) -> None:
         self.repository = repository
 
     def search(self, query: str, limit: int = 5) -> list[SearchHit]:

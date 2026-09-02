@@ -8,7 +8,7 @@ from cv_agent.agent.service import AgentService
 from cv_agent.admin.ui import build_admin_ui_router
 from cv_agent.api.admin import build_admin_router
 from cv_agent.api.agent_card import build_agent_card_router
-from cv_agent.api.health import build_health_router, knowledge_is_initialized
+from cv_agent.api.health import build_health_router
 from cv_agent.api.responses import build_responses_router
 from cv_agent.api.request_limits import public_request_size_middleware
 from cv_agent.config import Settings, get_settings
@@ -17,6 +17,7 @@ from cv_agent.tracing import configure_tracing
 from cv_agent.knowledge.ingest import IngestionService
 from cv_agent.knowledge.repository import KnowledgeRepository
 from cv_agent.knowledge.search import KnowledgeSearch
+from cv_agent.knowledge.index import ActiveKnowledge
 from cv_agent.knowledge.git_store import LocalKnowledgeGit
 from cv_agent.knowledge.storage import ensure_data_storage
 
@@ -44,6 +45,8 @@ def create_app(
     )
     git_store.initialize()
     repository = KnowledgeRepository(paths.repository)
+    active_knowledge = ActiveKnowledge.load(repository)
+    knowledge_search = KnowledgeSearch(active_knowledge)
     ingestion = IngestionService(repository, settings)
     app.state.data_paths = paths
     app.state.paths = paths
@@ -51,10 +54,12 @@ def create_app(
     app.state.git_store = git_store
     app.state.knowledge_repository = repository
     app.state.repository = repository
+    app.state.active_knowledge = active_knowledge
+    app.state.knowledge_search = knowledge_search
     app.state.ingestion_service = ingestion
     app.state.ingestion = ingestion
     app.include_router(
-        build_health_router(settings, repository, lambda: knowledge_is_initialized(repository))
+        build_health_router(settings, repository, lambda: active_knowledge.initialized)
     )
     app.include_router(build_admin_ui_router(settings, paths, git_store, ingestion))
     if agent_answerer is None:
@@ -66,10 +71,10 @@ def create_app(
                     update={"openai_model": settings.rerank_model or settings.openai_model}
                 )
                 reranker = LLMReranker(OpenAITextClient(rerank_settings), settings.answer_top_k)
-            agent = AgentService(settings, KnowledgeSearch(repository), answer_client, reranker)
+            agent = AgentService(settings, knowledge_search, answer_client, reranker)
             return agent.answer(text, instructions)
     app.include_router(
-        build_responses_router(settings, agent_answerer, lambda: knowledge_is_initialized(repository))
+        build_responses_router(settings, agent_answerer, lambda: active_knowledge.initialized)
     )
     app.include_router(build_admin_router(settings, paths, git_store, ingestion))
     return app
