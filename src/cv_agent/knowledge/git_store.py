@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import re
 import stat
 import subprocess
 
@@ -19,16 +20,19 @@ _SAFE_OPERATIONS = frozenset(
         "ls-files",
         "ls-tree",
         "remote",
+        "read-tree",
         "rev-list",
         "reset",
         "rev-parse",
         "status",
         "symbolic-ref",
+        "update-ref",
     }
 )
 
 _ALLOWED_PATH_PREFIXES = ("sources/", "knowledge/")
 _REGULAR_FILE_MODES = frozenset({"100644", "100755"})
+_FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 
 
 class GitStoreError(RuntimeError):
@@ -323,3 +327,35 @@ class LocalKnowledgeGit:
     def tracked_paths(self) -> list[str]:
         output = self._run("ls-files", "-z").stdout
         return sorted(path for path in output.split("\0") if path)
+
+    def restore_head(self, expected_current: str, prior: str) -> None:
+        """Atomically restore a transaction's prior commit and Markdown tree."""
+        if not _FULL_SHA.fullmatch(expected_current) or (
+            prior and not _FULL_SHA.fullmatch(prior)
+        ):
+            raise GitStoreError("Git restore requires full commit IDs")
+        current = self.head()
+        if current != expected_current:
+            raise GitStoreError("Git restore current commit does not match expectation")
+        if prior:
+            verified = self._run("rev-parse", "--verify", f"{prior}^{{commit}}", check=False)
+            if verified.returncode or verified.stdout.strip() != prior:
+                raise GitStoreError("Git restore prior commit is invalid")
+            self._run("update-ref", "refs/heads/main", prior, expected_current)
+            # Repository invariants guarantee that every tracked path is in one
+            # of these scopes, so resetting the complete index is bounded here.
+            self._run("read-tree", "--reset", "-u", prior)
+        else:
+            self._run("update-ref", "-d", "refs/heads/main", expected_current)
+            for scope in (self.root / "sources", self.root / "knowledge"):
+                if scope.is_symlink() or (scope.exists() and not scope.is_dir()):
+                    raise GitStoreError("knowledge scope is not a local directory")
+                if scope.exists():
+                    for path in sorted(scope.rglob("*"), reverse=True):
+                        if path.is_symlink() or (path.exists() and not path.is_file() and not path.is_dir()):
+                            raise GitStoreError("knowledge scope contains unsafe entry")
+                        if path.is_file():
+                            path.unlink()
+                        elif path.is_dir():
+                            path.rmdir()
+        self._validate_scope_filesystem()

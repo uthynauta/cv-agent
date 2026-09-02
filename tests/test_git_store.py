@@ -135,7 +135,7 @@ def test_git_environment_cannot_redirect_store_to_an_external_repository(
     store = LocalKnowledgeGit(tmp_path / "repository", "Test Author", "test@example.com")
     store.initialize()
     source = store.root / "sources" / "source.md"
-    source.parent.mkdir()
+    source.parent.mkdir(exist_ok=True)
     source.write_text("source", encoding="utf-8")
 
     commit_sha = store.commit("add source")
@@ -246,6 +246,36 @@ def test_commit_revalidates_remote_added_after_initialize(tmp_path: Path):
         store.commit("reject remote")
 
     assert store.head() == ""
+
+
+def test_restore_head_requires_full_sha_and_restores_scopes(tmp_path: Path):
+    store, _ = make_store(tmp_path)
+    store.initialize()
+    source = store.root / "sources" / "source.md"
+    source.parent.mkdir(exist_ok=True)
+    source.write_text("source-a", encoding="utf-8")
+    first = store.commit("first")
+    source.write_text("source-b", encoding="utf-8")
+    second = store.commit("second")
+
+    store.restore_head(second, first)
+
+    assert store.head() == first
+    assert source.read_text(encoding="utf-8") == "source-a"
+    with pytest.raises(GitStoreError):
+        store.restore_head(second[:8], first)
+
+
+def test_restore_head_rejects_unexpected_current_head(tmp_path: Path):
+    store, _ = make_store(tmp_path)
+    store.initialize()
+    source = store.root / "sources" / "source.md"
+    source.parent.mkdir(exist_ok=True)
+    source.write_text("source", encoding="utf-8")
+    first = store.commit("first")
+
+    with pytest.raises(GitStoreError):
+        store.restore_head("0" * 40, first)
 
 
 def test_commit_revalidates_post_init_core_worktree(tmp_path: Path):
