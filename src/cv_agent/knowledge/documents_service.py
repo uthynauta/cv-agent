@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from cv_agent.knowledge.extractors import ExtractedSource, SourceExtractionError
 from cv_agent.knowledge.frontmatter import load_frontmatter
-from cv_agent.knowledge.git_store import LocalKnowledgeGit
+from cv_agent.knowledge.git_store import GitStoreError, LocalKnowledgeGit
 from cv_agent.knowledge.index import ActiveKnowledge, KnowledgeSnapshot
 from cv_agent.knowledge.ingest import IngestionService, validate_document_id
 from cv_agent.knowledge.locking import MutationBusyError, MutationLock
@@ -78,6 +78,8 @@ class _Candidate:
     repository: KnowledgeRepository
     documents: Path
     ingestion: IngestionService
+    quarantine: Path | None = None
+    commit_message: str | None = None
 
 
 class DocumentService:
@@ -163,14 +165,38 @@ class DocumentService:
     def rebuild(self) -> MutationResult:
         return self._mutate("rebuild", self._stage_rebuild, "", None)
 
+    def history(self, limit: int = 20):
+        try:
+            return self.git.history(limit)
+        except GitStoreError as exc:
+            raise DocumentMutationError(uuid4().hex, str(exc)) from exc
+
+    def rollback(self, commit: str, *, confirmed: bool = False) -> MutationResult:
+        operation_id = uuid4().hex
+        if not confirmed:
+            raise DocumentMutationError(operation_id, "rollback requires confirmation")
+        try:
+            if not self.git.contains_commit(commit):
+                raise DocumentMutationError(operation_id, "rollback commit is invalid")
+        except GitStoreError as exc:
+            raise DocumentMutationError(operation_id, str(exc)) from exc
+        return self._mutate(
+            "rollback",
+            lambda candidate: self._stage_rollback(candidate, commit),
+            "",
+            None,
+            operation_id=operation_id,
+        )
+
     def _mutate(
         self,
         operation: str,
         action: Callable[[_Candidate], tuple[str, str]],
         requested_id: str,
         data: bytes | None,
+        operation_id: str | None = None,
     ) -> MutationResult:
-        operation_id = uuid4().hex
+        operation_id = operation_id or uuid4().hex
         if not _OPERATION_ID.fullmatch(operation_id):
             raise DocumentMutationError(operation_id, "could not allocate operation ID")
         root: Path | None = None
@@ -213,7 +239,8 @@ class DocumentService:
                         raise
                     replaced = True
                     commit = self.git.commit(
-                        f"{operation.title()} document {result_id or 'knowledge'} operation {operation_id}"
+                        candidate.commit_message
+                        or f"{operation.title()} document {result_id or 'knowledge'} operation {operation_id}"
                     )
                     changed = () if commit == prior_head else self.git.changed_paths(commit)
 
@@ -222,6 +249,9 @@ class DocumentService:
                     documents_activation_attempted = True
                     self._activate_originals(candidate_docs, documents_backup)
                     self.active.reload(self.repository)
+                    if candidate.quarantine is not None and any(candidate.quarantine.iterdir()):
+                        destination = self.paths.quarantine / operation_id
+                        candidate.quarantine.rename(destination)
                     return MutationResult(result_id, digest, commit, changed, operation_id)
                 except MutationBusyError:
                     raise
@@ -304,6 +334,34 @@ class DocumentService:
             # the source itself is immutable during rebuild.
             page.write_text(source_text, encoding="utf-8")
         candidate.ingestion._write_index()
+        return "", ""
+
+    def _stage_rollback(self, candidate: _Candidate, commit: str) -> tuple[str, str]:
+        checkout = candidate.root / "rollback-repository"
+        self.git.checkout_tree(commit, checkout)
+        shutil.rmtree(candidate.root / "repository")
+        checkout.rename(candidate.root / "repository")
+        expected: dict[str, str] = {}
+        sources = candidate.repository.root / "sources"
+        for source in sources.glob("*.md"):
+            metadata, _body = load_frontmatter(source.read_text(encoding="utf-8"))
+            document_id = metadata.get("document_id")
+            digest = metadata.get("content_sha256")
+            if isinstance(document_id, str) and isinstance(digest, str):
+                expected[document_id] = digest
+
+        quarantine = candidate.root / "quarantine"
+        for original in list(candidate.documents.iterdir()):
+            if original.name == "quarantine":
+                continue
+            if not original.is_file() or original.is_symlink():
+                raise ValueError("original document is not a regular file")
+            document_id = original.name.split(".", 1)[0]
+            if document_id not in expected or sha256(original.read_bytes()).hexdigest() != expected[document_id]:
+                quarantine.mkdir(parents=True, exist_ok=True)
+                original.rename(quarantine / original.name)
+        candidate.quarantine = quarantine if quarantine.exists() else None
+        candidate.commit_message = f"Rollback knowledge to {commit[:8]}"
         return "", ""
 
     def _validate_staged(self, path: Path) -> None:

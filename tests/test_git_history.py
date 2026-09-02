@@ -1,4 +1,5 @@
 from pathlib import Path
+from hashlib import sha256
 
 import pytest
 
@@ -6,9 +7,11 @@ from cv_agent.config import Settings
 from cv_agent.knowledge.documents_service import DocumentMutationError, DocumentService
 from cv_agent.knowledge.git_store import GitStoreError, LocalKnowledgeGit
 from cv_agent.knowledge.index import ActiveKnowledge
+from cv_agent.knowledge.extractors import ExtractedSource
 from cv_agent.knowledge.ingest import IngestionService
 from cv_agent.knowledge.repository import KnowledgeRepository
 from cv_agent.knowledge.storage import ensure_data_storage
+from cv_agent.knowledge.locking import MutationBusyError, MutationLock
 
 
 def make_store(tmp_path: Path) -> LocalKnowledgeGit:
@@ -109,8 +112,12 @@ def test_rollback_requires_confirmation_and_rejects_unknown_commit(document_serv
 
 
 def test_rollback_creates_audit_commit_and_quarantines_mismatched_original(
-    document_service: DocumentService,
+    document_service: DocumentService, monkeypatch: pytest.MonkeyPatch,
 ):
+    monkeypatch.setattr(
+        "cv_agent.knowledge.ingest.extract_source",
+        lambda path: ExtractedSource(path, path.read_bytes().decode(), "pdf", False, sha256(path.read_bytes()).hexdigest()),
+    )
     first = document_service.add("candidate.pdf", b"first PDF")
     second = document_service.replace(first.document_id, "candidate.pdf", b"second PDF")
 
@@ -142,3 +149,24 @@ def test_rollback_retains_matching_original_and_reports_missing_original(
     restored.unlink()
     document_service.rollback(first.commit, confirmed=True)
     assert not document_service.list_documents()[0].original_available
+
+
+def test_rollback_quarantines_orphan_original(document_service: DocumentService):
+    first = document_service.add("first.md", b"Python")
+    second = document_service.add("second.md", b"Rust")
+
+    document_service.rollback(first.commit, confirmed=True)
+
+    assert not (document_service.paths.documents / f"{second.document_id}.md").exists()
+    quarantined = list(document_service.paths.quarantine.rglob(f"{second.document_id}.md"))
+    assert len(quarantined) == 1
+
+
+def test_rollback_lock_contention_does_not_mutate(document_service: DocumentService):
+    added = document_service.add("candidate.md", b"Python")
+
+    with MutationLock(document_service.paths.locks / "mutation.lock"):
+        with pytest.raises(MutationBusyError):
+            document_service.rollback(added.commit, confirmed=True)
+
+    assert document_service.git.head() == added.commit
