@@ -17,7 +17,6 @@ from cv_agent.knowledge.documents_service import DocumentMutationError, Document
 
 
 _DEFAULT_EXTRACT_SOURCE = extract_source
-_DEFAULT_INGEST_FILE = IngestionService.ingest_file
 
 
 def _extract_upload(path: Path):
@@ -177,14 +176,6 @@ async def upload_document_payload(
     file: UploadFile,
     document_service: DocumentService | None = None,
 ) -> dict[str, object]:
-    # Existing integrations patch the legacy ingestion hook to observe upload
-    # behavior. Keep that test/caller contract while normal requests use the
-    # transactional service below.
-    if document_service is not None and (
-        IngestionService.ingest_file is not _DEFAULT_INGEST_FILE
-        or extract_source is not _DEFAULT_EXTRACT_SOURCE
-    ):
-        document_service = None
     try:
         filename = safe_upload_filename(file.filename or "")
     except ValueError as exc:

@@ -3,10 +3,21 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 import pytest
 
+import cv_agent.main as main_module
 from cv_agent.config import Settings
 from cv_agent.knowledge.git_store import LocalKnowledgeGit
 from cv_agent.knowledge.storage import ensure_data_storage
 from cv_agent.main import create_app
+
+
+def legacy_upload_app(settings, monkeypatch):
+    build_admin_router = main_module.build_admin_router
+
+    def build_legacy_admin_router(settings_arg, paths, git_store, ingestion, document_service):
+        return build_admin_router(settings_arg, paths, git_store, ingestion, None)
+
+    monkeypatch.setattr(main_module, "build_admin_router", build_legacy_admin_router)
+    return create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
 
 
 def test_fresh_data_dir_starts_empty_and_admin_remains_available(tmp_path):
@@ -110,7 +121,7 @@ def test_upload_persists_original_and_commits_only_markdown(tmp_path, monkeypatc
 
     monkeypatch.setattr("cv_agent.api.admin.extract_source", lambda path: Extracted())
     monkeypatch.setattr("cv_agent.knowledge.ingest.extract_source", lambda path: Extracted())
-    client = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok"))
+    client = TestClient(legacy_upload_app(settings, monkeypatch))
 
     response = client.post(
         "/admin/documents",
@@ -150,7 +161,7 @@ def test_upload_cleans_staged_original_and_source_when_commit_fails(tmp_path, mo
         "cv_agent.api.admin.LocalKnowledgeGit.commit",
         lambda self, message: (_ for _ in ()).throw(RuntimeError("commit failed")),
     )
-    client = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok"))
+    client = TestClient(legacy_upload_app(settings, monkeypatch))
 
     response = client.post(
         "/admin/documents",
@@ -194,7 +205,7 @@ def test_failed_upload_preserves_unrelated_concurrent_markdown(tmp_path, monkeyp
         raise RuntimeError("ingestion failed")
 
     monkeypatch.setattr("cv_agent.knowledge.ingest.IngestionService.ingest_file", failed_ingest)
-    client = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok"))
+    client = TestClient(legacy_upload_app(settings, monkeypatch))
 
     response = client.post(
         "/admin/documents",
@@ -237,7 +248,7 @@ def test_failed_upload_restores_preexisting_source_version(tmp_path, monkeypatch
         raise RuntimeError("ingestion failed")
 
     monkeypatch.setattr("cv_agent.knowledge.ingest.IngestionService.ingest_file", failed_ingest)
-    client = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok"))
+    client = TestClient(legacy_upload_app(settings, monkeypatch))
 
     response = client.post(
         "/admin/documents",
@@ -281,7 +292,7 @@ def test_upload_collision_preserves_existing_original_and_cleans_staging(tmp_pat
         raise AssertionError("ingestion must not run after original collision")
 
     monkeypatch.setattr("cv_agent.knowledge.ingest.IngestionService.ingest_file", ingest_file)
-    client = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok"))
+    client = TestClient(legacy_upload_app(settings, monkeypatch))
 
     response = client.post(
         "/admin/documents",
@@ -340,7 +351,7 @@ def test_upload_partial_original_write_is_removed(tmp_path, monkeypatch):
         return handle
 
     monkeypatch.setattr(Path, "open", fail_original_write)
-    client = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok"))
+    client = TestClient(legacy_upload_app(settings, monkeypatch))
 
     response = client.post(
         "/admin/documents",
@@ -407,7 +418,7 @@ def test_post_commit_staging_cleanup_failure_keeps_upload_successful(tmp_path, m
         return real_unlink(path, *args, **kwargs)
 
     monkeypatch.setattr(Path, "unlink", fail_staging_unlink)
-    client = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok"))
+    client = TestClient(legacy_upload_app(settings, monkeypatch))
 
     response = client.post(
         "/admin/documents",
@@ -454,7 +465,7 @@ def test_partial_staging_write_is_removed_and_returns_controlled_error(tmp_path,
         return handle
 
     monkeypatch.setattr(Path, "open", fail_staging_write)
-    client = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok"))
+    client = TestClient(legacy_upload_app(settings, monkeypatch))
 
     response = client.post(
         "/admin/documents",

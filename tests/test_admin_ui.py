@@ -3,6 +3,7 @@ from pathlib import Path
 from fastapi import APIRouter
 from fastapi.testclient import TestClient
 
+import cv_agent.main as main_module
 from cv_agent.config import Settings
 from cv_agent.main import create_app
 
@@ -18,6 +19,16 @@ def ui_settings(tmp_path, **overrides):
     }
     values.update(overrides)
     return Settings(**values)
+
+
+def legacy_upload_app(settings, monkeypatch):
+    build_admin_ui_router = main_module.build_admin_ui_router
+
+    def build_legacy_admin_ui_router(settings_arg, paths, git_store, ingestion, document_service):
+        return build_admin_ui_router(settings_arg, paths, git_store, ingestion, None)
+
+    monkeypatch.setattr(main_module, "build_admin_ui_router", build_legacy_admin_ui_router)
+    return create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
 
 
 def test_admin_login_disabled_without_ui_config(tmp_path):
@@ -189,7 +200,7 @@ def test_ui_upload_reuses_document_upload_behavior(tmp_path, monkeypatch):
     monkeypatch.setattr("cv_agent.api.admin.extract_source", fake_extract)
     monkeypatch.setattr("cv_agent.api.admin.IngestionService.ingest_file", fake_ingest_file)
 
-    client = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok"))
+    client = TestClient(legacy_upload_app(settings, monkeypatch))
     client.post("/admin/login", data={"password": "ui-secret"})
 
     response = client.post(

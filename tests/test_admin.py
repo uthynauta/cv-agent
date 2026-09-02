@@ -4,7 +4,9 @@ from fastapi.testclient import TestClient
 import pytest
 
 import cv_agent.api.admin as admin_module
+import cv_agent.main as main_module
 from cv_agent.config import Settings
+from cv_agent.knowledge.documents_service import DocumentMutationError
 from cv_agent.knowledge.ingest import document_id_for_path
 from cv_agent.knowledge.storage import ensure_data_storage
 from cv_agent.main import create_app
@@ -14,6 +16,21 @@ def mounted_settings(tmp_path, **overrides):
     values = {"_env_file": None, "data_dir": tmp_path, "admin_api_key": "admin-secret"}
     values.update(overrides)
     return Settings(**values)
+
+
+def legacy_upload_app(settings, monkeypatch):
+    build_admin_router = main_module.build_admin_router
+    build_admin_ui_router = main_module.build_admin_ui_router
+
+    def build_legacy_admin_router(settings_arg, paths, git_store, ingestion, document_service):
+        return build_admin_router(settings_arg, paths, git_store, ingestion, None)
+
+    def build_legacy_admin_ui_router(settings_arg, paths, git_store, ingestion, document_service):
+        return build_admin_ui_router(settings_arg, paths, git_store, ingestion, None)
+
+    monkeypatch.setattr(main_module, "build_admin_router", build_legacy_admin_router)
+    monkeypatch.setattr(main_module, "build_admin_ui_router", build_legacy_admin_ui_router)
+    return create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
 
 
 def test_admin_ingest_allows_file_inside_documents(tmp_path, monkeypatch):
@@ -101,7 +118,7 @@ def test_admin_upload_persists_original_under_documents(tmp_path, monkeypatch):
         admin_api_key="admin-secret",
         admin_upload_max_bytes=1024,
     )
-    app = create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
+    app = legacy_upload_app(settings, monkeypatch)
     calls: list[tuple[Path, str]] = []
 
     class Extracted:
@@ -133,6 +150,31 @@ def test_admin_upload_persists_original_under_documents(tmp_path, monkeypatch):
     assert (tmp_path / "data" / relative_path).is_file()
     assert len(calls) == 1
     assert calls[0][0] == tmp_path / "data" / relative_path
+
+
+def test_admin_upload_does_not_bypass_document_service_when_ingestion_is_patched(
+    tmp_path, monkeypatch
+):
+    settings = mounted_settings(tmp_path, admin_upload_max_bytes=1024)
+    app = create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
+
+    def fail_legacy_ingest(self, path, document_id, original_filename=None):
+        raise AssertionError("legacy ingestion path was used")
+
+    def fail_document_add(self, original_filename, data, media_type=None):
+        raise DocumentMutationError("a" * 32)
+
+    monkeypatch.setattr(admin_module.IngestionService, "ingest_file", fail_legacy_ingest)
+    monkeypatch.setattr(admin_module.DocumentService, "add", fail_document_add)
+
+    response = TestClient(app).post(
+        "/admin/documents",
+        headers={"Authorization": "Bearer admin-secret"},
+        files={"file": ("notes.md", b"notes", "text/markdown")},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == f"document mutation failed; operation {'a' * 32}"
 
 
 def test_admin_ingest_rejects_symlinked_data_root_without_external_access(tmp_path):
@@ -209,7 +251,7 @@ def test_admin_ingest_is_disabled_without_configured_key(tmp_path):
 
 def test_admin_document_upload_saves_pdf_and_ingests(tmp_path, monkeypatch):
     settings = mounted_settings(tmp_path, admin_upload_max_bytes=1024)
-    app = create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
+    app = legacy_upload_app(settings, monkeypatch)
 
     class Extracted:
         kind = "pdf"
@@ -250,7 +292,7 @@ def test_admin_document_upload_saves_pdf_and_ingests(tmp_path, monkeypatch):
 
 def test_admin_upload_uses_unique_exclusive_targets_and_ids(tmp_path, monkeypatch):
     settings = mounted_settings(tmp_path, admin_upload_max_bytes=1024)
-    app = create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
+    app = legacy_upload_app(settings, monkeypatch)
 
     class Extracted:
         kind = "markdown"
@@ -302,7 +344,7 @@ def test_admin_upload_uses_unique_exclusive_targets_and_ids(tmp_path, monkeypatc
 
 def test_admin_document_upload_saves_markdown_and_ingests(tmp_path, monkeypatch):
     settings = mounted_settings(tmp_path, admin_upload_max_bytes=1024)
-    app = create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
+    app = legacy_upload_app(settings, monkeypatch)
 
     class Extracted:
         kind = "markdown"
@@ -343,7 +385,7 @@ def test_admin_document_upload_saves_markdown_and_ingests(tmp_path, monkeypatch)
 
 def test_admin_document_upload_saves_latex_and_ingests(tmp_path, monkeypatch):
     settings = mounted_settings(tmp_path, admin_upload_max_bytes=1024)
-    app = create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
+    app = legacy_upload_app(settings, monkeypatch)
 
     class Extracted:
         kind = "latex"
@@ -417,7 +459,7 @@ def test_admin_document_upload_rejects_oversized_file(tmp_path):
 
 def test_admin_document_upload_rejects_low_text_pdf(tmp_path, monkeypatch):
     settings = mounted_settings(tmp_path)
-    app = create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
+    app = legacy_upload_app(settings, monkeypatch)
 
     class Extracted:
         kind = "pdf"
