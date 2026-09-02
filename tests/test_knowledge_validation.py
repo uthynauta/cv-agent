@@ -1,0 +1,163 @@
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+import pytest
+
+from cv_agent.knowledge.frontmatter import dump_frontmatter
+from cv_agent.knowledge.validation import KnowledgeValidationError, validate_knowledge
+
+
+def _write_page(root: Path, relative: str, metadata: dict[str, object], body: str) -> None:
+    path = root / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(dump_frontmatter(metadata, body), encoding="utf-8")
+
+
+def _source_metadata(document_id: str = "doc-123", digest: str = "a" * 64) -> dict[str, object]:
+    return {
+        "title": "Candidate source",
+        "kind": "source",
+        "document_id": document_id,
+        "content_sha256": digest,
+    }
+
+
+def test_validates_source_identity_and_generated_citation(tmp_path: Path):
+    _write_page(
+        tmp_path,
+        "sources/doc-123.md",
+        _source_metadata(),
+        "# Candidate\n\n## Extracted Text\n\nPython and Rust experience.",
+    )
+    _write_page(
+        tmp_path,
+        "knowledge/projects/rust.md",
+        {"title": "Rust", "kind": "project"},
+        "## Summary\n\nSee [[sources/doc-123]].",
+    )
+
+    assert validate_knowledge(tmp_path) is None
+
+
+@pytest.mark.parametrize(
+    ("metadata", "body", "field"),
+    [
+        ({"kind": "source", "content_sha256": "a" * 64}, "## Extracted Text\n\ntext", "document_id"),
+        ({**_source_metadata(), "kind": "profile"}, "## Extracted Text\n\ntext", "kind"),
+        ({**_source_metadata(), "document_id": "../escape"}, "## Extracted Text\n\ntext", "document_id"),
+        ({**_source_metadata(), "document_id": "doc.md"}, "## Extracted Text\n\ntext", "document_id"),
+        ({**_source_metadata(), "document_id": "a" * 129}, "## Extracted Text\n\ntext", "document_id"),
+        ({**_source_metadata(), "content_sha256": "A" * 64}, "## Extracted Text\n\ntext", "content_sha256"),
+        ({**_source_metadata(), "content_sha256": "a" * 63}, "## Extracted Text\n\ntext", "content_sha256"),
+        ({**_source_metadata(), "content_sha256": "not-a-digest"}, "## Extracted Text\n\ntext", "content_sha256"),
+        (_source_metadata(), "# Only a heading", "extracted_text"),
+        (_source_metadata(), "## Extracted Text\n\nNo selectable text extracted.", "extracted_text"),
+        (_source_metadata(), "## Extracted Text\n\n<!-- placeholder -->", "extracted_text"),
+    ],
+)
+def test_rejects_invalid_source_page(
+    tmp_path: Path, metadata: dict[str, object], body: str, field: str
+):
+    _write_page(tmp_path, "sources/doc-123.md", metadata, body)
+
+    with pytest.raises(KnowledgeValidationError, match=field):
+        validate_knowledge(tmp_path)
+
+
+def test_source_document_ids_are_unique_and_match_canonical_paths(tmp_path: Path):
+    _write_page(
+        tmp_path,
+        "sources/first.md",
+        _source_metadata("doc-123"),
+        "## Extracted Text\n\nfirst source",
+    )
+    _write_page(
+        tmp_path,
+        "sources/second.md",
+        _source_metadata("doc-123"),
+        "## Extracted Text\n\nsecond source",
+    )
+
+    with pytest.raises(KnowledgeValidationError, match="document_id"):
+        validate_knowledge(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "citation",
+    [
+        "[[sources/unknown]]",
+        "[[sources/doc-123.md]]",
+        "[[sources/doc-123/extra]]",
+        "[[sources/../doc-123]]",
+        "[[sources\\doc-123]]",
+    ],
+)
+def test_rejects_unknown_or_malformed_generated_source_citations(tmp_path: Path, citation: str):
+    _write_page(
+        tmp_path,
+        "sources/doc-123.md",
+        _source_metadata(),
+        "## Extracted Text\n\nsource text",
+    )
+    _write_page(tmp_path, "knowledge/projects/project.md", {}, f"See {citation}.")
+
+    with pytest.raises(KnowledgeValidationError, match="source_citations"):
+        validate_knowledge(tmp_path)
+
+
+def test_generated_page_requires_a_source_citation(tmp_path: Path):
+    _write_page(
+        tmp_path,
+        "sources/doc-123.md",
+        _source_metadata(),
+        "## Extracted Text\n\nsource text",
+    )
+    _write_page(tmp_path, "knowledge/projects/project.md", {}, "A claim without evidence.")
+
+    with pytest.raises(KnowledgeValidationError, match="source_citations"):
+        validate_knowledge(tmp_path)
+
+
+@pytest.mark.parametrize("directory", ["sources", "knowledge"])
+def test_rejects_symlinked_knowledge_tree(tmp_path: Path, directory: str):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.md").write_text("secret", encoding="utf-8")
+    (tmp_path / directory).symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(KnowledgeValidationError, match="path"):
+        validate_knowledge(tmp_path)
+
+
+def test_rejects_special_files_and_out_of_scope_markdown(tmp_path: Path):
+    (tmp_path / "sources").mkdir()
+    os.mkfifo(tmp_path / "sources" / "input.fifo")
+
+    with pytest.raises(KnowledgeValidationError, match="path"):
+        validate_knowledge(tmp_path)
+
+
+def test_validation_errors_do_not_include_document_contents(tmp_path: Path):
+    secret = "private candidate text that must not appear"
+    source = tmp_path / "sources" / "doc-123.md"
+    source.parent.mkdir()
+    source.write_text(f"---\nkind: [broken\n---\n{secret}\n", encoding="utf-8")
+
+    with pytest.raises(KnowledgeValidationError) as error:
+        validate_knowledge(tmp_path)
+    assert secret not in str(error.value)
+
+
+def test_reserved_index_and_log_do_not_need_source_citations(tmp_path: Path):
+    _write_page(
+        tmp_path,
+        "sources/doc-123.md",
+        _source_metadata(),
+        "## Extracted Text\n\nsource text",
+    )
+    _write_page(tmp_path, "knowledge/index.md", {}, "# Wiki Index")
+    _write_page(tmp_path, "knowledge/log.md", {}, "# Wiki Log\n\nsource ingestion")
+
+    assert validate_knowledge(tmp_path) is None
