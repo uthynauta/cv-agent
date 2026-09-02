@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import re
 import unicodedata
+from collections.abc import Mapping
 from typing import Protocol
 
 from cv_agent.metrics import SEARCH_HITS
@@ -49,6 +50,17 @@ class PageSource(Protocol):
 class KnowledgeSearch:
     def __init__(self, repository: PageSource) -> None:
         self.repository = repository
+
+    def pin(self) -> "KnowledgeSearch":
+        """Return a search view pinned to one repository revision when supported."""
+        pin = getattr(self.repository, "pin", None)
+        if callable(pin):
+            pinned = pin()
+            return pinned if isinstance(pinned, KnowledgeSearch) else KnowledgeSearch(pinned)
+        # Plain repositories remain supported for callers outside ActiveKnowledge.
+        return KnowledgeSearch(self.repository)
+
+    view = pin
 
     def search(self, query: str, limit: int = 5) -> list[SearchHit]:
         with get_tracer().start_as_current_span("wiki.search") as span:
@@ -103,7 +115,7 @@ def _score(text: str, terms: list[str]) -> float:
     return float(frequency + coverage * 8)
 
 
-def _category_score(path: Path, metadata: dict[str, object], terms: list[str]) -> float:
+def _category_score(path: Path, metadata: Mapping[str, object], terms: list[str]) -> float:
     term_set = set(terms)
     if not (term_set & EDUCATION_TERMS):
         return 0.0

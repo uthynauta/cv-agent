@@ -17,7 +17,7 @@ def knowledge_is_initialized(repository: KnowledgeRepository) -> bool:
     """Return whether the repository contains usable source or generated content."""
     try:
         pages = repository.list_pages()
-    except (OSError, ValueError):
+    except Exception:
         return False
     return has_initialized_knowledge(pages, repository.root)
 

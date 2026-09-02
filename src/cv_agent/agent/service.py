@@ -41,14 +41,15 @@ class AgentService:
                 if self.settings.retrieval_mode == "llm_rerank"
                 else self.settings.answer_top_k
             )
-            hits = self.search.search(input_text, limit=search_limit)
+            search = self.search.pin()
+            hits = search.search(input_text, limit=search_limit)
             if self.settings.retrieval_mode == "llm_rerank" and self.reranker:
-                hits = _prepare_rerank_candidates(hits, self.search, self.settings)
+                hits = _prepare_rerank_candidates(hits, search, self.settings)
                 hits = self.reranker.rerank(input_text, hits)
             else:
                 hits = hits[: self.settings.answer_top_k]
             span.set_attribute("search.hit_count", len(hits))
-            context = _build_context(hits, self.search, self.settings)
+            context = _build_context(hits, search, self.settings)
             if not context:
                 context = "No relevant knowledge context found."
             instructions = build_instructions(

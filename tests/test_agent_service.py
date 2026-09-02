@@ -3,6 +3,7 @@ from pathlib import Path
 from cv_agent.agent.service import AgentService
 from cv_agent.config import Settings
 from cv_agent.knowledge.repository import KnowledgeRepository
+from cv_agent.knowledge.index import ActiveKnowledge
 from cv_agent.knowledge.search import KnowledgeSearch
 
 
@@ -40,6 +41,16 @@ class ContentAwareFakeReranker:
             for hit in hits
             if "Selected publications" in hit.excerpt or "taught undergraduate" in hit.excerpt
         ]
+
+
+class ReloadingReranker:
+    def __init__(self, active: ActiveKnowledge, repository: KnowledgeRepository) -> None:
+        self.active = active
+        self.repository = repository
+
+    def rerank(self, question, hits):
+        self.active.reload(self.repository)
+        return hits[:1]
 
 
 def test_agent_builds_spanish_grounded_prompt(tmp_path: Path):
@@ -259,6 +270,30 @@ def test_page_context_rerank_fallback_includes_later_wiki_pages(tmp_path: Path):
 
     assert service.answer("¿Candidate ha trabajado como docente?") == fake_client.output
     assert any("taught undergraduate" in excerpt for excerpt in fake_reranker.seen_excerpts)
+
+
+def test_agent_answer_pins_one_knowledge_revision_across_rerank_and_context(tmp_path: Path):
+    repository = KnowledgeRepository(tmp_path)
+    repository.write_page(
+        "knowledge/item.md", "Version A", {"kind": "entity"}, "Question evidence from A."
+    )
+    active = ActiveKnowledge.load(repository)
+    repository.write_page(
+        "knowledge/item.md", "Version B", {"kind": "entity"}, "Question evidence from B."
+    )
+    expected = "La respuesta usa la evidencia de A.\nFuentes: [[Version A]]"
+    fake_client = FakeTextClient(expected)
+    settings = Settings(
+        openai_api_key="test-key",
+        retrieval_mode="llm_rerank",
+        context_mode="page",
+    )
+    reranker = ReloadingReranker(active, repository)
+    service = AgentService(settings, KnowledgeSearch(active), fake_client, reranker)
+
+    assert service.answer("¿Cuál es la evidencia?") == expected
+    assert "Source: [[Version A]]" in fake_client.input_text
+    assert "Version B" not in fake_client.input_text
 
 
 def test_agent_sends_third_party_subject_to_model_with_identity_policy(tmp_path: Path):

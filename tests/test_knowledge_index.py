@@ -1,4 +1,5 @@
 from pathlib import Path
+from threading import Event, Thread
 
 import pytest
 
@@ -7,6 +8,7 @@ from cv_agent.knowledge.documents import KnowledgePage
 from cv_agent.knowledge.index import ActiveKnowledge, KnowledgeSnapshot
 from cv_agent.knowledge.repository import KnowledgeRepository
 from cv_agent.main import create_app
+from fastapi.testclient import TestClient
 
 
 def test_disk_change_requires_reload(tmp_path: Path):
@@ -83,3 +85,73 @@ def test_create_app_injects_one_active_knowledge_handle(tmp_path: Path):
     app = create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
 
     assert isinstance(app.state.active_knowledge, ActiveKnowledge)
+
+
+def test_malformed_startup_keeps_health_and_admin_available(tmp_path: Path):
+    data_dir = tmp_path / "data"
+    repository_root = data_dir / "repository" / "knowledge"
+    repository_root.mkdir(parents=True)
+    (repository_root / "broken.md").write_text(
+        "---\nsecret: [unclosed\n---\n\nnot usable", encoding="utf-8"
+    )
+    settings = Settings(
+        _env_file=None,
+        data_dir=data_dir,
+        admin_api_key="admin-secret",
+        openai_api_key="test-key",
+        openai_model="test-model",
+        agent_owner_name="Candidate",
+        agent_public_url="https://example.test",
+    )
+
+    client = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok"))
+
+    assert client.get("/healthz").status_code == 200
+    ready = client.get("/readyz")
+    assert ready.status_code == 503
+    assert ready.json() == {"status": "not_ready", "missing": ["knowledge"]}
+    admin = client.get("/admin/status", headers={"Authorization": "Bearer admin-secret"})
+    assert admin.status_code == 200
+    assert admin.json()["knowledge"]["initialized"] is False
+    assert "secret" not in admin.text
+
+
+def test_reload_serializes_candidate_build_and_publication(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    repository = KnowledgeRepository(tmp_path / "initial")
+    repository.write_page("knowledge/initial.md", "Initial", {}, "initial")
+    active = ActiveKnowledge.load(repository)
+    first_repository = KnowledgeRepository(tmp_path / "first")
+    first_repository.write_page("knowledge/first.md", "First", {}, "first")
+    second_repository = KnowledgeRepository(tmp_path / "second")
+    second_repository.write_page("knowledge/second.md", "Second", {}, "second")
+    first_started = Event()
+    release_first = Event()
+    second_started = Event()
+    original = KnowledgeSnapshot.from_repository.__func__
+    calls = 0
+
+    def from_repository(cls, repo):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            first_started.set()
+            assert release_first.wait(2)
+        elif calls == 2:
+            second_started.set()
+        return original(cls, repo)
+
+    monkeypatch.setattr(KnowledgeSnapshot, "from_repository", classmethod(from_repository))
+    first = Thread(target=active.reload, args=(first_repository,))
+    second = Thread(target=active.reload, args=(second_repository,))
+    first.start()
+    assert first_started.wait(2)
+    second.start()
+    assert not second_started.wait(0.1)
+    release_first.set()
+    first.join(2)
+    second.join(2)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert [hit.title for hit in active.search("Second")] == ["Second"]
+    assert active.search("First") == []

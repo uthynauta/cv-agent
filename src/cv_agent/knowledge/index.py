@@ -41,15 +41,25 @@ class ActiveKnowledge(PageSource):
     def __init__(self, snapshot: KnowledgeSnapshot) -> None:
         self._snapshot = snapshot
         self._lock = Lock()
+        self._reload_lock = Lock()
 
     @classmethod
     def load(cls, repository: KnowledgeRepository) -> "ActiveKnowledge":
-        return cls(KnowledgeSnapshot.from_repository(repository))
+        try:
+            snapshot = KnowledgeSnapshot.from_repository(repository)
+        except Exception:
+            # Startup must remain available for an operator to repair invalid
+            # mounted knowledge. Explicit reload keeps its failure semantics.
+            snapshot = KnowledgeSnapshot((), repository.root)
+        return cls(snapshot)
 
     def reload(self, repository: KnowledgeRepository) -> None:
-        candidate = KnowledgeSnapshot.from_repository(repository)
-        with self._lock:
-            self._snapshot = candidate
+        # Serialize the full build/publish transaction so an older, slower
+        # reload cannot publish after a newer call has completed.
+        with self._reload_lock:
+            candidate = KnowledgeSnapshot.from_repository(repository)
+            with self._lock:
+                self._snapshot = candidate
 
     def list_pages(self) -> list[KnowledgePage]:
         with self._lock:
@@ -57,9 +67,15 @@ class ActiveKnowledge(PageSource):
         return snapshot.list_pages()
 
     def search(self, query: str, limit: int = 5) -> list[SearchHit]:
+        return self.pin().search(query, limit)
+
+    def pin(self) -> KnowledgeSearch:
+        """Pin one immutable revision for a multi-step answer workflow."""
         with self._lock:
             snapshot = self._snapshot
-        return KnowledgeSearch(snapshot).search(query, limit)
+        return KnowledgeSearch(snapshot)
+
+    view = pin
 
     @property
     def initialized(self) -> bool:
