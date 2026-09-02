@@ -4,9 +4,8 @@ from fastapi.testclient import TestClient
 import pytest
 
 import cv_agent.api.admin as admin_module
-import cv_agent.main as main_module
 from cv_agent.config import Settings
-from cv_agent.knowledge.documents_service import DocumentMutationError
+from cv_agent.knowledge.documents_service import DocumentMutationError, DocumentValidationError
 from cv_agent.knowledge.storage import ensure_data_storage
 from cv_agent.main import create_app
 
@@ -15,21 +14,6 @@ def mounted_settings(tmp_path, **overrides):
     values = {"_env_file": None, "data_dir": tmp_path, "admin_api_key": "admin-secret"}
     values.update(overrides)
     return Settings(**values)
-
-
-def legacy_upload_app(settings, monkeypatch):
-    build_admin_router = main_module.build_admin_router
-    build_admin_ui_router = main_module.build_admin_ui_router
-
-    def build_legacy_admin_router(settings_arg, paths, git_store, ingestion, document_service):
-        return build_admin_router(settings_arg, paths, git_store, ingestion, None)
-
-    def build_legacy_admin_ui_router(settings_arg, paths, git_store, ingestion, document_service):
-        return build_admin_ui_router(settings_arg, paths, git_store, ingestion, None)
-
-    monkeypatch.setattr(main_module, "build_admin_router", build_legacy_admin_router)
-    monkeypatch.setattr(main_module, "build_admin_ui_router", build_legacy_admin_ui_router)
-    return create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
 
 
 def test_admin_ingest_route_is_unavailable(tmp_path):
@@ -83,49 +67,6 @@ def test_admin_ingest_relative_data_dir_uses_stable_absolute_roots(tmp_path, mon
     assert response.status_code == 404
 
 
-def test_admin_upload_persists_original_under_documents(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    Path("data").mkdir()
-    settings = Settings(
-        _env_file=None,
-        data_dir="data",
-        admin_api_key="admin-secret",
-        admin_upload_max_bytes=1024,
-    )
-    app = legacy_upload_app(settings, monkeypatch)
-    calls: list[tuple[Path, str]] = []
-
-    class Extracted:
-        kind = "markdown"
-        needs_ocr = False
-        text = "upload text"
-        sha256 = "a" * 64
-
-    class Result:
-        document_id = "upload-id"
-        source_page = Path("sources/upload-id.md")
-
-    monkeypatch.setattr(admin_module, "extract_source", lambda path: Extracted())
-
-    def ingest_file(self, path: Path, document_id: str, original_filename=None):
-        calls.append((path, document_id))
-        return Result()
-
-    monkeypatch.setattr(admin_module.IngestionService, "ingest_file", ingest_file)
-    response = TestClient(app).post(
-        "/admin/documents",
-        headers={"Authorization": "Bearer admin-secret"},
-        files={"file": ("notes.md", b"notes", "text/markdown")},
-    )
-
-    assert response.status_code == 200
-    relative_path = response.json()["document"]["path"]
-    assert relative_path.startswith("documents/")
-    assert (tmp_path / "data" / relative_path).is_file()
-    assert len(calls) == 1
-    assert calls[0][0] == tmp_path / "data" / relative_path
-
-
 def test_admin_documents_upload_remains_available_after_legacy_ingest_removal(tmp_path):
     settings = mounted_settings(tmp_path, ingestion_mode="deterministic", admin_upload_max_bytes=1024)
     client = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok"))
@@ -144,6 +85,43 @@ def test_admin_documents_upload_remains_available_after_legacy_ingest_removal(tm
     assert unavailable.status_code == 404
     assert available.status_code == 200
     assert available.json()["document"]["filename"] == "candidate.md"
+
+
+@pytest.mark.parametrize(
+    ("filename", "media_type", "payload", "kind"),
+    [
+        ("candidate.md", "text/markdown", b"# Candidate\n\nPython", "markdown"),
+        ("candidate.tex", "application/x-tex", rb"\\section{Candidate} Python", "latex"),
+        ("candidate.pdf", "application/pdf", b"synthetic pdf", "pdf"),
+    ],
+)
+def test_admin_documents_upload_supported_formats_use_document_service(
+    tmp_path, monkeypatch, filename, media_type, payload, kind
+):
+    settings = mounted_settings(tmp_path, ingestion_mode="deterministic", admin_upload_max_bytes=1024)
+
+    class Extracted:
+        needs_ocr = False
+        text = "Candidate profile text"
+        sha256 = "a" * 64
+
+        def __init__(self, source_kind):
+            self.kind = source_kind
+
+    monkeypatch.setattr(
+        "cv_agent.knowledge.ingest.extract_source",
+        lambda path: Extracted(kind),
+    )
+    response = TestClient(create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")).post(
+        "/admin/documents",
+        headers={"Authorization": "Bearer admin-secret"},
+        files={"file": (filename, payload, media_type)},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["document"]["kind"] == kind
+    document_id = response.json()["document"]["document_id"]
+    assert list((tmp_path / "documents").glob(f"{document_id}.*"))
 
 
 def test_admin_upload_does_not_bypass_document_service_when_ingestion_is_patched(
@@ -169,6 +147,28 @@ def test_admin_upload_does_not_bypass_document_service_when_ingestion_is_patched
 
     assert response.status_code == 503
     assert response.json()["detail"] == f"document mutation failed; operation {'a' * 32}"
+
+
+def test_admin_upload_maps_document_validation_to_422(tmp_path, monkeypatch):
+    settings = mounted_settings(tmp_path, admin_upload_max_bytes=1024)
+    app = create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
+
+    monkeypatch.setattr(
+        admin_module.DocumentService,
+        "add",
+        lambda self, original_filename, data, media_type=None: (_ for _ in ()).throw(
+            DocumentValidationError("a" * 32, "document requires OCR")
+        ),
+    )
+
+    response = TestClient(app).post(
+        "/admin/documents",
+        headers={"Authorization": "Bearer admin-secret"},
+        files={"file": ("scan.pdf", b"%PDF-1.4 image", "application/pdf")},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "document requires OCR"
 
 
 def test_admin_ingest_rejects_symlinked_data_root_without_external_access(tmp_path):
@@ -242,187 +242,6 @@ def test_admin_ingest_route_is_unavailable_when_admin_is_disabled(tmp_path):
     assert response.status_code == 404
 
 
-def test_admin_document_upload_saves_pdf_and_ingests(tmp_path, monkeypatch):
-    settings = mounted_settings(tmp_path, admin_upload_max_bytes=1024)
-    app = legacy_upload_app(settings, monkeypatch)
-
-    class Extracted:
-        kind = "pdf"
-        needs_ocr = False
-        text = "retrievable text " * 20
-        sha256 = "a" * 64
-
-    class Result:
-        source_page = Path("sources/uploaded.md")
-
-    def fake_extract(path: Path):
-        assert path.name.endswith(".pdf")
-        return Extracted()
-
-    def fake_ingest_file(self, path: Path, document_id: str, original_filename=None):
-        assert path.parent == tmp_path / "documents"
-        assert path.read_bytes() == b"%PDF-1.4 text"
-        return Result()
-
-    monkeypatch.setattr("cv_agent.api.admin.extract_source", fake_extract)
-    monkeypatch.setattr("cv_agent.api.admin.IngestionService.ingest_file", fake_ingest_file)
-
-    response = TestClient(app).post(
-        "/admin/documents",
-        headers={"Authorization": "Bearer admin-secret"},
-        files={"file": ("Uploaded PDF.pdf", b"%PDF-1.4 text", "application/pdf")},
-    )
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["status"] == "ok"
-    assert payload["document"]["filename"] == "Uploaded-PDF.pdf"
-    assert payload["document"]["kind"] == "pdf"
-    assert payload["ingestion"] == {
-        "count": 1, "sources": ["sources/uploaded.md"], "generated": []
-    }
-
-
-def test_admin_upload_uses_unique_exclusive_targets_and_ids(tmp_path, monkeypatch):
-    settings = mounted_settings(tmp_path, admin_upload_max_bytes=1024)
-    app = legacy_upload_app(settings, monkeypatch)
-
-    class Extracted:
-        kind = "markdown"
-        needs_ocr = False
-        text = "upload text"
-        sha256 = "a" * 64
-
-    class Result:
-        source_page = Path("sources/uploaded.md")
-
-    class Token:
-        def __init__(self, value: str) -> None:
-            self.hex = value
-
-    tokens = iter(["upload-one", "upload-two"])
-    seen: list[tuple[Path, str]] = []
-
-    monkeypatch.setattr(admin_module, "uuid4", lambda: Token(next(tokens)), raising=False)
-    monkeypatch.setattr(admin_module, "extract_source", lambda path: Extracted())
-
-    def fake_ingest_file(self, path: Path, document_id: str, original_filename=None):
-        seen.append((path, document_id))
-        return Result()
-
-    monkeypatch.setattr(admin_module.IngestionService, "ingest_file", fake_ingest_file)
-    client = TestClient(app)
-
-    first = client.post(
-        "/admin/documents",
-        headers={"Authorization": "Bearer admin-secret"},
-        files={"file": ("same.md", b"first", "text/markdown")},
-    )
-    second = client.post(
-        "/admin/documents",
-        headers={"Authorization": "Bearer admin-secret"},
-        files={"file": ("same.md", b"second", "text/markdown")},
-    )
-
-    assert first.status_code == second.status_code == 200
-    assert first.json()["document"]["document_id"] == "upload-one"
-    assert second.json()["document"]["document_id"] == "upload-two"
-    assert len(seen) == 2
-    assert seen[0][0] != seen[1][0]
-    assert seen[0][1] == "upload-one"
-    assert seen[1][1] == "upload-two"
-    assert seen[0][0].read_bytes() == b"first"
-    assert seen[1][0].read_bytes() == b"second"
-
-
-def test_admin_document_upload_saves_markdown_and_ingests(tmp_path, monkeypatch):
-    settings = mounted_settings(tmp_path, admin_upload_max_bytes=1024)
-    app = legacy_upload_app(settings, monkeypatch)
-
-    class Extracted:
-        kind = "markdown"
-        needs_ocr = False
-        text = "# Profile\n\nMarkdown evidence."
-        sha256 = "a" * 64
-
-    class Result:
-        source_page = Path("sources/profile.md")
-
-    def fake_extract(path: Path):
-        assert path.name.endswith(".md")
-        return Extracted()
-
-    def fake_ingest_file(self, path: Path, document_id: str, original_filename=None):
-        assert path.parent == tmp_path / "documents"
-        assert path.read_text(encoding="utf-8") == "# Profile\n\nMarkdown evidence."
-        return Result()
-
-    monkeypatch.setattr("cv_agent.api.admin.extract_source", fake_extract)
-    monkeypatch.setattr("cv_agent.api.admin.IngestionService.ingest_file", fake_ingest_file)
-
-    response = TestClient(app).post(
-        "/admin/documents",
-        headers={"Authorization": "Bearer admin-secret"},
-        files={"file": ("Profile Notes.md", b"# Profile\n\nMarkdown evidence.", "text/markdown")},
-    )
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["status"] == "ok"
-    assert payload["document"]["filename"] == "Profile-Notes.md"
-    assert payload["document"]["kind"] == "markdown"
-    assert payload["ingestion"] == {
-        "count": 1, "sources": ["sources/profile.md"], "generated": []
-    }
-
-
-def test_admin_document_upload_saves_latex_and_ingests(tmp_path, monkeypatch):
-    settings = mounted_settings(tmp_path, admin_upload_max_bytes=1024)
-    app = legacy_upload_app(settings, monkeypatch)
-
-    class Extracted:
-        kind = "latex"
-        needs_ocr = False
-        text = "Profile latex evidence."
-        sha256 = "a" * 64
-
-    class Result:
-        source_page = Path("sources/profile-latex.md")
-
-    def fake_extract(path: Path):
-        assert path.name.endswith(".tex")
-        return Extracted()
-
-    def fake_ingest_file(self, path: Path, document_id: str, original_filename=None):
-        assert path.parent == tmp_path / "documents"
-        assert path.read_text(encoding="utf-8") == r"\section{Profile} Profile latex evidence."
-        return Result()
-
-    monkeypatch.setattr("cv_agent.api.admin.extract_source", fake_extract)
-    monkeypatch.setattr("cv_agent.api.admin.IngestionService.ingest_file", fake_ingest_file)
-
-    response = TestClient(app).post(
-        "/admin/documents",
-        headers={"Authorization": "Bearer admin-secret"},
-        files={
-            "file": (
-                "Profile Source.tex",
-                rb"\section{Profile} Profile latex evidence.",
-                "application/x-tex",
-            )
-        },
-    )
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["status"] == "ok"
-    assert payload["document"]["filename"] == "Profile-Source.tex"
-    assert payload["document"]["kind"] == "latex"
-    assert payload["ingestion"] == {
-        "count": 1, "sources": ["sources/profile-latex.md"], "generated": []
-    }
-
-
 def test_admin_document_upload_rejects_unsupported_extension(tmp_path):
     settings = mounted_settings(tmp_path)
     app = create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
@@ -448,28 +267,6 @@ def test_admin_document_upload_rejects_oversized_file(tmp_path):
     )
 
     assert response.status_code == 413
-
-
-def test_admin_document_upload_rejects_low_text_pdf(tmp_path, monkeypatch):
-    settings = mounted_settings(tmp_path)
-    app = legacy_upload_app(settings, monkeypatch)
-
-    class Extracted:
-        kind = "pdf"
-        needs_ocr = True
-        text = ""
-        sha256 = "a" * 64
-
-    monkeypatch.setattr("cv_agent.api.admin.extract_source", lambda path: Extracted())
-
-    response = TestClient(app).post(
-        "/admin/documents",
-        headers={"Authorization": "Bearer admin-secret"},
-        files={"file": ("scan.pdf", b"%PDF-1.4 image", "application/pdf")},
-    )
-
-    assert response.status_code == 422
-    assert "OCR" in response.json()["detail"]
 
 
 def test_admin_status_reports_storage_and_local_repository(tmp_path):

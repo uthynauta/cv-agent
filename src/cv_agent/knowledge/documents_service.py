@@ -48,6 +48,15 @@ class DocumentMutationError(RuntimeError):
         super().__init__(f"{bounded} (operation {operation_id})")
 
 
+class DocumentValidationError(DocumentMutationError):
+    """Raised when a document cannot be searched or processed as submitted."""
+
+    def __init__(self, operation_id: str, message: str = "document validation failed") -> None:
+        bounded = str(message).replace("\n", " ").replace("\r", " ")[:240]
+        self.detail = bounded
+        super().__init__(operation_id, bounded)
+
+
 class DocumentCompensationError(DocumentMutationError):
     """Raised when restoring a failed mutation also encounters an error."""
 
@@ -255,7 +264,7 @@ class DocumentService:
         self._write_exclusive(target, data)
         result = candidate.ingestion.ingest_file(target, document_id, filename)
         if result.needs_ocr:
-            raise DocumentMutationError(candidate.operation_id, "document requires OCR")
+            raise DocumentValidationError(candidate.operation_id, "document requires OCR")
         return document_id, sha256(data).hexdigest()
 
     def _stage_delete(self, candidate: _Candidate, document_id: str) -> tuple[str, str]:

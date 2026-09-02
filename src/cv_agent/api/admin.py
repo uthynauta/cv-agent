@@ -1,28 +1,19 @@
 import os
 from pathlib import Path
 from typing import Annotated
-from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile, status
 
 from cv_agent.config import Settings
-from cv_agent.knowledge.extractors import extract_source
 from cv_agent.knowledge.ingest import IngestionService
-from cv_agent.knowledge import ingest as ingest_module
 from cv_agent.knowledge.git_store import LocalKnowledgeGit
 from cv_agent.knowledge.repository import KnowledgeRepository, resolve_directory_path
 from cv_agent.knowledge.storage import DataPaths, ensure_data_storage, safe_upload_filename
-from cv_agent.knowledge.documents_service import DocumentMutationError, DocumentService
-
-
-_DEFAULT_EXTRACT_SOURCE = extract_source
-
-
-def _extract_upload(path: Path):
-    # Keep upload tests and callers able to patch either the public admin helper
-    # or the extractor used by IngestionService.
-    extractor = extract_source if extract_source is not _DEFAULT_EXTRACT_SOURCE else ingest_module.extract_source
-    return extractor(path)
+from cv_agent.knowledge.documents_service import (
+    DocumentMutationError,
+    DocumentService,
+    DocumentValidationError,
+)
 
 
 def _knowledge_initialized(repository: KnowledgeRepository) -> bool:
@@ -86,86 +77,13 @@ async def _read_upload(file: UploadFile, max_bytes: int) -> bytes:
     return data
 
 
-def _markdown_paths(repository: KnowledgeRepository) -> set[Path]:
-    root = repository.root
-    try:
-        return {
-            path.resolve()
-            for scope in (root / "sources", root / "knowledge")
-            for path in scope.rglob("*.md")
-            if path.is_file() and not path.is_symlink()
-        }
-    except OSError:
-        return set()
-
-
-def _markdown_state(repository: KnowledgeRepository, paths: set[Path]) -> dict[Path, bytes]:
-    state: dict[Path, bytes] = {}
-    for path in paths:
-        try:
-            state[path] = path.read_bytes()
-        except OSError:
-            continue
-    return state
-
-
-def _resolved_repository_path(repository_root: Path, path: Path | str) -> Path:
-    candidate = Path(path)
-    if not candidate.is_absolute():
-        candidate = repository_root / candidate
-    return candidate.resolve()
-
-
-def _cleanup_upload(
-    repository: KnowledgeRepository,
-    before_markdown: set[Path],
-    before_state: dict[Path, bytes],
-    document_id: str,
-    staging_path: Path,
-    original_path: Path,
-    original_created: bool,
-    generated_paths: tuple[Path, ...] = (),
-) -> None:
-    paths_to_remove = (staging_path, original_path) if original_created else (staging_path,)
-    for path in paths_to_remove:
-        try:
-            path.unlink(missing_ok=True)
-        except OSError:
-            pass
-    repository_root = repository.root.resolve()
-    transaction_paths = {
-        repository_root / "sources" / f"{document_id}.md",
-        repository_root / "knowledge" / "index.md",
-        repository_root / "knowledge" / "log.md",
-        *(_resolved_repository_path(repository_root, path) for path in generated_paths),
-    }
-    # OpenAI-generated pages may be written before ingestion raises. Identify
-    # only new pages citing this document; unrelated concurrent pages survive.
-    for path in _markdown_paths(repository) - before_markdown:
-        try:
-            text = path.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        if f"[[sources/{document_id}]]" in text or f"document_id: {document_id}" in text:
-            transaction_paths.add(path)
-    for path in transaction_paths:
-        previous = before_state.get(path)
-        try:
-            if previous is None:
-                path.unlink(missing_ok=True)
-            else:
-                path.write_bytes(previous)
-        except OSError:
-            pass
-
-
 async def upload_document_payload(
     settings: Settings,
     paths: DataPaths,
     git_store: LocalKnowledgeGit,
     ingestion: IngestionService,
     file: UploadFile,
-    document_service: DocumentService | None = None,
+    document_service: DocumentService,
 ) -> dict[str, object]:
     try:
         filename = safe_upload_filename(file.filename or "")
@@ -173,174 +91,49 @@ async def upload_document_payload(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     data = await _read_upload(file, settings.admin_upload_max_bytes)
-    if document_service is not None:
-        try:
-            result = document_service.add(filename, data, file.content_type)
-        except DocumentMutationError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=f"document mutation failed; operation {exc.operation_id}",
-            ) from exc
-        except (OSError, ValueError) as exc:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="document ingestion is unavailable",
-            ) from exc
-        record = next(
-            (item for item in document_service.list_documents() if item.document_id == result.document_id),
-            None,
-        )
-        original = next(paths.documents.glob(f"{result.document_id}.*"), None)
-        source_path = f"sources/{result.document_id}.md"
-        generated_paths = [
-            path for path in result.changed_paths
-            if path.startswith("knowledge/") and path not in {"knowledge/index.md", "knowledge/log.md"}
-        ]
-        return {
-            "status": "ok",
-            "document": {
-                "document_id": result.document_id,
-                "filename": filename,
-                "path": str(original.relative_to(paths.root)) if original else f"documents/{result.document_id}{Path(filename).suffix.lower()}",
-                "kind": (record.media_type.split("/", 1)[-1] if record else Path(filename).suffix.lower().lstrip(".")),
-                "source": source_path,
-                "generated": generated_paths,
-            },
-            "ingestion": {"count": 1, "sources": [source_path], "generated": generated_paths},
-            "revision": {"commit": result.commit},
-        }
     try:
-        staging_dir = resolve_directory_path(paths.staging, create=True)
-        documents_dir = resolve_directory_path(paths.documents, create=True)
+        result = document_service.add(filename, data, file.content_type)
+    except DocumentValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=exc.detail) from exc
+    except DocumentMutationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"document mutation failed; operation {exc.operation_id}",
+        ) from exc
     except (OSError, ValueError) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="upload storage is unavailable",
-        ) from exc
-    document_id = uuid4().hex
-    staging_path = staging_dir / f"{document_id}-{filename}"
-    original_path = documents_dir / f"{document_id}{Path(filename).suffix.lower()}"
-    staging_created = False
-    try:
-        handle = staging_path.open("xb")
-        staging_created = True
-        with handle:
-            handle.write(data)
-    except FileExistsError as exc:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="upload ID collision") from exc
-    except OSError as exc:
-        if staging_created:
-            try:
-                staging_path.unlink(missing_ok=True)
-            except OSError:
-                pass
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="upload storage is unavailable",
-        ) from exc
-
-    repository = ingestion.repository
-    before_markdown = _markdown_paths(repository)
-    repository_root = repository.root.resolve()
-    before_state = _markdown_state(repository, before_markdown)
-    before_state.update(
-        _markdown_state(
-            repository,
-            {
-                repository_root / "sources" / f"{document_id}.md",
-                repository_root / "knowledge" / "index.md",
-                repository_root / "knowledge" / "log.md",
-            },
-        )
-    )
-    try:
-        extracted = _extract_upload(staging_path)
-    except Exception as exc:
-        _cleanup_upload(
-            repository,
-            before_markdown,
-            before_state,
-            document_id,
-            staging_path,
-            original_path,
-            False,
-        )
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="document is unreadable") from exc
-    if extracted.needs_ocr:
-        _cleanup_upload(
-            repository,
-            before_markdown,
-            before_state,
-            document_id,
-            staging_path,
-            original_path,
-            False,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="PDF requires OCR before upload",
-        )
-
-    result = None
-    original_created = False
-    try:
-        handle = original_path.open("xb")
-        # Exclusive open creates the transaction-owned file before write starts.
-        original_created = True
-        with handle:
-            handle.write(data)
-        result = ingestion.ingest_file(original_path, document_id, filename)
-        commit = git_store.commit(f"Ingest document {document_id}")
-    except HTTPException:
-        _cleanup_upload(
-            repository,
-            before_markdown,
-            before_state,
-            document_id,
-            staging_path,
-            original_path,
-            original_created,
-            tuple(getattr(result, "generated_pages", ())) if result is not None else (),
-        )
-        raise
-    except Exception as exc:
-        _cleanup_upload(
-            repository,
-            before_markdown,
-            before_state,
-            document_id,
-            staging_path,
-            original_path,
-            original_created,
-            tuple(getattr(result, "generated_pages", ())) if result is not None else (),
-        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="document ingestion is unavailable",
         ) from exc
-    try:
-        staging_path.unlink(missing_ok=True)
-    except OSError:
-        # Commit already succeeded; leave the artifact for a later bounded cleanup.
-        pass
-    source_path = str(result.source_page)
-    generated_paths = [str(path) for path in getattr(result, "generated_pages", ())]
+    record = next(
+        (item for item in document_service.list_documents() if item.document_id == result.document_id),
+        None,
+    )
+    original = next(paths.documents.glob(f"{result.document_id}.*"), None)
+    source_path = f"sources/{result.document_id}.md"
+    kind = (
+        {"application/pdf": "pdf", "text/markdown": "markdown", "application/x-tex": "latex"}.get(
+            record.media_type
+        )
+        if record
+        else Path(filename).suffix.lower().lstrip(".")
+    )
+    generated_paths = [
+        path for path in result.changed_paths
+        if path.startswith("knowledge/") and path not in {"knowledge/index.md", "knowledge/log.md"}
+    ]
     return {
         "status": "ok",
         "document": {
-            "document_id": getattr(result, "document_id", document_id),
+            "document_id": result.document_id,
             "filename": filename,
-            "path": str(original_path.relative_to(paths.root)),
-            "kind": extracted.kind,
+            "path": str(original.relative_to(paths.root)) if original else f"documents/{result.document_id}{Path(filename).suffix.lower()}",
+            "kind": kind,
             "source": source_path,
             "generated": generated_paths,
         },
-        "ingestion": {
-            "count": 1,
-            "sources": [source_path],
-            "generated": generated_paths,
-        },
-        "revision": {"commit": commit},
+        "ingestion": {"count": 1, "sources": [source_path], "generated": generated_paths},
+        "revision": {"commit": result.commit},
     }
 
 
@@ -349,7 +142,7 @@ def build_admin_router(
     paths: DataPaths,
     git_store: LocalKnowledgeGit,
     ingestion: IngestionService,
-    document_service: DocumentService | None = None,
+    document_service: DocumentService,
 ) -> APIRouter:
     def require_admin_key(authorization: Annotated[str | None, Header()] = None) -> None:
         if not settings.admin_api_key:

@@ -8,6 +8,7 @@ from cv_agent.knowledge.documents_service import (
     DocumentCompensationError,
     DocumentMutationError,
     DocumentNotFoundError,
+    DocumentValidationError,
     DocumentService,
 )
 from cv_agent.knowledge.git_store import LocalKnowledgeGit
@@ -52,6 +53,40 @@ def test_delete_removes_source_and_original(document_service: DocumentService):
     assert result.document_id == added.document_id
     assert document_service.list_documents() == []
     assert document_service.active.search("Python") == []
+
+
+def test_add_rejects_documents_that_require_ocr(
+    document_service: DocumentService, monkeypatch: pytest.MonkeyPatch
+):
+    class Extracted:
+        kind = "pdf"
+        needs_ocr = True
+        text = ""
+        sha256 = "a" * 64
+
+    monkeypatch.setattr("cv_agent.knowledge.ingest.extract_source", lambda path: Extracted())
+
+    with pytest.raises(DocumentValidationError) as error:
+        document_service.add("scan.pdf", b"%PDF-1.4 image", "application/pdf")
+
+    assert error.value.operation_id
+    assert "OCR" in str(error.value)
+    assert document_service.list_documents() == []
+
+
+def test_add_collision_preserves_existing_document(document_service: DocumentService, monkeypatch):
+    class Token:
+        hex = "a" * 32
+
+    monkeypatch.setattr("cv_agent.knowledge.documents_service.uuid4", lambda: Token())
+    first = document_service.add("candidate.md", b"original")
+
+    with pytest.raises(DocumentMutationError):
+        document_service.add("candidate.md", b"replacement")
+
+    original = next(document_service.paths.documents.glob(f"{first.document_id}.*"))
+    assert original.read_bytes() == b"original"
+    assert document_service.active.search("original")
 
 
 def test_rebuild_uses_versioned_source_when_original_is_unavailable(document_service: DocumentService):
