@@ -14,6 +14,7 @@ from cv_agent.config import Settings
 from cv_agent.knowledge.git_store import LocalKnowledgeGit
 from cv_agent.knowledge.ingest import IngestionService
 from cv_agent.knowledge.storage import DataPaths
+from cv_agent.knowledge.documents_service import DocumentService
 
 
 SESSION_COOKIE = "cv_agent_admin_session"
@@ -24,6 +25,7 @@ def build_admin_ui_router(
     paths: DataPaths,
     git_store: LocalKnowledgeGit,
     ingestion: IngestionService,
+    document_service: DocumentService,
 ) -> APIRouter:
     router = APIRouter()
 
@@ -436,6 +438,6 @@ setInterval(refreshStatus, 10000);
             return disabled_response()
         if not verify_session_token(request.cookies.get(SESSION_COOKIE)):
             return JSONResponse({"detail": "invalid session"}, status_code=status.HTTP_401_UNAUTHORIZED)
-        return await upload_document_payload(settings, paths, git_store, ingestion, file)
+        return await upload_document_payload(settings, paths, git_store, ingestion, file, document_service)
 
     return router

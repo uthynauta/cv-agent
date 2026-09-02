@@ -1,5 +1,4 @@
 from collections.abc import Callable
-import inspect
 
 from fastapi import FastAPI
 
@@ -66,7 +65,7 @@ def create_app(
     app.include_router(
         build_health_router(settings, repository, lambda: active_knowledge.initialized)
     )
-    app.include_router(build_admin_ui_router(settings, paths, git_store, ingestion))
+    app.include_router(build_admin_ui_router(settings, paths, git_store, ingestion, document_service))
     if agent_answerer is None:
         def agent_answerer(text: str, instructions: str | None = None) -> str:
             answer_client = OpenAITextClient(settings)
@@ -81,12 +80,7 @@ def create_app(
     app.include_router(
         build_responses_router(settings, agent_answerer, lambda: active_knowledge.initialized)
     )
-    if len(inspect.signature(build_admin_router).parameters) >= 5:
-        admin_router = build_admin_router(settings, paths, git_store, ingestion, document_service)
-    else:
-        # Keep downstream integrations on the pre-lifecycle factory contract.
-        admin_router = build_admin_router(settings, paths, git_store, ingestion)
-    app.include_router(admin_router)
+    app.include_router(build_admin_router(settings, paths, git_store, ingestion, document_service))
     return app
 
 

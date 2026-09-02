@@ -211,12 +211,14 @@ def test_ui_upload_uses_shared_admin_ingestion(tmp_path, monkeypatch):
     settings = ui_settings(tmp_path)
     captured = {}
 
-    def fake_build_admin_router(settings_arg, paths, git_store, ingestion):
+    def fake_build_admin_router(settings_arg, paths, git_store, ingestion, document_service):
         captured["api_ingestion"] = ingestion
+        captured["api_service"] = document_service
         return APIRouter()
 
-    async def fake_upload_document_payload(settings_arg, paths, git_store, ingestion, file):
+    async def fake_upload_document_payload(settings_arg, paths, git_store, ingestion, file, document_service):
         captured["ui_ingestion"] = ingestion
+        captured["ui_service"] = document_service
         return {
             "status": "ok",
             "document": {"filename": "Uploaded-PDF.pdf", "path": "documents/uploaded.pdf", "kind": "pdf"},
