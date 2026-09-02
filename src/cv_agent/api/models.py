@@ -22,6 +22,7 @@ class ResponseRequest(BaseModel):
     input: str = Field(min_length=1)
     instructions: str | None = None
 
+
     @field_validator("model", mode="before")
     @classmethod
     def normalize_model(cls, value: Any) -> str | None:
@@ -172,3 +173,7 @@ def _truncate_text(value: str, max_chars: int) -> str:
     if max_chars <= 1:
         return value[:max_chars]
     return value[: max_chars - 1].rstrip() + "…"
+
+
+class ConfirmationRequest(BaseModel):
+    confirm: bool = False

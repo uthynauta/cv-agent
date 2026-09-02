@@ -379,10 +379,10 @@ def test_admin_status_reports_storage_and_local_repository(tmp_path):
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["storage"]["documents_dir"].endswith("documents")
-    assert payload["storage"]["documents_dir_writable"] is True
+    assert payload["storage"]["writable"] is True
+    assert payload["storage"]["document_count"] == 0
     assert payload["knowledge"]["initialized"] is False
-    assert payload["repository"]["head"] == ""
+    assert payload["knowledge"]["active_commit"] == ""
     assert payload["ingestion"]["mode"] == settings.ingestion_mode
 def test_admin_status_payload_helper_reports_local_storage(tmp_path):
     from cv_agent.api.admin import build_admin_status_payload
@@ -395,5 +395,6 @@ def test_admin_status_payload_helper_reports_local_storage(tmp_path):
     payload = build_admin_status_payload(settings)
 
     assert payload["status"] == "ok"
-    assert payload["storage"]["documents_dir"].endswith("documents")
+    assert payload["storage"]["writable"] is True
+    assert payload["storage"]["document_count"] == 0
     assert "github" not in payload

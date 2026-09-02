@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile, status
 
 from cv_agent.config import Settings
 from cv_agent.knowledge.ingest import IngestionService
@@ -11,9 +11,12 @@ from cv_agent.knowledge.repository import KnowledgeRepository, resolve_directory
 from cv_agent.knowledge.storage import DataPaths, ensure_data_storage, safe_upload_filename
 from cv_agent.knowledge.documents_service import (
     DocumentMutationError,
+    DocumentNotFoundError,
     DocumentService,
     DocumentValidationError,
 )
+from cv_agent.knowledge.locking import MutationBusyError
+from cv_agent.api.models import ConfirmationRequest
 
 
 def _knowledge_initialized(repository: KnowledgeRepository) -> bool:
@@ -27,6 +30,7 @@ def build_admin_status_payload(
     paths: DataPaths | None = None,
     git_store: LocalKnowledgeGit | None = None,
     repository: KnowledgeRepository | None = None,
+    document_service: DocumentService | None = None,
 ) -> dict[str, object]:
     paths = paths or ensure_data_storage(settings.data_dir)
     if git_store is None:
@@ -44,26 +48,18 @@ def build_admin_status_payload(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="upload storage is unavailable",
         ) from exc
+    document_count = len(document_service.list_documents()) if document_service is not None else 0
     return {
         "status": "ok",
         "admin": {"enabled": bool(settings.admin_api_key)},
         "storage": {
-            "documents_dir": str(documents),
-            "documents_dir_writable": documents.exists() and os.access(documents, os.W_OK),
+            "writable": documents.exists() and os.access(documents, os.W_OK),
+            "document_count": document_count,
         },
         "ingestion": {"mode": settings.ingestion_mode},
         "knowledge": {
             "initialized": _knowledge_initialized(repository),
-            "repository_head": head,
-        },
-        "repository": {"head": head},
-        "paths": {
-            "root": str(paths.root),
-            "documents": str(paths.documents),
-            "repository": str(paths.repository),
-            "sources": str(paths.sources),
-            "knowledge": str(paths.knowledge),
-            "staging": str(paths.staging),
+            "active_commit": head,
         },
     }
 
@@ -93,6 +89,12 @@ async def upload_document_payload(
     data = await _read_upload(file, settings.admin_upload_max_bytes)
     try:
         result = document_service.add(filename, data, file.content_type)
+    except MutationBusyError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="another document mutation is running") from exc
+    except DocumentNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="document was not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="document identifier is invalid") from exc
     except DocumentValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=exc.detail) from exc
     except DocumentMutationError as exc:
@@ -137,6 +139,29 @@ async def upload_document_payload(
     }
 
 
+async def replace_document_payload(
+    settings: Settings, paths: DataPaths, file: UploadFile, document_id: str, document_service: DocumentService
+) -> dict[str, object]:
+    try:
+        filename = safe_upload_filename(file.filename or "")
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    data = await _read_upload(file, settings.admin_upload_max_bytes)
+    try:
+        result = document_service.replace(document_id, filename, data, file.content_type)
+    except MutationBusyError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="another document mutation is running") from exc
+    except DocumentNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="document was not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="document identifier is invalid") from exc
+    except DocumentValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=exc.detail) from exc
+    except DocumentMutationError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"document mutation failed; operation {exc.operation_id}") from exc
+    return {"status": "ok", "document_id": result.document_id, "content_sha256": result.content_sha256, "revision": {"commit": result.commit}}
+
+
 def build_admin_router(
     settings: Settings,
     paths: DataPaths,
@@ -158,8 +183,70 @@ def build_admin_router(
     async def upload_document(file: UploadFile = File(...)) -> dict[str, object]:
         return await upload_document_payload(settings, paths, git_store, ingestion, file, document_service)
 
+    @router.get("/admin/documents")
+    def list_documents() -> dict[str, object]:
+        return {"status": "ok", "documents": [record.__dict__ for record in document_service.list_documents()]}
+
+    @router.put("/admin/documents/{document_id}")
+    async def replace_document(document_id: str, file: UploadFile = File(...)) -> dict[str, object]:
+        return await replace_document_payload(settings, paths, file, document_id, document_service)
+
+    @router.delete("/admin/documents/{document_id}")
+    def delete_document(document_id: str, request: ConfirmationRequest | None = None) -> dict[str, object]:
+        if request is None or not request.confirm:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="confirmation required")
+        try:
+            result = document_service.delete(document_id)
+        except MutationBusyError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="another document mutation is running") from exc
+        except DocumentNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="document was not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="document identifier is invalid") from exc
+        except DocumentValidationError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=exc.detail) from exc
+        except DocumentMutationError as exc:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"document mutation failed; operation {exc.operation_id}") from exc
+        return {"status": "ok", "revision": {"commit": result.commit}}
+
+    @router.post("/admin/rebuild")
+    def rebuild() -> dict[str, object]:
+        try:
+            result = document_service.rebuild()
+        except MutationBusyError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="another document mutation is running") from exc
+        except DocumentValidationError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=exc.detail) from exc
+        except DocumentMutationError as exc:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"document mutation failed; operation {exc.operation_id}") from exc
+        return {"status": "ok", "revision": {"commit": result.commit}}
+
+    @router.get("/admin/revisions")
+    def revisions(limit: int = Query(default=20, ge=0, le=100)) -> dict[str, object]:
+        try:
+            items = document_service.history(limit)
+        except DocumentMutationError as exc:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"document mutation failed; operation {exc.operation_id}") from exc
+        return {"status": "ok", "revisions": [{"commit": item.commit, "authored_at": item.authored_at, "subject": item.subject, "changed_paths": list(item.changed_paths)} for item in items]}
+
+    @router.post("/admin/revisions/{commit}/rollback")
+    def rollback(commit: str, request: ConfirmationRequest | None = None) -> dict[str, object]:
+        if request is None or not request.confirm:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="confirmation required")
+        try:
+            result = document_service.rollback(commit, confirmed=True)
+        except MutationBusyError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="another document mutation is running") from exc
+        except DocumentNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="document was not found") from exc
+        except DocumentMutationError as exc:
+            if "invalid" in str(exc).lower():
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="revision was not found") from exc
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"document mutation failed; operation {exc.operation_id}") from exc
+        return {"status": "ok", "revision": {"commit": result.commit}}
+
     @router.get("/admin/status")
     def admin_status() -> dict[str, object]:
-        return build_admin_status_payload(settings, paths, git_store, ingestion.repository)
+        return build_admin_status_payload(settings, paths, git_store, ingestion.repository, document_service)
 
     return router
