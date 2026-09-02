@@ -8,6 +8,11 @@ import yaml
 
 
 SPANISH_MARKERS = {" el ", " la ", " de ", " que ", " experiencia ", " fuentes:"}
+DEFAULT_MODEL_NAME = "cv-agent"
+
+
+def resolve_model_name() -> str:
+    return os.environ.get("AGENT_MODEL_NAME") or DEFAULT_MODEL_NAME
 
 
 def main() -> int:
@@ -25,7 +30,7 @@ def main() -> int:
         for item in questions:
             response = client.post(
                 f"{args.base_url.rstrip('/')}/v1/responses",
-                json={"model": "banorte-cv-agent", "input": item["text"]},
+                json={"model": resolve_model_name(), "input": item["text"]},
                 headers=headers,
             )
             if response.status_code != 200:

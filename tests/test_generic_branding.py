@@ -51,12 +51,40 @@ def test_active_tree_has_no_legacy_identity_or_deployment_markers():
             "centro" + "geo",
         )
     )
-    roots = [root / "src", root / "tests", root / "docs", root / "README.md"]
+    roots = [
+        root / "src",
+        root / "tests",
+        root / "docs",
+        root / "evals",
+        root / "README.md",
+        root / "Dockerfile",
+        root / "docker-compose.yml",
+        root / ".dockerignore",
+        root / ".env.example",
+        root / ".gitignore",
+        root / "pyproject.toml",
+        root / "uv.lock",
+    ]
+    excluded_dirs = {
+        ".git",
+        ".pytest_cache",
+        ".venv",
+        "__pycache__",
+        "build",
+        "dist",
+        ".worktrees",
+        ".superpowers",
+    }
     offenders = []
     for candidate in roots:
         paths = [candidate] if candidate.is_file() else candidate.rglob("*")
         for path in paths:
-            if not path.is_file() or "superpowers" in path.parts or path.suffix == ".pyc":
+            if (
+                not path.is_file()
+                or excluded_dirs.intersection(path.relative_to(root).parts)
+                or "superpowers" in path.parts
+                or path.suffix == ".pyc"
+            ):
                 continue
             text = _normalize_audit_text(path.read_text(encoding="utf-8", errors="ignore"))
             if any(marker in text for marker in markers):

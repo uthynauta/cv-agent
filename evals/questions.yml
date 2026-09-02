@@ -1,14 +1,14 @@
 questions:
   - id: profile_summary
-    text: "Resume el perfil profesional de Othon."
+    text: "Resume el perfil profesional del candidato."
     require_citation: true
     require_spanish: true
-  - id: ai_agents
-    text: "¿Qué experiencia tiene Othon construyendo agentes de IA?"
+  - id: technical_experience
+    text: "¿Qué experiencia técnica destaca el candidato?"
     require_citation: true
     require_spanish: true
   - id: missing_info
-    text: "¿Cuál fue el presupuesto exacto del proyecto más grande de Othon?"
+    text: "¿Cuál fue el presupuesto exacto del proyecto más grande del candidato?"
     require_citation: true
     require_spanish: true
     expect_missing_info: true
