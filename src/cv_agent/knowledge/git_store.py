@@ -17,7 +17,6 @@ _SAFE_OPERATIONS = frozenset(
         "diff-tree",
         "for-each-ref",
         "fsck",
-        "gc",
         "init",
         "ls-files",
         "ls-tree",
@@ -369,10 +368,13 @@ class LocalKnowledgeGit:
             self._run("read-tree", "--reset", "-u", prior)
         else:
             self._run("update-ref", "-d", "refs/heads/main", expected_current)
-            self._run("read-tree", "--empty")
-            # A compensated first commit is unreachable; prune it so the next
-            # guarded commit does not fail the repository fsck preflight.
-            self._run("gc", "--prune=now", "--quiet")
+            # With no prior commit, discard the transaction's index entirely.
+            # An empty read-tree index references Git's empty-tree sentinel,
+            # which may not exist in a repository whose first commit was
+            # compensated; removing the index avoids requiring object pruning.
+            index = self.root / ".git" / "index"
+            if index.exists() or index.is_symlink():
+                index.unlink()
             for scope in (self.root / "sources", self.root / "knowledge"):
                 if scope.is_symlink() or (scope.exists() and not scope.is_dir()):
                     raise GitStoreError("knowledge scope is not a local directory")

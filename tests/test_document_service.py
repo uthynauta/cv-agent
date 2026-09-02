@@ -4,7 +4,9 @@ import pytest
 
 from cv_agent.config import Settings
 from cv_agent.knowledge.documents_service import (
+    DocumentCompensationError,
     DocumentMutationError,
+    DocumentNotFoundError,
     DocumentService,
 )
 from cv_agent.knowledge.git_store import LocalKnowledgeGit
@@ -209,3 +211,47 @@ def test_partial_original_activation_restores_prior_state(
     assert not (document_service.paths.documents / "partial.md").exists()
     assert document_service.active.search("Python")
     assert document_service.active.search("Rust") == []
+
+
+def test_missing_document_preserves_not_found_error_and_id(document_service: DocumentService):
+    with pytest.raises(DocumentNotFoundError) as error:
+        document_service.delete("missing-document")
+    assert error.value.document_id == "missing-document"
+
+
+def test_compensation_failure_is_explicit_and_snapshot_still_restored(
+    document_service: DocumentService, monkeypatch: pytest.MonkeyPatch
+):
+    added = document_service.add("candidate.md", b"Python")
+    prior_snapshot = document_service.active._snapshot
+    monkeypatch.setattr(document_service.active, "reload", lambda repository: (_ for _ in ()).throw(ValueError("activation")))
+    monkeypatch.setattr(document_service, "_restore_directory_from_backup", lambda live, backup: (_ for _ in ()).throw(OSError("restore")))
+
+    with pytest.raises(DocumentCompensationError) as error:
+        document_service.replace(added.document_id, "candidate.md", b"Rust")
+
+    assert error.value.operation_id
+    assert document_service.active._snapshot is prior_snapshot
+
+
+def test_failure_before_original_activation_keeps_original_directory_untouched(
+    document_service: DocumentService, monkeypatch: pytest.MonkeyPatch
+):
+    added = document_service.add("candidate.md", b"Python")
+    original_directory = document_service.paths.documents
+    original = next(original_directory.glob(f"{added.document_id}.*"))
+    prior_bytes = original.read_bytes()
+    restore_calls: list[tuple[Path, Path]] = []
+
+    def record_restore(live: Path, backup: Path) -> None:
+        restore_calls.append((live, backup))
+
+    monkeypatch.setattr(document_service.git, "changed_paths", lambda commit: (_ for _ in ()).throw(RuntimeError("paths")))
+    monkeypatch.setattr(document_service, "_restore_directory_from_backup", record_restore)
+
+    with pytest.raises(DocumentMutationError):
+        document_service.replace(added.document_id, "candidate.md", b"Rust")
+
+    assert restore_calls == []
+    assert document_service.paths.documents == original_directory
+    assert original.read_bytes() == prior_bytes

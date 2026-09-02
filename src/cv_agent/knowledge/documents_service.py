@@ -48,6 +48,13 @@ class DocumentMutationError(RuntimeError):
         super().__init__(f"{bounded} (operation {operation_id})")
 
 
+class DocumentCompensationError(DocumentMutationError):
+    """Raised when restoring a failed mutation also encounters an error."""
+
+    def __init__(self, operation_id: str) -> None:
+        super().__init__(operation_id, "document mutation compensation failed")
+
+
 class DocumentNotFoundError(DocumentMutationError):
     def __init__(self, document_id: str, operation_id: str = "") -> None:
         super().__init__(operation_id or uuid4().hex, "document was not found")
@@ -225,6 +232,8 @@ class DocumentService:
             # The lock scope intentionally includes all compensation below.
         except MutationBusyError:
             raise
+        except DocumentMutationError:
+            raise
         except Exception as exc:
             raise DocumentMutationError(operation_id) from exc
         finally:
@@ -309,8 +318,6 @@ class DocumentService:
         try:
             if documents_activation_attempted:
                 self._restore_directory_from_backup(self.paths.documents, originals_backup)
-            elif replaced:
-                self._restore_directory_from_backup(self.paths.documents, originals_backup)
             if scopes_backup is not None and replaced:
                 for scope in ("sources", "knowledge"):
                     live = self.repository.root / scope
@@ -324,11 +331,17 @@ class DocumentService:
                 self.git.restore_head(current, prior_head)
             elif current == prior_head:
                 self.git._run("reset", "--", check=False)
-        except Exception:
-            # Preserve the original bounded error; startup validation reports any
-            # unrecoverable mounted-state problem to the operator.
-            pass
-        self._restore_snapshot(prior_snapshot)
+        except Exception as exc:
+            failure: Exception | None = exc
+        else:
+            failure = None
+        finally:
+            try:
+                self._restore_snapshot(prior_snapshot)
+            except Exception as exc:
+                failure = failure or exc
+        if failure is not None:
+            raise DocumentCompensationError(operation_id) from failure
 
     def _snapshot(self) -> KnowledgeSnapshot:
         return self.active._snapshot
