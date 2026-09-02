@@ -42,7 +42,7 @@ class IngestionService:
         with get_tracer().start_as_current_span("wiki.ingest_file") as span:
             span.set_attribute("source.extension", path.suffix.lower())
             try:
-                _validate_document_id(document_id)
+                validate_document_id(document_id)
                 self.repository.resolve_write_path("knowledge/log.md")
                 self.repository.resolve_write_path("knowledge/index.md")
                 extracted = extract_source(path)
@@ -74,7 +74,7 @@ class IngestionService:
     ) -> IngestResult:
         """Ingest already-versioned extracted text without reopening a binary."""
         with get_tracer().start_as_current_span("wiki.ingest_extracted_text"):
-            _validate_document_id(document_id)
+            validate_document_id(document_id)
             if self._mode == "openai":
                 source_page, generated_pages = self._ingest_with_openai(
                     source_path, extracted, document_id, original_filename
@@ -243,7 +243,7 @@ def _media_type(kind: str) -> str:
     }.get(kind, "application/octet-stream")
 
 
-def _validate_document_id(document_id: str) -> None:
+def validate_document_id(document_id: str) -> None:
     if not isinstance(document_id, str) or not document_id.strip():
         raise ValueError("document_id must be a non-empty path-safe identifier")
     if len(document_id.encode("utf-8")) > MAX_DOCUMENT_ID_BYTES:
@@ -252,6 +252,11 @@ def _validate_document_id(document_id: str) -> None:
         raise ValueError("document_id must contain only ASCII letters, digits, '.', '_' or '-'")
     if document_id.lower().endswith(".md"):
         raise ValueError("document_id must not end with .md")
+
+
+# Kept for callers that imported the original private helper during the
+# transition; all lifecycle code uses the public contract above.
+_validate_document_id = validate_document_id
 
 
 def document_id_for_path(path: Path, declared_root: Path | None = None) -> str:

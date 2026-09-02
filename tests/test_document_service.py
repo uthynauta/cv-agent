@@ -11,6 +11,7 @@ from cv_agent.knowledge.git_store import LocalKnowledgeGit
 from cv_agent.knowledge.index import ActiveKnowledge
 from cv_agent.knowledge.ingest import IngestionService
 from cv_agent.knowledge.locking import MutationBusyError, MutationLock
+from cv_agent.knowledge.frontmatter import load_frontmatter
 from cv_agent.knowledge.repository import KnowledgeRepository
 from cv_agent.knowledge.storage import ensure_data_storage
 
@@ -110,3 +111,101 @@ def test_mutation_lock_contention_is_reported_without_mutating(document_service:
         with pytest.raises(MutationBusyError):
             document_service.add("candidate.md", b"Python")
     assert document_service.list_documents() == []
+
+
+@pytest.mark.parametrize("document_id", ["../knowledge/index", "../../documents/other"])
+def test_replace_and_delete_reject_traversal_document_ids(
+    document_service: DocumentService, document_id: str
+):
+    with pytest.raises(ValueError):
+        document_service.replace(document_id, "candidate.md", b"bad")
+    with pytest.raises(ValueError):
+        document_service.delete(document_id)
+    assert not (document_service.repository.root / "knowledge" / "index").exists()
+
+
+def test_first_commit_snapshot_failure_restores_empty_git_state(
+    document_service: DocumentService, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(document_service.active, "reload", lambda repository: (_ for _ in ()).throw(ValueError("bad")))
+
+    with pytest.raises(DocumentMutationError):
+        document_service.add("candidate.md", b"Python")
+
+    assert document_service.git.head() == ""
+    assert document_service.git.tracked_paths() == []
+    assert document_service.list_documents() == []
+    assert document_service.active.search("Python") == []
+    assert list(document_service.paths.documents.glob("*")) == [document_service.paths.documents / "quarantine"]
+    assert list(document_service.paths.staging.iterdir()) == []
+    monkeypatch.undo()
+    added = document_service.add("candidate.md", b"Python")
+    assert added.commit == document_service.git.head()
+
+
+def test_compensation_runs_while_mutation_lock_is_held(
+    document_service: DocumentService, monkeypatch: pytest.MonkeyPatch
+):
+    original_compensate = document_service._compensate
+    observed = False
+
+    def observe_lock(*args, **kwargs):
+        nonlocal observed
+        with pytest.raises(MutationBusyError):
+            with MutationLock(document_service.paths.locks / "mutation.lock"):
+                pass
+        observed = True
+        return original_compensate(*args, **kwargs)
+
+    monkeypatch.setattr(document_service, "_compensate", observe_lock)
+    monkeypatch.setattr(document_service.active, "reload", lambda repository: (_ for _ in ()).throw(ValueError("bad")))
+    with pytest.raises(DocumentMutationError):
+        document_service.add("candidate.md", b"Python")
+    assert observed
+
+
+def test_result_changed_paths_are_limited_to_commit(document_service: DocumentService):
+    first = document_service.add("first.md", b"Python")
+    second = document_service.add("second.md", b"Rust")
+
+    assert "sources/" + first.document_id + ".md" not in second.changed_paths
+    assert "sources/" + second.document_id + ".md" in second.changed_paths
+    assert all(path.startswith(("sources/", "knowledge/")) for path in second.changed_paths)
+
+
+def test_rebuild_preserves_source_identity_and_text(document_service: DocumentService):
+    added = document_service.add("candidate.md", b"Python experience")
+    source = document_service.repository.root / "sources" / f"{added.document_id}.md"
+    before = source.read_text(encoding="utf-8")
+    metadata_before, body_before = load_frontmatter(before)
+
+    document_service.rebuild()
+
+    metadata_after, body_after = load_frontmatter(source.read_text(encoding="utf-8"))
+    assert metadata_after == metadata_before
+    assert body_after == body_before
+
+
+def test_partial_original_activation_restores_prior_state(
+    document_service: DocumentService, monkeypatch: pytest.MonkeyPatch
+):
+    added = document_service.add("candidate.md", b"Python")
+    prior_head = document_service.git.head()
+    original = next(document_service.paths.documents.glob(f"{added.document_id}.*"))
+    prior_bytes = original.read_bytes()
+
+    def partially_activate(candidate: Path, backup: Path) -> None:
+        document_service.paths.documents.rename(backup)
+        document_service.paths.documents.mkdir()
+        (document_service.paths.documents / "partial.md").write_bytes(b"partial")
+        raise OSError("activation failed")
+
+    monkeypatch.setattr(document_service, "_activate_originals", partially_activate)
+    with pytest.raises(DocumentMutationError):
+        document_service.replace(added.document_id, "candidate.md", b"Rust")
+
+    assert document_service.git.head() == prior_head
+    assert original.read_bytes() == prior_bytes
+    assert not (document_service.paths.documents / "partial.md").exists()
+    assert document_service.active.search("Python")
+    assert document_service.active.search("Rust") == []

@@ -14,8 +14,10 @@ _SAFE_OPERATIONS = frozenset(
         "commit",
         "config",
         "diff",
+        "diff-tree",
         "for-each-ref",
         "fsck",
+        "gc",
         "init",
         "ls-files",
         "ls-tree",
@@ -328,6 +330,25 @@ class LocalKnowledgeGit:
         output = self._run("ls-files", "-z").stdout
         return sorted(path for path in output.split("\0") if path)
 
+    def changed_paths(self, commit: str) -> tuple[str, ...]:
+        """Return only Markdown paths changed by one validated commit."""
+        if not _FULL_SHA.fullmatch(commit):
+            raise GitStoreError("Git changed paths requires a full commit ID")
+        verified = self._run("rev-parse", "--verify", f"{commit}^{{commit}}", check=False)
+        if verified.returncode or verified.stdout.strip() != commit:
+            raise GitStoreError("Git changed paths commit is invalid")
+        output = self._run(
+            "diff-tree", "--root", "--no-commit-id", "--name-only", "-r", "-z", commit
+        ).stdout
+        paths: list[str] = []
+        for path in output.split("\0"):
+            if not path:
+                continue
+            if not self._is_allowed_path(path) or not path.lower().endswith(".md"):
+                raise GitStoreError("Git commit contains non-Markdown or out-of-scope paths")
+            paths.append(path)
+        return tuple(sorted(set(paths)))
+
     def restore_head(self, expected_current: str, prior: str) -> None:
         """Atomically restore a transaction's prior commit and Markdown tree."""
         if not _FULL_SHA.fullmatch(expected_current) or (
@@ -348,6 +369,10 @@ class LocalKnowledgeGit:
             self._run("read-tree", "--reset", "-u", prior)
         else:
             self._run("update-ref", "-d", "refs/heads/main", expected_current)
+            self._run("read-tree", "--empty")
+            # A compensated first commit is unreachable; prune it so the next
+            # guarded commit does not fail the repository fsck preflight.
+            self._run("gc", "--prune=now", "--quiet")
             for scope in (self.root / "sources", self.root / "knowledge"):
                 if scope.is_symlink() or (scope.exists() and not scope.is_dir()):
                     raise GitStoreError("knowledge scope is not a local directory")

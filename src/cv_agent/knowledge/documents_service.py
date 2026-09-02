@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from hashlib import sha256
 import shutil
 from pathlib import Path
@@ -9,12 +8,11 @@ import re
 from typing import Callable
 from uuid import uuid4
 
-from cv_agent.knowledge.documents import KnowledgePage
 from cv_agent.knowledge.extractors import ExtractedSource
 from cv_agent.knowledge.frontmatter import load_frontmatter
-from cv_agent.knowledge.git_store import GitStoreError, LocalKnowledgeGit
+from cv_agent.knowledge.git_store import LocalKnowledgeGit
 from cv_agent.knowledge.index import ActiveKnowledge, KnowledgeSnapshot
-from cv_agent.knowledge.ingest import IngestionService
+from cv_agent.knowledge.ingest import IngestionService, validate_document_id
 from cv_agent.knowledge.locking import MutationBusyError, MutationLock
 from cv_agent.knowledge.repository import KnowledgeRepository, resolve_directory_path
 from cv_agent.knowledge.storage import DataPaths, safe_upload_filename
@@ -127,6 +125,7 @@ class DocumentService:
         data: bytes,
         media_type: str | None = None,
     ) -> MutationResult:
+        validate_document_id(document_id)
         filename = safe_upload_filename(original_filename)
         return self._mutate(
             "replace",
@@ -136,6 +135,7 @@ class DocumentService:
         )
 
     def delete(self, document_id: str) -> MutationResult:
+        validate_document_id(document_id)
         return self._mutate(
             "delete",
             lambda candidate: self._stage_delete(candidate, document_id),
@@ -156,65 +156,76 @@ class DocumentService:
         operation_id = uuid4().hex
         if not _OPERATION_ID.fullmatch(operation_id):
             raise DocumentMutationError(operation_id, "could not allocate operation ID")
-        prior_head = self.git.head()
-        prior_snapshot = self._snapshot()
         root: Path | None = None
+        prior_head = ""
+        prior_snapshot = KnowledgeSnapshot(())
         scopes_backup: Path | None = None
         documents_backup: Path | None = None
-        documents_swapped = False
         replaced = False
-        prior_originals = self._copy_tree_snapshot(self.paths.documents)
+        documents_activation_attempted = False
         try:
             with MutationLock(self.paths.locks / "mutation.lock"):
-                # Read the head after locking so two processes cannot race the base.
                 prior_head = self.git.head()
                 prior_snapshot = self._snapshot()
                 root = resolve_directory_path(self.paths.staging / operation_id, create=True)
                 candidate_root = root / "repository"
                 candidate_docs = root / "documents"
+                originals_backup = root / "originals-backup"
                 candidate_root.mkdir()
                 candidate_docs.mkdir()
                 self._copy_tree(self.repository.root / "sources", candidate_root / "sources")
                 self._copy_tree(self.repository.root / "knowledge", candidate_root / "knowledge")
-                self._copy_tree(self.paths.documents, candidate_docs)
+                self._copy_tree(self.paths.documents, originals_backup)
+                self._copy_tree(originals_backup, candidate_docs)
                 candidate_repo = KnowledgeRepository(candidate_root)
                 candidate_ingestion = self.ingestion
                 original_repository = candidate_ingestion.repository
-                candidate_ingestion.repository = candidate_repo
                 try:
+                    candidate_ingestion.repository = candidate_repo
                     candidate = _Candidate(operation_id, root, candidate_repo, candidate_docs, candidate_ingestion)
                     result_id, digest = action(candidate)
                     self._validate_staged(candidate_root)
+
+                    scopes_backup = root / "scope-backup"
+                    scopes_backup.mkdir()
+                    self._swap_directory(candidate_root / "sources", self.repository.root / "sources", scopes_backup / "sources")
+                    try:
+                        self._swap_directory(candidate_root / "knowledge", self.repository.root / "knowledge", scopes_backup / "knowledge")
+                    except Exception:
+                        self._restore_directory(self.repository.root / "sources", scopes_backup / "sources")
+                        raise
+                    replaced = True
+                    commit = self.git.commit(
+                        f"{operation.title()} document {result_id or 'knowledge'} operation {operation_id}"
+                    )
+                    changed = () if commit == prior_head else self.git.changed_paths(commit)
+
+                    documents_backup = root / "documents-backup"
+                    documents_backup.mkdir()
+                    documents_activation_attempted = True
+                    self._activate_originals(candidate_docs, documents_backup)
+                    self.active.reload(self.repository)
+                    return MutationResult(result_id, digest, commit, changed, operation_id)
+                except MutationBusyError:
+                    raise
+                except DocumentMutationError:
+                    self._compensate(
+                        operation_id, prior_head, prior_snapshot, root, scopes_backup,
+                        documents_backup, replaced, documents_activation_attempted, originals_backup,
+                    )
+                    raise
+                except Exception as exc:
+                    self._compensate(
+                        operation_id, prior_head, prior_snapshot, root, scopes_backup,
+                        documents_backup, replaced, documents_activation_attempted, originals_backup,
+                    )
+                    raise DocumentMutationError(operation_id) from exc
                 finally:
                     candidate_ingestion.repository = original_repository
-
-                scopes_backup = root / "scope-backup"
-                scopes_backup.mkdir()
-                self._swap_directory(candidate_root / "sources", self.repository.root / "sources", scopes_backup / "sources")
-                try:
-                    self._swap_directory(candidate_root / "knowledge", self.repository.root / "knowledge", scopes_backup / "knowledge")
-                except Exception:
-                    self._restore_directory(self.repository.root / "sources", scopes_backup / "sources")
-                    raise
-                replaced = True
-                commit = self.git.commit(
-                    f"{operation.title()} document {result_id or 'knowledge'} operation {operation_id}"
-                )
-                changed = tuple(self.git.tracked_paths())
-
-                documents_backup = root / "documents-backup"
-                documents_backup.mkdir()
-                self._activate_originals(candidate_docs, documents_backup)
-                documents_swapped = True
-                self.active.reload(self.repository)
-                return MutationResult(result_id, digest, commit, changed, operation_id)
+            # The lock scope intentionally includes all compensation below.
         except MutationBusyError:
             raise
-        except DocumentMutationError:
-            self._compensate(operation_id, prior_head, prior_snapshot, root, scopes_backup, documents_backup, replaced, documents_swapped, prior_originals)
-            raise
         except Exception as exc:
-            self._compensate(operation_id, prior_head, prior_snapshot, root, scopes_backup, documents_backup, replaced, documents_swapped, prior_originals)
             raise DocumentMutationError(operation_id) from exc
         finally:
             if root is not None:
@@ -223,7 +234,7 @@ class DocumentService:
     def _stage_new_document(
         self, candidate: _Candidate, document_id: str, filename: str, data: bytes, replace: bool = False
     ) -> tuple[str, str]:
-        source = candidate.repository.root / "sources" / f"{document_id}.md"
+        source = _safe_source_path(candidate.repository.root, document_id)
         if source.exists() and not replace:
             raise DocumentMutationError(candidate.operation_id, "document already exists")
         if replace and not source.is_file():
@@ -241,7 +252,7 @@ class DocumentService:
         return document_id, sha256(data).hexdigest()
 
     def _stage_delete(self, candidate: _Candidate, document_id: str) -> tuple[str, str]:
-        source = candidate.repository.root / "sources" / f"{document_id}.md"
+        source = _safe_source_path(candidate.repository.root, document_id)
         if not source.is_file():
             raise DocumentNotFoundError(document_id, candidate.operation_id)
         self._remove_document_pages(candidate.repository, document_id)
@@ -258,7 +269,8 @@ class DocumentService:
                 page.unlink()
         source_pages = sorted((candidate.repository.root / "sources").glob("*.md"))
         for page in source_pages:
-            metadata, body = load_frontmatter(page.read_text(encoding="utf-8"))
+            source_text = page.read_text(encoding="utf-8")
+            metadata, body = load_frontmatter(source_text)
             document_id = metadata.get("document_id")
             if not isinstance(document_id, str):
                 raise ValueError("source identity is invalid")
@@ -268,6 +280,9 @@ class DocumentService:
             candidate.ingestion.ingest_extracted_text(
                 page, extracted, document_id, str(metadata.get("original_filename") or page.stem)
             )
+            # Ingestion may rewrite the source while generating derived pages;
+            # the source itself is immutable during rebuild.
+            page.write_text(source_text, encoding="utf-8")
         candidate.ingestion._write_index()
         return "", ""
 
@@ -278,7 +293,7 @@ class DocumentService:
         self._swap_directory(candidate_documents, self.paths.documents, backup)
 
     def _remove_document_pages(self, repository: KnowledgeRepository, document_id: str) -> None:
-        source = repository.root / "sources" / f"{document_id}.md"
+        source = _safe_source_path(repository.root, document_id)
         source.unlink(missing_ok=True)
         for page in repository.list_pages():
             if page.path == source:
@@ -289,15 +304,13 @@ class DocumentService:
     def _compensate(
         self, operation_id: str, prior_head: str, prior_snapshot: KnowledgeSnapshot, root: Path | None,
         scopes_backup: Path | None, documents_backup: Path | None, replaced: bool,
-        documents_swapped: bool, prior_originals: dict[str, bytes]
+        documents_activation_attempted: bool, originals_backup: Path
     ) -> None:
         try:
-            if documents_swapped and documents_backup is not None and documents_backup.exists():
-                if self.paths.documents.exists():
-                    shutil.rmtree(self.paths.documents, ignore_errors=True)
-                documents_backup.rename(self.paths.documents)
+            if documents_activation_attempted:
+                self._restore_directory_from_backup(self.paths.documents, originals_backup)
             elif replaced:
-                self._restore_original_snapshot(prior_originals)
+                self._restore_directory_from_backup(self.paths.documents, originals_backup)
             if scopes_backup is not None and replaced:
                 for scope in ("sources", "knowledge"):
                     live = self.repository.root / scope
@@ -371,27 +384,10 @@ class DocumentService:
                 raise ValueError("staged tree contains a special file")
 
     @classmethod
-    def _copy_tree_snapshot(cls, source: Path) -> dict[str, bytes]:
-        snapshot: dict[str, bytes] = {}
-        if not source.exists():
-            return snapshot
-        for entry in source.rglob("*"):
-            if entry.is_file() and not entry.is_symlink() and "quarantine" not in entry.parts:
-                snapshot[entry.relative_to(source).as_posix()] = entry.read_bytes()
-        return snapshot
-
-    def _restore_original_snapshot(self, snapshot: dict[str, bytes]) -> None:
-        self.paths.documents.mkdir(parents=True, exist_ok=True)
-        for entry in self.paths.documents.iterdir():
-            if entry.name != "quarantine":
-                if entry.is_dir():
-                    shutil.rmtree(entry, ignore_errors=True)
-                else:
-                    entry.unlink(missing_ok=True)
-        for relative, data in snapshot.items():
-            target = self.paths.documents / relative
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(data)
+    def _restore_directory_from_backup(cls, live: Path, backup: Path) -> None:
+        if live.exists():
+            shutil.rmtree(live, ignore_errors=True)
+        cls._copy_tree(backup, live)
 
 def _extracted_text(body: str) -> str:
     marker = "## Extracted Text"
@@ -402,3 +398,14 @@ def _extracted_text(body: str) -> str:
 
 def _kind_for_media_type(media_type: str) -> str:
     return {"application/pdf": "pdf", "application/x-tex": "latex"}.get(media_type, "markdown")
+
+
+def _safe_source_path(repository_root: Path, document_id: str) -> Path:
+    validate_document_id(document_id)
+    source_root = (repository_root / "sources").resolve()
+    candidate = (source_root / f"{document_id}.md").resolve()
+    try:
+        candidate.relative_to(source_root)
+    except ValueError as exc:
+        raise ValueError("document path is outside sources") from exc
+    return candidate
