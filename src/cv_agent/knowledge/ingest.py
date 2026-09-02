@@ -65,6 +65,35 @@ class IngestionService:
                 INGEST_EVENTS.labels("error").inc()
                 raise
 
+    def ingest_extracted_text(
+        self,
+        source_path: Path,
+        extracted: object,
+        document_id: str,
+        original_filename: str | None = None,
+    ) -> IngestResult:
+        """Ingest already-versioned extracted text without reopening a binary."""
+        with get_tracer().start_as_current_span("wiki.ingest_extracted_text"):
+            _validate_document_id(document_id)
+            if self._mode == "openai":
+                source_page, generated_pages = self._ingest_with_openai(
+                    source_path, extracted, document_id, original_filename
+                )
+            else:
+                source_page = self._ingest_deterministic(
+                    source_path, extracted, document_id, original_filename
+                )
+                generated_pages = ()
+            self._append_log(source_path, self._mode)
+            self._write_index()
+            return IngestResult(
+                document_id,
+                source_path,
+                source_page,
+                tuple(generated_pages),
+                bool(getattr(extracted, "needs_ocr", False)),
+            )
+
     @property
     def _mode(self) -> str:
         return self.settings.ingestion_mode if self.settings else "deterministic"
