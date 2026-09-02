@@ -15,7 +15,7 @@ from cv_agent.knowledge.frontmatter import load_frontmatter
 from cv_agent.knowledge.git_store import GitStoreError, LocalKnowledgeGit
 from cv_agent.knowledge.index import ActiveKnowledge, KnowledgeSnapshot
 from cv_agent.knowledge.ingest import IngestionService
-from cv_agent.knowledge.locking import MutationLock
+from cv_agent.knowledge.locking import MutationBusyError, MutationLock
 from cv_agent.knowledge.repository import KnowledgeRepository, resolve_directory_path
 from cv_agent.knowledge.storage import DataPaths, safe_upload_filename
 from cv_agent.knowledge.validation import validate_knowledge
@@ -84,7 +84,9 @@ class DocumentService:
     def list_documents(self) -> list[DocumentRecord]:
         records: list[DocumentRecord] = []
         for page in self.repository.list_pages():
-            if not page.path.as_posix().startswith(str(self.repository.root / "sources")):
+            try:
+                page.path.resolve().relative_to((self.repository.root / "sources").resolve())
+            except ValueError:
                 continue
             metadata = page.metadata
             document_id = metadata.get("document_id")
@@ -158,6 +160,7 @@ class DocumentService:
         root: Path | None = None
         scopes_backup: Path | None = None
         documents_backup: Path | None = None
+        documents_swapped = False
         replaced = False
         prior_originals = self._copy_tree_snapshot(self.paths.documents)
         try:
@@ -193,19 +196,24 @@ class DocumentService:
                     self._restore_directory(self.repository.root / "sources", scopes_backup / "sources")
                     raise
                 replaced = True
-                commit = self.git.commit(f"{operation.title()} document {result_id or 'knowledge'}")
+                commit = self.git.commit(
+                    f"{operation.title()} document {result_id or 'knowledge'} operation {operation_id}"
+                )
                 changed = tuple(self.git.tracked_paths())
 
                 documents_backup = root / "documents-backup"
                 documents_backup.mkdir()
                 self._activate_originals(candidate_docs, documents_backup)
+                documents_swapped = True
                 self.active.reload(self.repository)
                 return MutationResult(result_id, digest, commit, changed, operation_id)
+        except MutationBusyError:
+            raise
         except DocumentMutationError:
-            self._compensate(operation_id, prior_head, prior_snapshot, root, scopes_backup, documents_backup, replaced, prior_originals)
+            self._compensate(operation_id, prior_head, prior_snapshot, root, scopes_backup, documents_backup, replaced, documents_swapped, prior_originals)
             raise
         except Exception as exc:
-            self._compensate(operation_id, prior_head, prior_snapshot, root, scopes_backup, documents_backup, replaced, prior_originals)
+            self._compensate(operation_id, prior_head, prior_snapshot, root, scopes_backup, documents_backup, replaced, documents_swapped, prior_originals)
             raise DocumentMutationError(operation_id) from exc
         finally:
             if root is not None:
@@ -277,10 +285,11 @@ class DocumentService:
 
     def _compensate(
         self, operation_id: str, prior_head: str, prior_snapshot: KnowledgeSnapshot, root: Path | None,
-        scopes_backup: Path | None, documents_backup: Path | None, replaced: bool, prior_originals: dict[str, bytes]
+        scopes_backup: Path | None, documents_backup: Path | None, replaced: bool,
+        documents_swapped: bool, prior_originals: dict[str, bytes]
     ) -> None:
         try:
-            if documents_backup is not None and documents_backup.exists():
+            if documents_swapped and documents_backup is not None and documents_backup.exists():
                 if self.paths.documents.exists():
                     shutil.rmtree(self.paths.documents, ignore_errors=True)
                 documents_backup.rename(self.paths.documents)
@@ -322,9 +331,16 @@ class DocumentService:
     def _swap_directory(candidate: Path, live: Path, backup: Path) -> None:
         if candidate.is_symlink() or live.is_symlink():
             raise ValueError("knowledge directory uses a symlink")
-        if live.exists():
-            live.rename(backup)
-        candidate.rename(live)
+        moved = False
+        try:
+            if live.exists():
+                live.rename(backup)
+                moved = True
+            candidate.rename(live)
+        except Exception:
+            if moved and backup.exists() and not live.exists():
+                backup.rename(live)
+            raise
 
     @staticmethod
     def _restore_directory(live: Path, backup: Path) -> None:

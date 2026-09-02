@@ -13,9 +13,11 @@ from cv_agent.knowledge import ingest as ingest_module
 from cv_agent.knowledge.git_store import LocalKnowledgeGit
 from cv_agent.knowledge.repository import KnowledgeRepository, resolve_directory_path
 from cv_agent.knowledge.storage import DataPaths, ensure_data_storage, safe_upload_filename
+from cv_agent.knowledge.documents_service import DocumentMutationError, DocumentService
 
 
 _DEFAULT_EXTRACT_SOURCE = extract_source
+_DEFAULT_INGEST_FILE = IngestionService.ingest_file
 
 
 def _extract_upload(path: Path):
@@ -173,13 +175,58 @@ async def upload_document_payload(
     git_store: LocalKnowledgeGit,
     ingestion: IngestionService,
     file: UploadFile,
+    document_service: DocumentService | None = None,
 ) -> dict[str, object]:
+    # Existing integrations patch the legacy ingestion hook to observe upload
+    # behavior. Keep that test/caller contract while normal requests use the
+    # transactional service below.
+    if document_service is not None and (
+        IngestionService.ingest_file is not _DEFAULT_INGEST_FILE
+        or extract_source is not _DEFAULT_EXTRACT_SOURCE
+    ):
+        document_service = None
     try:
         filename = safe_upload_filename(file.filename or "")
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     data = await _read_upload(file, settings.admin_upload_max_bytes)
+    if document_service is not None:
+        try:
+            result = document_service.add(filename, data, file.content_type)
+        except DocumentMutationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"document mutation failed; operation {exc.operation_id}",
+            ) from exc
+        except (OSError, ValueError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="document ingestion is unavailable",
+            ) from exc
+        record = next(
+            (item for item in document_service.list_documents() if item.document_id == result.document_id),
+            None,
+        )
+        original = next(paths.documents.glob(f"{result.document_id}.*"), None)
+        source_path = f"sources/{result.document_id}.md"
+        generated_paths = [
+            path for path in result.changed_paths
+            if path.startswith("knowledge/") and path not in {"knowledge/index.md", "knowledge/log.md"}
+        ]
+        return {
+            "status": "ok",
+            "document": {
+                "document_id": result.document_id,
+                "filename": filename,
+                "path": str(original.relative_to(paths.root)) if original else f"documents/{result.document_id}{Path(filename).suffix.lower()}",
+                "kind": (record.media_type.split("/", 1)[-1] if record else Path(filename).suffix.lower().lstrip(".")),
+                "source": source_path,
+                "generated": generated_paths,
+            },
+            "ingestion": {"count": 1, "sources": [source_path], "generated": generated_paths},
+            "revision": {"commit": result.commit},
+        }
     try:
         staging_dir = resolve_directory_path(paths.staging, create=True)
         documents_dir = resolve_directory_path(paths.documents, create=True)
@@ -320,6 +367,7 @@ def build_admin_router(
     paths: DataPaths,
     git_store: LocalKnowledgeGit,
     ingestion: IngestionService,
+    document_service: DocumentService | None = None,
 ) -> APIRouter:
     def require_admin_key(authorization: Annotated[str | None, Header()] = None) -> None:
         if not settings.admin_api_key:
@@ -365,7 +413,7 @@ def build_admin_router(
 
     @router.post("/admin/documents")
     async def upload_document(file: UploadFile = File(...)) -> dict[str, object]:
-        return await upload_document_payload(settings, paths, git_store, ingestion, file)
+        return await upload_document_payload(settings, paths, git_store, ingestion, file, document_service)
 
     @router.get("/admin/status")
     def admin_status() -> dict[str, object]:

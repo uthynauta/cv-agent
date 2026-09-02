@@ -1,4 +1,5 @@
 from collections.abc import Callable
+import inspect
 
 from fastapi import FastAPI
 
@@ -20,6 +21,7 @@ from cv_agent.knowledge.search import KnowledgeSearch
 from cv_agent.knowledge.index import ActiveKnowledge
 from cv_agent.knowledge.git_store import LocalKnowledgeGit
 from cv_agent.knowledge.storage import ensure_data_storage
+from cv_agent.knowledge.documents_service import DocumentService
 
 
 def create_app(
@@ -48,6 +50,7 @@ def create_app(
     active_knowledge = ActiveKnowledge.load(repository)
     knowledge_search = KnowledgeSearch(active_knowledge)
     ingestion = IngestionService(repository, settings)
+    document_service = DocumentService(paths, git_store, ingestion, active_knowledge)
     app.state.data_paths = paths
     app.state.paths = paths
     app.state.knowledge_git = git_store
@@ -58,6 +61,8 @@ def create_app(
     app.state.knowledge_search = knowledge_search
     app.state.ingestion_service = ingestion
     app.state.ingestion = ingestion
+    app.state.document_service = document_service
+    app.state.documents_service = document_service
     app.include_router(
         build_health_router(settings, repository, lambda: active_knowledge.initialized)
     )
@@ -76,7 +81,12 @@ def create_app(
     app.include_router(
         build_responses_router(settings, agent_answerer, lambda: active_knowledge.initialized)
     )
-    app.include_router(build_admin_router(settings, paths, git_store, ingestion))
+    if len(inspect.signature(build_admin_router).parameters) >= 5:
+        admin_router = build_admin_router(settings, paths, git_store, ingestion, document_service)
+    else:
+        # Keep downstream integrations on the pre-lifecycle factory contract.
+        admin_router = build_admin_router(settings, paths, git_store, ingestion)
+    app.include_router(admin_router)
     return app
 
 

@@ -10,6 +10,7 @@ from cv_agent.knowledge.documents_service import (
 from cv_agent.knowledge.git_store import LocalKnowledgeGit
 from cv_agent.knowledge.index import ActiveKnowledge
 from cv_agent.knowledge.ingest import IngestionService
+from cv_agent.knowledge.locking import MutationBusyError, MutationLock
 from cv_agent.knowledge.repository import KnowledgeRepository
 from cv_agent.knowledge.storage import ensure_data_storage
 
@@ -76,3 +77,36 @@ def test_failed_snapshot_activation_restores_head_and_active(
     assert document_service.active.search("Rust") == []
     assert list(document_service.paths.staging.iterdir()) == []
 
+
+@pytest.mark.parametrize("failure", ["validate", "commit", "originals"])
+def test_post_or_pre_commit_failures_restore_everything(
+    document_service: DocumentService,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+):
+    added = document_service.add("candidate.md", b"Python experience")
+    prior_head = document_service.git.head()
+    original = next(document_service.paths.documents.glob(f"{added.document_id}.*"))
+    prior_bytes = original.read_bytes()
+    if failure == "validate":
+        monkeypatch.setattr(document_service, "_validate_staged", lambda path: (_ for _ in ()).throw(ValueError("invalid")))
+    elif failure == "commit":
+        monkeypatch.setattr(document_service.git, "commit", lambda message: (_ for _ in ()).throw(RuntimeError("git")))
+    else:
+        monkeypatch.setattr(document_service, "_activate_originals", lambda candidate, backup: (_ for _ in ()).throw(OSError("disk")))
+
+    with pytest.raises(DocumentMutationError):
+        document_service.replace(added.document_id, "candidate.md", b"Rust experience")
+
+    assert document_service.git.head() == prior_head
+    assert original.read_bytes() == prior_bytes
+    assert document_service.active.search("Python")
+    assert document_service.active.search("Rust") == []
+    assert list(document_service.paths.staging.iterdir()) == []
+
+
+def test_mutation_lock_contention_is_reported_without_mutating(document_service: DocumentService):
+    with MutationLock(document_service.paths.locks / "mutation.lock"):
+        with pytest.raises(MutationBusyError):
+            document_service.add("candidate.md", b"Python")
+    assert document_service.list_documents() == []

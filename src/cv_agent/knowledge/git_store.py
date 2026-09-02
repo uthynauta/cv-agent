@@ -342,6 +342,7 @@ class LocalKnowledgeGit:
             if verified.returncode or verified.stdout.strip() != prior:
                 raise GitStoreError("Git restore prior commit is invalid")
             self._run("update-ref", "refs/heads/main", prior, expected_current)
+            self._clear_scope_filesystem()
             # Repository invariants guarantee that every tracked path is in one
             # of these scopes, so resetting the complete index is bounded here.
             self._run("read-tree", "--reset", "-u", prior)
@@ -359,3 +360,18 @@ class LocalKnowledgeGit:
                         elif path.is_dir():
                             path.rmdir()
         self._validate_scope_filesystem()
+
+    def _clear_scope_filesystem(self) -> None:
+        for scope in (self.root / "sources", self.root / "knowledge"):
+            if scope.is_symlink() or (scope.exists() and not scope.is_dir()):
+                raise GitStoreError("knowledge scope is not a local directory")
+            if not scope.exists():
+                scope.mkdir(parents=True)
+                continue
+            for path in sorted(scope.rglob("*"), reverse=True):
+                if path.is_symlink():
+                    raise GitStoreError("knowledge scope contains a symlink")
+                if path.is_file():
+                    path.unlink()
+                elif path.is_dir():
+                    path.rmdir()
