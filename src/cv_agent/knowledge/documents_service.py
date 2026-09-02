@@ -253,8 +253,7 @@ class DocumentService:
                     self._activate_originals(candidate_docs, documents_backup)
                     self.active.reload(self.repository)
                     if candidate.quarantine is not None and any(candidate.quarantine.iterdir()):
-                        destination = self.paths.quarantine / operation_id
-                        candidate.quarantine.rename(destination)
+                        self._activate_quarantine(candidate.quarantine, operation_id)
                     return MutationResult(result_id, digest, commit, changed, operation_id)
                 except MutationBusyError:
                     raise
@@ -359,13 +358,25 @@ class DocumentService:
                 continue
             if not original.is_file() or original.is_symlink():
                 raise ValueError("original document is not a regular file")
-            document_id = original.name.split(".", 1)[0]
-            if document_id not in expected or sha256(original.read_bytes()).hexdigest() != expected[document_id]:
+            suffix = original.suffix
+            document_id = original.name[:-len(suffix)] if suffix else original.name
+            if document_id not in expected or self._sha256_file(original) != expected[document_id]:
                 quarantine.mkdir(parents=True, exist_ok=True)
                 original.rename(quarantine / original.name)
         candidate.quarantine = quarantine if quarantine.exists() else None
         candidate.commit_message = f"Rollback knowledge to {commit[:8]}"
         return "", ""
+
+    def _activate_quarantine(self, staged: Path, operation_id: str) -> None:
+        staged.rename(self.paths.quarantine / operation_id)
+
+    @staticmethod
+    def _sha256_file(path: Path) -> str:
+        digest = sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
 
     def _validate_staged(self, path: Path) -> None:
         validate_knowledge(path)

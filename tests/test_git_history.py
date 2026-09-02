@@ -195,6 +195,64 @@ def test_rollback_current_head_creates_distinct_empty_audit_commit(document_serv
     assert document_service.history(1)[0].subject == f"Rollback knowledge to {added.commit[:8]}"
 
 
+def test_rollback_retains_original_for_dotted_document_id(
+    document_service: DocumentService, monkeypatch: pytest.MonkeyPatch
+):
+    document_id = "candidate.v2"
+    operation_ids = iter([document_id, "a" * 32, "b" * 32])
+    monkeypatch.setattr("cv_agent.knowledge.documents_service.uuid4", lambda: type("Token", (), {"hex": next(operation_ids)})())
+
+    added = document_service.add("resume.md", b"Python")
+    original = document_service.paths.documents / f"{document_id}.md"
+    document_service.rollback(added.commit, confirmed=True)
+
+    assert original.read_bytes() == b"Python"
+    assert document_service.list_documents()[0].original_available
+
+
+def test_rollback_checksum_streams_original_without_read_bytes(
+    document_service: DocumentService, monkeypatch: pytest.MonkeyPatch
+):
+    added = document_service.add("candidate.md", b"Python" * 10000)
+    original = document_service.paths.documents / f"{added.document_id}.md"
+    monkeypatch.setattr(Path, "read_bytes", lambda _path: (_ for _ in ()).throw(AssertionError("read_bytes used")))
+
+    document_service.rollback(added.commit, confirmed=True)
+
+    assert original.exists()
+    assert document_service.list_documents()[0].original_available
+
+
+@pytest.mark.parametrize("failure", ["checkout", "commit", "quarantine"])
+def test_rollback_failures_compensate_all_state(
+    document_service: DocumentService, monkeypatch: pytest.MonkeyPatch, failure: str
+):
+    added = document_service.add("candidate.md", b"Python")
+    target = added.commit
+    if failure == "quarantine":
+        document_service.replace(added.document_id, "candidate.md", b"Rust")
+    prior_head = document_service.git.head()
+    original = document_service.paths.documents / f"{added.document_id}.md"
+    prior_original = original.read_bytes()
+    prior_search = document_service.active.search("Python")
+    prior_quarantine = sorted(document_service.paths.quarantine.rglob("*"))
+
+    if failure == "checkout":
+        monkeypatch.setattr(document_service.git, "checkout_tree", lambda *_args: (_ for _ in ()).throw(RuntimeError("checkout")))
+    elif failure == "commit":
+        monkeypatch.setattr(document_service.git, "commit", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("commit")))
+    else:
+        monkeypatch.setattr(document_service, "_activate_quarantine", lambda *_args: (_ for _ in ()).throw(OSError("quarantine")))
+
+    with pytest.raises(DocumentMutationError):
+        document_service.rollback(target, confirmed=True)
+
+    assert document_service.git.head() == prior_head
+    assert original.read_bytes() == prior_original
+    assert document_service.active.search("Python") == prior_search
+    assert sorted(document_service.paths.quarantine.rglob("*")) == prior_quarantine
+
+
 def test_rollback_rejects_dangling_commit(document_service: DocumentService):
     first = document_service.add("first.md", b"Python")
     second = document_service.add("second.md", b"Rust")
