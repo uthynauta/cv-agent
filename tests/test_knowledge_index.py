@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from cv_agent.config import Settings
+from cv_agent.knowledge.documents import KnowledgePage
 from cv_agent.knowledge.index import ActiveKnowledge, KnowledgeSnapshot
 from cv_agent.knowledge.repository import KnowledgeRepository
 from cv_agent.main import create_app
@@ -35,6 +36,31 @@ def test_failed_reload_keeps_old_snapshot(tmp_path: Path, monkeypatch: pytest.Mo
         active.reload(repository)
 
     assert active.search("FastAPI")
+
+
+def test_snapshot_copies_source_metadata_and_page_views(tmp_path: Path):
+    repository = KnowledgeRepository(tmp_path)
+    repository.write_page(
+        "knowledge/python.md", "Python", {"kind": "skill", "alias": "FastAPI"}, "Runtime"
+    )
+    active = ActiveKnowledge.load(repository)
+
+    repository_page = repository.list_pages()[0]
+    repository_page.metadata["alias"] = "Rust"
+    returned_page = active.list_pages()[0]
+    returned_page.metadata["alias"] = "Rust"
+
+    assert active.search("Rust") == []
+    assert active.list_pages()[0].metadata["alias"] == "FastAPI"
+
+
+def test_snapshot_copies_metadata_supplied_to_constructor():
+    metadata = {"alias": "FastAPI"}
+    page = KnowledgePage(Path("knowledge/python.md"), "Python", metadata, "Runtime")
+    snapshot = KnowledgeSnapshot((page,))
+    metadata["alias"] = "Rust"
+
+    assert snapshot.list_pages()[0].metadata == {"alias": "FastAPI"}
 
 
 def test_initialized_requires_usable_evidence(tmp_path: Path):
