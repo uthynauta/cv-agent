@@ -30,6 +30,7 @@ _HTML_TAG_RE = re.compile(
     r"table|tbody|td|th|thead|tr|ul)(?:\s+[^<>]*)?/?>",
     re.IGNORECASE,
 )
+_ENCODED_MARKUP_RE = re.compile(r"&(?:(?:amp;)+)?(?:lt|gt);", re.IGNORECASE)
 _PLACEHOLDERS = {
     "no extracted text",
     "no selectable text extracted",
@@ -49,6 +50,7 @@ MAX_VALIDATION_DIRECTORIES = 2_000
 MAX_MARKDOWN_BYTES = 16 * 1024 * 1024
 MAX_TOTAL_MARKDOWN_BYTES = 128 * 1024 * 1024
 _READ_CHUNK_BYTES = 64 * 1024
+MAX_HTML_DECODE_PASSES = 8
 
 
 class KnowledgeValidationError(ValueError):
@@ -289,13 +291,21 @@ def _has_meaningful_extracted_text(body: str) -> bool:
     if heading is None:
         return False
     section = body[heading.end() :]
-    for _ in range(3):
+    stable = False
+    for _ in range(MAX_HTML_DECODE_PASSES):
         cleaned = _HTML_COMMENT_RE.sub(" ", section)
         cleaned = _HTML_TAG_RE.sub(" ", cleaned)
         decoded = html.unescape(cleaned)
-        section = decoded
-        if decoded == cleaned:
+        if decoded == section:
+            stable = True
             break
+        section = decoded
+    if not stable:
+        return False
+    section = _HTML_COMMENT_RE.sub(" ", section)
+    section = _HTML_TAG_RE.sub(" ", section)
+    if _ENCODED_MARKUP_RE.search(section):
+        return False
     lines = [line.strip() for line in section.splitlines() if line.strip()]
     lines = [line for line in lines if not re.match(r"^#{1,6}(?:\s|$)", line)]
     if not lines:

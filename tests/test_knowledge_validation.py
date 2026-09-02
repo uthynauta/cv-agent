@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import os
 from pathlib import Path
 import stat
@@ -347,6 +348,35 @@ def test_validation_nested_entities_and_recognized_tags_follow_literal_text_rule
                     validate_knowledge(tmp_path)
         finally:
             source.unlink()
+
+
+def test_validation_decodes_nested_markup_to_stability_with_a_bound(tmp_path: Path):
+    def nested_escape(value: str, passes: int) -> str:
+        for _ in range(passes):
+            value = html.escape(value, quote=False)
+        return value
+
+    cases = [
+        (nested_escape("<p></p>", 2), False),
+        (nested_escape("<p>No text</p>", 2), False),
+        (nested_escape("<C++>", 2), True),
+        (nested_escape("<p>Python</p>", 10), False),
+    ]
+    for evidence, valid in cases:
+        _write_page(
+            tmp_path,
+            "sources/doc-123.md",
+            _source_metadata(),
+            f"## Extracted Text\n\n{evidence}",
+        )
+        try:
+            if valid:
+                assert validate_knowledge(tmp_path) is None
+            else:
+                with pytest.raises(KnowledgeValidationError, match="extracted_text"):
+                    validate_knowledge(tmp_path)
+        finally:
+            (tmp_path / "sources" / "doc-123.md").unlink()
 
 
 @pytest.mark.parametrize(
