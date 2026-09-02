@@ -236,9 +236,9 @@ def _has_meaningful_extracted_text(body: str) -> bool:
     if heading is None:
         return False
     section = body[heading.end() :]
-    section = html.unescape(section)
     section = re.sub(r"<!--.*?-->", " ", section, flags=re.DOTALL)
     section = re.sub(r"<[^>]*>", " ", section)
+    section = html.unescape(section)
     lines = [line.strip() for line in section.splitlines() if line.strip()]
     lines = [line for line in lines if not re.match(r"^#{1,6}(?:\s|$)", line)]
     if not lines:
@@ -254,23 +254,31 @@ def _has_meaningful_extracted_text(body: str) -> bool:
 
 
 def _is_safe_document_id(value: object) -> bool:
+    if not isinstance(value, str) or not bool(value.strip()):
+        return False
+    try:
+        encoded_length = len(value.encode("utf-8"))
+    except UnicodeEncodeError:
+        return False
     return (
-        isinstance(value, str)
-        and bool(value.strip())
-        and len(value.encode("utf-8")) <= MAX_DOCUMENT_ID_BYTES
+        encoded_length <= MAX_DOCUMENT_ID_BYTES
         and _DOCUMENT_ID_RE.fullmatch(value) is not None
         and not value.lower().endswith(".md")
     )
 
 
 def _validate_path_limits(relative: str) -> None:
-    encoded_length = len(relative.encode("utf-8"))
-    candidate = Path(relative)
+    try:
+        encoded_length = len(relative.encode("utf-8"))
+        candidate = Path(relative)
+        component_lengths = [len(part.encode("utf-8")) for part in candidate.parts]
+    except (UnicodeError, ValueError):
+        _fail(relative, "path", "contains invalid characters")
     if encoded_length > MAX_RELATIVE_PATH_BYTES:
         _fail(relative, "path", "exceeds the size limit")
     if len(candidate.parts) > MAX_PATH_DEPTH:
         _fail(relative, "path", "exceeds the depth limit")
-    if any(len(part.encode("utf-8")) > MAX_PATH_COMPONENT_BYTES for part in candidate.parts):
+    if any(length > MAX_PATH_COMPONENT_BYTES for length in component_lengths):
         _fail(relative, "path", "contains an oversized component")
     if "\\" in relative or ".." in candidate.parts:
         _fail(relative, "path", "is unsafe")
@@ -281,5 +289,8 @@ def _relative(parts: tuple[str, ...]) -> str:
 
 
 def _fail(path: str, field: str, reason: str) -> None:
-    bounded_path = path[:240]
-    raise KnowledgeValidationError(f"{bounded_path}: {field} {reason}")
+    try:
+        bounded_path = path.encode("utf-8", "backslashreplace").decode("utf-8")[:220]
+    except (UnicodeError, AttributeError):
+        bounded_path = repr(path)[:220]
+    raise KnowledgeValidationError(f"{bounded_path}: {field} {reason}") from None

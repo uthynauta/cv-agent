@@ -133,9 +133,20 @@ def test_extracted_text_retains_evidence_after_embedded_heading(tmp_path: Path):
     assert validate_knowledge(tmp_path) is None
 
 
-@pytest.mark.parametrize("evidence", ["&nbsp;", "&ensp;", "&#160;", "<!-- &nbsp; -->", "<p></p>"])
-def test_html_entity_or_tag_only_extracted_text_is_not_meaningful(
-    tmp_path: Path, evidence: str
+@pytest.mark.parametrize(
+    ("evidence", "valid"),
+    [
+        ("&nbsp;", False),
+        ("&ensp;", False),
+        ("&#160;", False),
+        ("<!-- &nbsp; -->", False),
+        ("<p></p>", False),
+        ("&lt;C++&gt;", True),
+        ("<p>Python</p>", True),
+    ],
+)
+def test_html_entities_and_tags_are_normalized_before_meaningfulness_check(
+    tmp_path: Path, evidence: str, valid: bool
 ):
     _write_page(
         tmp_path,
@@ -144,8 +155,38 @@ def test_html_entity_or_tag_only_extracted_text_is_not_meaningful(
         f"## Extracted Text\n\n{evidence}",
     )
 
-    with pytest.raises(KnowledgeValidationError, match="extracted_text"):
+    if valid:
+        assert validate_knowledge(tmp_path) is None
+    else:
+        with pytest.raises(KnowledgeValidationError, match="extracted_text"):
+            validate_knowledge(tmp_path)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="requires byte-level POSIX filenames")
+def test_invalid_bytes_filename_has_bounded_utf8_safe_error(tmp_path: Path):
+    knowledge = tmp_path / "knowledge"
+    knowledge.mkdir()
+    parent_fd = os.open(knowledge, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        descriptor = os.open(
+            b"invalid-\xff.md",
+            os.O_WRONLY | os.O_CREAT,
+            0o600,
+            dir_fd=parent_fd,
+        )
+        try:
+            os.write(descriptor, b"not frontmatter")
+        finally:
+            os.close(descriptor)
+    finally:
+        os.close(parent_fd)
+
+    with pytest.raises(KnowledgeValidationError) as error:
         validate_knowledge(tmp_path)
+    message = str(error.value)
+    assert "\udcff" not in message
+    assert len(message) <= 300
+    message.encode("utf-8")
 
 
 @pytest.mark.parametrize(
