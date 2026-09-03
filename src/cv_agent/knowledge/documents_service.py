@@ -9,6 +9,8 @@ import re
 from typing import Callable
 from uuid import uuid4
 
+import yaml
+
 from cv_agent.knowledge.extractors import ExtractedSource, SourceExtractionError
 from cv_agent.knowledge.frontmatter import load_frontmatter
 from cv_agent.knowledge.git_store import GitStoreError, LocalKnowledgeGit
@@ -48,6 +50,13 @@ class DocumentMutationError(RuntimeError):
         self.operation_id = operation_id
         bounded = str(message).replace("\n", " ").replace("\r", " ")[:240]
         super().__init__(f"{bounded} (operation {operation_id})")
+
+
+class DocumentReadError(DocumentMutationError):
+    """Raised when the document catalog cannot be read safely."""
+
+    def __init__(self, operation_id: str) -> None:
+        super().__init__(operation_id, "document read failed")
 
 
 class DocumentValidationError(DocumentMutationError):
@@ -118,7 +127,11 @@ class DocumentService:
 
     def list_documents(self) -> list[DocumentRecord]:
         records: list[DocumentRecord] = []
-        for page in self.repository.list_pages():
+        try:
+            pages = self.repository.list_pages()
+        except (OSError, UnicodeError, ValueError, yaml.YAMLError) as exc:
+            raise DocumentReadError(uuid4().hex) from exc
+        for page in pages:
             try:
                 page.path.resolve().relative_to((self.repository.root / "sources").resolve())
             except ValueError:

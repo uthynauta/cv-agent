@@ -15,6 +15,7 @@ from cv_agent.knowledge.documents_service import (
     DocumentMutationError,
     DocumentIdentifierError,
     DocumentNotFoundError,
+    DocumentReadError,
     DocumentService,
     DocumentValidationError,
     RevisionNotFoundError,
@@ -34,7 +35,16 @@ def _document_count(repository: KnowledgeRepository) -> int:
     """Count canonical source records without requiring the mutation service."""
     count = 0
     try:
-        pages = sorted((repository.root / "sources").glob("*.md"))
+        sources = resolve_directory_path(repository.root / "sources")
+    except (OSError, ValueError):
+        return 0
+    if not sources.exists() or not sources.is_dir():
+        return 0
+    try:
+        pages = sorted(
+            page for page in sources.iterdir()
+            if not page.is_symlink() and page.is_file() and page.suffix == ".md"
+        )
     except OSError:
         return 0
     for page in pages:
@@ -210,7 +220,14 @@ def build_admin_router(
 
     @router.get("/admin/documents")
     def list_documents() -> dict[str, object]:
-        return {"status": "ok", "documents": [record.__dict__ for record in document_service.list_documents()]}
+        try:
+            records = document_service.list_documents()
+        except DocumentReadError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"document read failed; operation {exc.operation_id}",
+            ) from exc
+        return {"status": "ok", "documents": [record.__dict__ for record in records]}
 
     @router.put("/admin/documents/{document_id}")
     async def replace_document(document_id: str, file: UploadFile = File(...)) -> dict[str, object]:

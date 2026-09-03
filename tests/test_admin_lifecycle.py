@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+import pytest
 
 from cv_agent.config import Settings
 from cv_agent.main import create_app
@@ -53,6 +54,40 @@ def test_malformed_source_keeps_status_redacted(tmp_path):
     assert response.status_code == 200
     assert response.json()["storage"]["document_count"] == 0
     assert str(tmp_path) not in response.text
+
+
+@pytest.mark.parametrize("payload", [b"---\n[broken\n---\n", b"---\nname: bad\n---\n\xff"])
+def test_documents_list_maps_malformed_sources_to_redacted_503(tmp_path, payload):
+    api = client(tmp_path)
+    paths = api.app.state.paths
+    (paths.sources / "broken.md").write_bytes(payload)
+
+    response = api.get("/admin/documents", headers=auth(api))
+
+    assert response.status_code == 503
+    assert response.json()["detail"].startswith("document read failed; operation ")
+    assert str(tmp_path) not in response.text
+    assert payload.decode("utf-8", errors="ignore") not in response.text
+
+
+def test_status_document_count_rejects_sources_symlink_without_reading_external_files(tmp_path, monkeypatch):
+    api = client(tmp_path)
+    paths = api.app.state.paths
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.md").write_bytes(b"\xff external secret")
+    paths.sources.rmdir()
+    paths.sources.symlink_to(outside, target_is_directory=True)
+    monkeypatch.setattr(
+        "cv_agent.api.admin.load_frontmatter",
+        lambda text: (_ for _ in ()).throw(AssertionError("external source was read")),
+    )
+
+    response = api.get("/admin/status", headers=auth(api))
+
+    assert response.status_code == 200
+    assert response.json()["storage"]["document_count"] == 0
+    assert "external secret" not in response.text
 
 
 def test_invalid_and_unreachable_rollback_targets_are_not_found(tmp_path):
