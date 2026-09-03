@@ -27,7 +27,7 @@ services:
       DATA_DIR: /data
       AGENT_OWNER_NAME: ${AGENT_OWNER_NAME:-}
       AGENT_DISPLAY_NAME: ${AGENT_DISPLAY_NAME:-CV Agent}
-      AGENT_DESCRIPTION: ${AGENT_DESCRIPTION:-Ask questions about this candidate's CV.}
+      AGENT_DESCRIPTION: ${AGENT_DESCRIPTION:-Ask questions about the configured knowledge base.}
       AGENT_LANGUAGE: ${AGENT_LANGUAGE:-auto}
       DATA_GIT_AUTHOR_NAME: ${DATA_GIT_AUTHOR_NAME:-CV Agent}
       DATA_GIT_AUTHOR_EMAIL: ${DATA_GIT_AUTHOR_EMAIL:-cv-agent@localhost}

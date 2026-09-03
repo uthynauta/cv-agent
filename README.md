@@ -26,7 +26,7 @@ Copy `.env.example` to `.env` and set values for the deployment:
 DATA_DIR=/data
 AGENT_OWNER_NAME=Example Candidate
 AGENT_DISPLAY_NAME=CV Agent
-AGENT_DESCRIPTION=Ask questions about this candidate's CV.
+AGENT_DESCRIPTION=Ask questions about the configured knowledge base.
 AGENT_PUBLIC_URL=https://cv-agent.example.com
 OPENAI_API_KEY=
 OPENAI_MODEL=gpt-5.6
