@@ -43,3 +43,32 @@ def test_status_and_documents_do_not_expose_paths_or_text(tmp_path):
     assert str(tmp_path) not in status.text
     assert "SECRET TEXT" not in status.text
     assert str(tmp_path) not in api.get("/admin/documents", headers=auth(api)).text
+
+
+def test_malformed_source_keeps_status_redacted(tmp_path):
+    api = client(tmp_path)
+    paths = api.app.state.paths
+    (paths.sources / "broken.md").write_text("---\n[broken\n---\n", encoding="utf-8")
+    response = api.get("/admin/status", headers=auth(api))
+    assert response.status_code == 200
+    assert response.json()["storage"]["document_count"] == 0
+    assert str(tmp_path) not in response.text
+
+
+def test_invalid_and_unreachable_rollback_targets_are_not_found(tmp_path):
+    api = client(tmp_path)
+    for commit in ("A" * 40, "f" * 40):
+        response = api.post(
+            f"/admin/revisions/{commit}/rollback", headers=auth(api), json={"confirm": True}
+        )
+        assert response.status_code == 404
+
+
+def test_admin_lifecycle_routes_all_require_bearer_auth(tmp_path):
+    api = client(tmp_path)
+    routes = [
+        ("get", "/admin/status"), ("get", "/admin/documents"),
+        ("post", "/admin/rebuild"), ("get", "/admin/revisions"),
+    ]
+    for method, route in routes:
+        assert getattr(api, method)(route).status_code == 401

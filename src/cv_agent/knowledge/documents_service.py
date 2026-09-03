@@ -21,6 +21,7 @@ from cv_agent.knowledge.validation import validate_knowledge
 
 
 _OPERATION_ID = re.compile(r"^[0-9a-f]{32}$")
+_COMMIT_ID = re.compile(r"^[0-9a-f]{40}$")
 
 
 @dataclass(frozen=True)
@@ -69,6 +70,22 @@ class DocumentNotFoundError(DocumentMutationError):
     def __init__(self, document_id: str, operation_id: str = "") -> None:
         super().__init__(operation_id or uuid4().hex, "document was not found")
         self.document_id = document_id
+
+
+class DocumentIdentifierError(DocumentMutationError, ValueError):
+    """Raised when a caller supplies an invalid document identifier."""
+
+    def __init__(self, document_id: str) -> None:
+        super().__init__(uuid4().hex, "document identifier is invalid")
+        self.document_id = document_id
+
+
+class RevisionNotFoundError(DocumentMutationError):
+    """Raised when a rollback target is malformed or not reachable."""
+
+    def __init__(self, commit: str, operation_id: str) -> None:
+        super().__init__(operation_id, "revision was not found")
+        self.commit = commit
 
 
 @dataclass
@@ -144,7 +161,10 @@ class DocumentService:
         data: bytes,
         media_type: str | None = None,
     ) -> MutationResult:
-        validate_document_id(document_id)
+        try:
+            validate_document_id(document_id)
+        except ValueError as exc:
+            raise DocumentIdentifierError(document_id) from exc
         filename = safe_upload_filename(original_filename)
         return self._mutate(
             "replace",
@@ -154,7 +174,10 @@ class DocumentService:
         )
 
     def delete(self, document_id: str) -> MutationResult:
-        validate_document_id(document_id)
+        try:
+            validate_document_id(document_id)
+        except ValueError as exc:
+            raise DocumentIdentifierError(document_id) from exc
         return self._mutate(
             "delete",
             lambda candidate: self._stage_delete(candidate, document_id),
@@ -175,11 +198,13 @@ class DocumentService:
         operation_id = uuid4().hex
         if not confirmed:
             raise DocumentMutationError(operation_id, "rollback requires confirmation")
+        if not isinstance(commit, str) or _COMMIT_ID.fullmatch(commit) is None:
+            raise RevisionNotFoundError(commit, operation_id)
         try:
             if not self.git.contains_commit(commit):
-                raise DocumentMutationError(operation_id, "rollback commit is invalid")
+                raise RevisionNotFoundError(commit, operation_id)
         except GitStoreError as exc:
-            raise DocumentMutationError(operation_id, str(exc)) from exc
+            raise DocumentMutationError(operation_id) from exc
         return self._mutate(
             "rollback",
             lambda candidate: self._stage_rollback(candidate, commit),
@@ -227,7 +252,10 @@ class DocumentService:
                 try:
                     candidate = _Candidate(operation_id, root, candidate_repo, candidate_docs, candidate_ingestion)
                     result_id, digest = action(candidate)
-                    self._validate_staged(candidate_root)
+                    try:
+                        self._validate_staged(candidate_root)
+                    except (OSError, UnicodeError, TypeError, ValueError) as exc:
+                        raise DocumentValidationError(operation_id, "knowledge data is invalid") from exc
 
                     scopes_backup = root / "scope-backup"
                     scopes_backup.mkdir()
@@ -321,17 +349,21 @@ class DocumentService:
                 page.unlink()
         source_pages = sorted((candidate.repository.root / "sources").glob("*.md"))
         for page in source_pages:
-            source_text = page.read_text(encoding="utf-8")
-            metadata, body = load_frontmatter(source_text)
-            document_id = metadata.get("document_id")
-            if not isinstance(document_id, str):
-                raise ValueError("source identity is invalid")
-            extracted_text = _extracted_text(body)
-            kind = _kind_for_media_type(str(metadata.get("media_type") or "text/markdown"))
-            extracted = ExtractedSource(page, extracted_text, kind, False, str(metadata.get("content_sha256") or ""))
-            candidate.ingestion.ingest_extracted_text(
-                page, extracted, document_id, str(metadata.get("original_filename") or page.stem)
-            )
+            try:
+                source_text = page.read_text(encoding="utf-8")
+                metadata, body = load_frontmatter(source_text)
+                document_id = metadata.get("document_id")
+                if not isinstance(document_id, str):
+                    raise ValueError("source identity is invalid")
+                validate_document_id(document_id)
+                extracted_text = _extracted_text(body)
+                kind = _kind_for_media_type(str(metadata.get("media_type") or "text/markdown"))
+                extracted = ExtractedSource(page, extracted_text, kind, False, str(metadata.get("content_sha256") or ""))
+                candidate.ingestion.ingest_extracted_text(
+                    page, extracted, document_id, str(metadata.get("original_filename") or page.stem)
+                )
+            except (OSError, UnicodeError, TypeError, ValueError) as exc:
+                raise DocumentValidationError(candidate.operation_id, "source data is invalid") from exc
             # Ingestion may rewrite the source while generating derived pages;
             # the source itself is immutable during rebuild.
             page.write_text(source_text, encoding="utf-8")

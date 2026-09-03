@@ -148,7 +148,9 @@ def test_ui_status_returns_local_repository_payload(tmp_path):
     response = client.get("/admin/ui/status")
 
     assert response.status_code == 200
-    assert "repository" in response.json()
+    assert "knowledge" in response.json()
+    assert "active_commit" in response.json()["knowledge"]
+    assert "repository" not in response.json()
     assert "github" not in response.text.lower()
 
 

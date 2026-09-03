@@ -290,15 +290,14 @@ async function refreshStatus() {
     if (!response.ok) throw new Error(`Status request failed: ${response.status}`);
     const payload = await response.json();
     const storage = payload.storage || {};
-    const repository = payload.repository || {};
     const knowledge = payload.knowledge || {};
     text("[data-admin-status]", payload.admin && payload.admin.enabled ? "Enabled" : "Disabled");
-    text("[data-upload-status]", storage.documents_dir_writable ? "Writable" : "Unavailable");
-    text("[data-upload-dir]", storage.documents_dir || "Document storage");
-    text("[data-repository-status]", repository.head ? "Ready" : "Initialized");
-    text("[data-repository-detail]", repository.head ? `Revision: ${repository.head}` : "No committed knowledge yet");
+    text("[data-upload-status]", storage.writable ? "Writable" : "Unavailable");
+    text("[data-upload-dir]", `${storage.document_count || 0} document(s)`);
+    text("[data-repository-status]", knowledge.active_commit ? "Ready" : "Initialized");
+    text("[data-repository-detail]", knowledge.active_commit ? `Revision: ${knowledge.active_commit}` : "No committed knowledge yet");
     text("[data-knowledge-status]", knowledge.initialized ? "Ready" : "Empty");
-    text("[data-knowledge-detail]", knowledge.repository_head ? `Revision: ${knowledge.repository_head}` : "Upload a source to initialize");
+    text("[data-knowledge-detail]", knowledge.active_commit ? `Revision: ${knowledge.active_commit}` : "Upload a source to initialize");
     text("[data-last-updated]", new Date().toLocaleString());
     setMessage("[data-status-message]", "");
   } catch (error) {
@@ -430,7 +429,7 @@ setInterval(refreshStatus, 10000);
             return disabled_response()
         if not verify_session_token(request.cookies.get(SESSION_COOKIE)):
             return JSONResponse({"detail": "invalid session"}, status_code=status.HTTP_401_UNAUTHORIZED)
-        return build_admin_status_payload(settings, paths, git_store, ingestion.repository)
+        return build_admin_status_payload(settings, paths, git_store, ingestion.repository, document_service)
 
     @router.post("/admin/ui/documents")
     async def post_ui_document(request: Request, file: UploadFile = File(...)) -> Any:

@@ -1,6 +1,8 @@
 import os
+import hmac
 from pathlib import Path
 from typing import Annotated
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile, status
 
@@ -11,10 +13,13 @@ from cv_agent.knowledge.repository import KnowledgeRepository, resolve_directory
 from cv_agent.knowledge.storage import DataPaths, ensure_data_storage, safe_upload_filename
 from cv_agent.knowledge.documents_service import (
     DocumentMutationError,
+    DocumentIdentifierError,
     DocumentNotFoundError,
     DocumentService,
     DocumentValidationError,
+    RevisionNotFoundError,
 )
+from cv_agent.knowledge.frontmatter import load_frontmatter
 from cv_agent.knowledge.locking import MutationBusyError
 from cv_agent.api.models import ConfirmationRequest
 
@@ -23,6 +28,24 @@ def _knowledge_initialized(repository: KnowledgeRepository) -> bool:
     from cv_agent.api.health import knowledge_is_initialized
 
     return knowledge_is_initialized(repository)
+
+
+def _document_count(repository: KnowledgeRepository) -> int:
+    """Count canonical source records without requiring the mutation service."""
+    count = 0
+    try:
+        pages = sorted((repository.root / "sources").glob("*.md"))
+    except OSError:
+        return 0
+    for page in pages:
+        try:
+            metadata, _ = load_frontmatter(page.read_text(encoding="utf-8"))
+            document_id = metadata.get("document_id")
+            if isinstance(document_id, str) and page.name == f"{document_id}.md":
+                count += 1
+        except Exception:
+            continue
+    return count
 
 
 def build_admin_status_payload(
@@ -46,9 +69,9 @@ def build_admin_status_payload(
     except (OSError, ValueError, RuntimeError) as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="upload storage is unavailable",
+            detail=f"admin status unavailable; operation {uuid4().hex}",
         ) from exc
-    document_count = len(document_service.list_documents()) if document_service is not None else 0
+    document_count = _document_count(repository)
     return {
         "status": "ok",
         "admin": {"enabled": bool(settings.admin_api_key)},
@@ -93,7 +116,7 @@ async def upload_document_payload(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="another document mutation is running") from exc
     except DocumentNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="document was not found") from exc
-    except ValueError as exc:
+    except DocumentIdentifierError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="document identifier is invalid") from exc
     except DocumentValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=exc.detail) from exc
@@ -102,7 +125,7 @@ async def upload_document_payload(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"document mutation failed; operation {exc.operation_id}",
         ) from exc
-    except (OSError, ValueError) as exc:
+    except OSError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="document ingestion is unavailable",
@@ -153,7 +176,7 @@ async def replace_document_payload(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="another document mutation is running") from exc
     except DocumentNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="document was not found") from exc
-    except ValueError as exc:
+    except DocumentIdentifierError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="document identifier is invalid") from exc
     except DocumentValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=exc.detail) from exc
@@ -175,7 +198,9 @@ def build_admin_router(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="admin ingest is disabled",
             )
-        if authorization != f"Bearer {settings.admin_api_key}":
+        if not hmac.compare_digest(
+            (authorization or "").encode("utf-8"), f"Bearer {settings.admin_api_key}".encode("utf-8")
+        ):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid bearer token")
 
     router = APIRouter(dependencies=[Depends(require_admin_key)])
@@ -201,7 +226,7 @@ def build_admin_router(
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="another document mutation is running") from exc
         except DocumentNotFoundError as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="document was not found") from exc
-        except ValueError as exc:
+        except DocumentIdentifierError as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="document identifier is invalid") from exc
         except DocumentValidationError as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=exc.detail) from exc
@@ -239,9 +264,9 @@ def build_admin_router(
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="another document mutation is running") from exc
         except DocumentNotFoundError as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="document was not found") from exc
+        except RevisionNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="revision was not found") from exc
         except DocumentMutationError as exc:
-            if "invalid" in str(exc).lower():
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="revision was not found") from exc
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"document mutation failed; operation {exc.operation_id}") from exc
         return {"status": "ok", "revision": {"commit": result.commit}}
 
