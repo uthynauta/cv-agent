@@ -10,10 +10,11 @@ def build_agent_card_router(settings: Settings) -> APIRouter:
     def agent_card() -> dict[str, object]:
         public_url = (settings.agent_public_url or "").rstrip("/")
         responses_url = f"{public_url}/v1/responses"
-        owner = settings.agent_owner_name or "the candidate"
+        owner = settings.agent_owner_name or "the configured candidate"
         card: dict[str, object] = {
             "name": settings.agent_display_name,
             "description": settings.agent_description,
+            "model": settings.agent_model_name,
             "version": "1.0.0",
             "supportedInterfaces": [
                 {
@@ -28,10 +29,10 @@ def build_agent_card_router(settings: Settings) -> APIRouter:
             "skills": [
                 {
                     "id": "cv_qa",
-                    "name": "CV Q&A",
+                    "name": "Knowledge Q&A",
                     "description": (
-                        "Responde preguntas sobre trayectoria profesional, experiencia, "
-                        f"habilidades, proyectos, educacion y publicaciones de {owner}."
+                        "Answers questions grounded in the configured knowledge base for "
+                        f"{owner}."
                     ),
                     "tags": ["cv", "career", "ai"],
                 }

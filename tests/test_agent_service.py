@@ -134,6 +134,35 @@ def test_agent_accepts_spanish_answer_with_retrieved_citation(tmp_path: Path):
     assert service.answer("¿Qué experiencia tiene con FastAPI?") == expected
 
 
+def test_agent_uses_configured_english_language_and_sources_label(tmp_path: Path):
+    repo = KnowledgeRepository(tmp_path)
+    repo.write_page("skills/python.md", "Python", {"kind": "skill"}, "Candidate uses FastAPI.")
+    fake = FakeTextClient("The candidate uses FastAPI.\nSources: [[Python]]")
+    service = AgentService(
+        Settings(openai_api_key="test-key", agent_language="en"),
+        KnowledgeSearch(repo),
+        fake,
+    )
+
+    assert service.answer("Tell me about FastAPI") == fake.output
+    assert "Answer in English" in fake.instructions
+
+
+def test_agent_english_fallback_is_localized(tmp_path: Path):
+    repo = KnowledgeRepository(tmp_path)
+    repo.write_page("skills/python.md", "Python", {"kind": "skill"}, "Candidate uses FastAPI.")
+    fake = FakeTextClient("Respuesta en español.\nFuentes: [[Python]]")
+    service = AgentService(
+        Settings(openai_api_key="test-key", agent_language="en"),
+        KnowledgeSearch(repo),
+        fake,
+    )
+
+    answer = service.answer("Tell me about FastAPI")
+
+    assert answer.endswith("Sources: [[Python]]")
+
+
 def test_agent_accepts_spanish_formal_education_answer(tmp_path: Path):
     repo = KnowledgeRepository(tmp_path)
     repo.write_page(
