@@ -5,6 +5,7 @@ from typing import Annotated
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile, status
+from fastapi.responses import FileResponse
 
 from cv_agent.config import Settings
 from cv_agent.knowledge.ingest import IngestionService
@@ -23,6 +24,22 @@ from cv_agent.knowledge.documents_service import (
 from cv_agent.knowledge.frontmatter import load_frontmatter
 from cv_agent.knowledge.locking import MutationBusyError
 from cv_agent.api.models import ConfirmationRequest
+from cv_agent.knowledge.backup import (
+    BackupError,
+    BackupNotFoundError,
+    BackupService,
+    BackupTooLargeError,
+)
+
+
+def _backup_payload(record: object) -> dict[str, object]:
+    return {
+        "name": record.name,
+        "kind": record.kind,
+        "created_at": record.created_at,
+        "size_bytes": record.size_bytes,
+        "sha256": record.sha256,
+    }
 
 
 def _knowledge_initialized(repository: KnowledgeRepository) -> bool:
@@ -201,7 +218,9 @@ def build_admin_router(
     git_store: LocalKnowledgeGit,
     ingestion: IngestionService,
     document_service: DocumentService,
+    backup_service: BackupService | None = None,
 ) -> APIRouter:
+    backup_service = backup_service or BackupService(paths, git_store, settings)
     def require_admin_key(authorization: Annotated[str | None, Header()] = None) -> None:
         if not settings.admin_api_key:
             raise HTTPException(
@@ -290,5 +309,50 @@ def build_admin_router(
     @router.get("/admin/status")
     def admin_status() -> dict[str, object]:
         return build_admin_status_payload(settings, paths, git_store, ingestion.repository, document_service)
+
+    @router.get("/admin/backups")
+    def list_backups() -> dict[str, object]:
+        try:
+            records = backup_service.list()
+        except BackupError as exc:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="backup listing unavailable") from exc
+        return {"status": "ok", "backups": [_backup_payload(record) for record in records]}
+
+    def _create_backup(kind: str) -> dict[str, object]:
+        try:
+            record = (backup_service.create_knowledge_bundle() if kind == "knowledge" else backup_service.create_full_backup())
+        except BackupTooLargeError as exc:
+            raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="backup exceeds configured size limit") from exc
+        except BackupError as exc:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="backup could not be created") from exc
+        return {"status": "ok", "backup": _backup_payload(record)}
+
+    @router.post("/admin/backups/knowledge")
+    def create_knowledge_backup() -> dict[str, object]:
+        return _create_backup("knowledge")
+
+    @router.post("/admin/backups/full")
+    def create_full_backup() -> dict[str, object]:
+        return _create_backup("full")
+
+    @router.get("/admin/backups/{name}")
+    def download_backup(name: str) -> FileResponse:
+        try:
+            record = backup_service.resolve_download(name)
+        except BackupNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="backup was not found") from exc
+        return FileResponse(record.path, filename=record.name, media_type="application/octet-stream")
+
+    @router.delete("/admin/backups/{name}")
+    def delete_backup(name: str, request: ConfirmationRequest | None = None) -> dict[str, object]:
+        if request is None or not request.confirm:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="confirmation required")
+        try:
+            backup_service.delete(name, confirmed=True)
+        except BackupNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="backup was not found") from exc
+        except BackupError as exc:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="backup could not be deleted") from exc
+        return {"status": "ok", "name": name}
 
     return router

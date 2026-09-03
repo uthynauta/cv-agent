@@ -12,6 +12,7 @@ _SAFE_OPERATIONS = frozenset(
     {
         "add",
         "cat-file",
+        "bundle",
         "commit",
         "config",
         "diff",
@@ -350,6 +351,13 @@ class LocalKnowledgeGit:
     def tracked_paths(self) -> list[str]:
         output = self._run("ls-files", "-z").stdout
         return sorted(path for path in output.split("\0") if path)
+
+    def bundle_create(self, destination: str | Path, ref: str = "main") -> None:
+        """Create a bundle at a caller-controlled destination for export."""
+        target = Path(destination)
+        if not target.is_absolute() or target.exists() and not target.is_file():
+            raise GitStoreError("Git bundle destination is invalid")
+        self._run("bundle", "create", str(target), ref)
 
     def changed_paths(self, commit: str) -> tuple[str, ...]:
         """Return only Markdown paths changed by one validated commit."""
