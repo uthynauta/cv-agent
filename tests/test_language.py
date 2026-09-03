@@ -42,3 +42,23 @@ def test_sources_label_and_fallback_are_localized():
 def test_policy_rejects_unknown_configuration():
     with pytest.raises(ValueError):
         LanguagePolicy("fr")
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "Hola mundo\nFuentes: [[Python]]",
+        "El candidato usa Python\nFuentes: [[Python]]",
+        "Experiencia: Python\nFuentes: [[Python]]",
+    ],
+)
+def test_spanish_accepts_normal_concise_answers(answer):
+    assert LanguagePolicy("es").validate(answer, "es") is True
+
+
+def test_spanish_rejects_english_accented_loanword_sentence():
+    assert LanguagePolicy("es").validate("The résumé is strong\nFuentes: [[Python]]", "es") is False
+
+
+def test_english_rejects_spanish_dominant_mixed_sentence():
+    assert LanguagePolicy("en").validate("La persona has experiencia\nSources: [[Python]]", "en") is False

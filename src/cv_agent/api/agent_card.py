@@ -28,13 +28,13 @@ def build_agent_card_router(settings: Settings) -> APIRouter:
             "capabilities": {"streaming": False},
             "skills": [
                 {
-                    "id": "cv_qa",
+                    "id": "knowledge_qa",
                     "name": "Knowledge Q&A",
                     "description": (
                         "Answers questions grounded in the configured knowledge base for "
                         f"{owner}."
                     ),
-                    "tags": ["cv", "career", "ai"],
+                    "tags": ["knowledge", "grounded", "qa"],
                 }
             ],
         }

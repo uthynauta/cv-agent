@@ -78,7 +78,7 @@ def test_untrusted_instructions_cannot_override_mandatory_policy(tmp_path: Path)
     )
 
     assert fake.instructions.index("untrusted") < fake.instructions.index("Mandatory policies")
-    assert fake.instructions.count("</untrusted_user_preferences>") == 1
+    assert fake.instructions.count("</untrusted_user_request>") == 1
     assert "No pude generar una respuesta respaldada" in answer
     assert answer.endswith("Fuentes: [[Python]]")
 
@@ -344,7 +344,7 @@ def test_agent_sends_third_party_subject_to_model_with_identity_policy(tmp_path:
     assert "No hay información respaldada sobre Juanita" in answer
     assert "Fuentes: [[Teaching Experience]]" in answer
     assert "Juanita" in fake_client.input_text
-    assert "Do not transfer the candidate's CV facts to any other person" in fake_client.instructions
+    assert "Do not transfer the configured knowledge subject's facts" in fake_client.instructions
 
 
 def test_agent_does_not_treat_capitalized_spanish_openers_as_unknown_subjects(tmp_path: Path):

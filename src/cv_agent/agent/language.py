@@ -11,13 +11,13 @@ _CITATION_RE = re.compile(r"\[\[([^\[\]]+)\]\]")
 _SPANISH_WORDS = {
     "ademas", "con", "como", "cuenta", "de", "del", "donde", "el", "en", "es",
     "experiencia", "hay", "la", "las", "los", "para", "por", "que", "qué", "sobre",
-    "formacion", "fuentes", "habilidades", "informacion", "ingenieria", "lidero",
+    "experiencia", "formacion", "fuentes", "habilidades", "hola", "informacion", "ingenieria", "lidero",
     "posee", "publicaciones", "respuesta", "respaldada", "sobre", "tiene", "trabajo",
-    "una", "y", "¿qué",
+    "una", "usa", "uso", "y", "¿qué", "mundo", "candidato", "cientifica", "cientificas",
 }
 _ENGLISH_WORDS = {
     "a", "about", "an", "and", "are", "can", "does", "for", "has", "have", "how",
-    "in", "is", "of", "on", "or", "tell", "the", "this", "to", "used", "what", "with",
+    "in", "is", "of", "on", "or", "resume", "strong", "tell", "the", "this", "to", "used", "what", "with",
 }
 
 
@@ -52,7 +52,7 @@ class LanguagePolicy:
         lines = [line.strip() for line in answer.strip().splitlines() if line.strip()]
         if not lines or not _is_sources_line(lines[-1], effective):
             return False
-        body = _CITATION_RE.sub("", " ".join(lines[:-1]))
+        body = _CITATION_RE.sub("", " ".join(line for line in lines[:-1] if not line.startswith("- ")))
         if not body.strip() or not _looks_like(body, effective):
             return False
         return bool(_CITATION_RE.findall(lines[-1]))
@@ -82,10 +82,8 @@ def _looks_like(value: str, language: Language) -> bool:
     markers = _SPANISH_WORDS if language == "es" else _ENGLISH_WORDS
     other = _ENGLISH_WORDS if language == "es" else _SPANISH_WORDS
     marker_count = len(tokens & markers)
-    if language == "es" and re.search(r"[áéíóúüñ]", value.casefold()):
-        marker_count = max(marker_count, 1)
-    required = 1 if language == "es" and re.search(r"[áéíóúüñ]", value.casefold()) else (2 if language == "es" else 1)
-    return marker_count >= required
+    opposing_count = len(tokens & other)
+    return marker_count >= 1 and marker_count > opposing_count
 
 
 def _is_sources_line(line: str, effective: Language) -> bool:
