@@ -169,7 +169,7 @@ def test_ui_upload_uses_shared_admin_ingestion(tmp_path, monkeypatch):
     settings = ui_settings(tmp_path)
     captured = {}
 
-    def fake_build_admin_router(settings_arg, paths, git_store, ingestion, document_service):
+    def fake_build_admin_router(settings_arg, paths, git_store, ingestion, document_service, backup_service=None):
         captured["api_ingestion"] = ingestion
         captured["api_service"] = document_service
         return APIRouter()

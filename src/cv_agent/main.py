@@ -1,5 +1,4 @@
 from collections.abc import Callable
-import inspect
 
 from fastapi import FastAPI
 
@@ -85,10 +84,7 @@ def create_app(
         build_responses_router(settings, agent_answerer, lambda: active_knowledge.initialized)
     )
     router_args = (settings, paths, git_store, ingestion, document_service)
-    if "backup_service" in inspect.signature(build_admin_router).parameters:
-        app.include_router(build_admin_router(*router_args, backup_service=backup_service))
-    else:  # Compatibility with narrow test/application adapters.
-        app.include_router(build_admin_router(*router_args))
+    app.include_router(build_admin_router(*router_args, backup_service=backup_service))
     return app
 
 

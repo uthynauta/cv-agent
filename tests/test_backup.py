@@ -1,11 +1,13 @@
 import json
 import subprocess
 import tarfile
+import pytest
 
 from cv_agent.config import Settings
 from cv_agent.knowledge.backup import BackupService
 from cv_agent.knowledge.git_store import LocalKnowledgeGit
 from cv_agent.knowledge.storage import ensure_data_storage
+from cv_agent.knowledge.backup import BackupError, BackupNotFoundError, BackupTooLargeError
 
 
 def _service(tmp_path):
@@ -53,3 +55,39 @@ def test_retention_removes_only_old_managed_backups(tmp_path):
     service.retention_count = 2
     service.prune()
     assert len(service.list()) == 2
+
+
+@pytest.mark.parametrize("name", [
+    "knowledge-20260101T000000Z-aaaaaaaaaaaaaaaa.tar.gz",
+    "full-20260101T000000Z-aaaaaaaaaaaaaaaa.bundle",
+    "../knowledge-20260101T000000Z-aaaaaaaaaaaaaaa.bundle",
+])
+def test_backup_name_requires_kind_specific_suffix(tmp_path, name):
+    service = _service(tmp_path)
+    with pytest.raises(BackupNotFoundError):
+        service.resolve_download(name)
+
+
+def test_malformed_source_metadata_is_backup_error(tmp_path):
+    service = _service(tmp_path)
+    (service.paths.sources / "broken.md").write_text("---\n[not: valid\n---\n", encoding="utf-8")
+    with pytest.raises(BackupError):
+        service.create_full_backup()
+
+
+def test_download_rejects_oversize_before_digest(tmp_path, monkeypatch):
+    service = _service(tmp_path)
+    service.max_bytes = 1
+    result = service.paths.backups / "knowledge-20260101T000000Z-aaaaaaaaaaaaaaaa.bundle"
+    result.write_bytes(b"too large")
+    monkeypatch.setattr(service, "_digest", lambda _path: (_ for _ in ()).throw(AssertionError("hashed")))
+    with pytest.raises(BackupTooLargeError):
+        service.open_download(result.name)
+
+
+def test_knowledge_create_rejects_oversize_during_bundle_stream(tmp_path):
+    service = _service(tmp_path)
+    service.max_bytes = 1
+    with pytest.raises(BackupTooLargeError):
+        service.create_knowledge_bundle()
+    assert not service.list()

@@ -52,6 +52,10 @@ class GitStoreError(RuntimeError):
     """Raised when a local Git store operation cannot be completed."""
 
 
+class GitStoreTooLargeError(GitStoreError):
+    """Raised when a bounded Git export exceeds its output limit."""
+
+
 class LocalKnowledgeGit:
     def __init__(self, root: str | Path, author_name: str, author_email: str) -> None:
         self.root = Path(root).expanduser().resolve()
@@ -352,8 +356,8 @@ class LocalKnowledgeGit:
         output = self._run("ls-files", "-z").stdout
         return sorted(path for path in output.split("\0") if path)
 
-    def bundle_create(self, destination: str | Path, ref: str = "main") -> None:
-        """Create a bundle at a caller-controlled destination for export."""
+    def bundle_create(self, destination: str | Path, ref: str = "main", *, max_bytes: int | None = None) -> None:
+        """Create a bundle through Git stdout into an exclusively opened file."""
         target = Path(destination).expanduser()
         if not target.is_absolute() or target.exists() or not target.name:
             raise GitStoreError("Git bundle destination is invalid")
@@ -366,7 +370,61 @@ class LocalKnowledgeGit:
                 current = current.parent
         except (ValueError, OSError):
             raise GitStoreError("Git bundle destination is outside the local data store") from None
-        self._run("bundle", "create", str(target), ref)
+        descriptor = -1
+        parent_descriptor = -1
+        try:
+            parent_descriptor = os.open(
+                target.parent,
+                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+            )
+            descriptor = os.open(
+                target.name,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+                0o600,
+                dir_fd=parent_descriptor,
+            )
+            command = [
+                "git", "-C", str(self.root), "--git-dir", str(self.root / ".git"),
+                "--work-tree", str(self.root), "-c", f"safe.directory={self.root}",
+                "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false",
+                "bundle", "create", "-", ref,
+            ]
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=self._git_environment(),
+            )
+            total = 0
+            assert process.stdout is not None
+            with os.fdopen(descriptor, "wb") as output:
+                descriptor = -1
+                for chunk in iter(lambda: process.stdout.read(1024 * 1024), b""):
+                    total += len(chunk)
+                    if max_bytes is not None and total > max_bytes:
+                        process.kill()
+                        process.wait(timeout=5)
+                        raise GitStoreTooLargeError("Git bundle exceeds configured size limit")
+                    output.write(chunk)
+                output.flush()
+                os.fsync(output.fileno())
+            stderr = process.stderr.read() if process.stderr is not None else b""
+            if process.wait(timeout=30) != 0:
+                raise GitStoreError("Git operation 'bundle' failed")
+        except GitStoreError:
+            raise
+        except (OSError, subprocess.SubprocessError):
+            raise GitStoreError("Git operation 'bundle' failed") from None
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+            if parent_descriptor >= 0:
+                os.close(parent_descriptor)
+            if 'process' in locals() and process.poll() is None:
+                process.kill()
+                process.wait()
+            if target.exists() and (max_bytes is not None and target.stat().st_size > max_bytes):
+                target.unlink(missing_ok=True)
 
     def changed_paths(self, commit: str) -> tuple[str, ...]:
         """Return only Markdown paths changed by one validated commit."""
