@@ -124,7 +124,7 @@ def test_admin_documents_upload_supported_formats_use_document_service(
     assert list((tmp_path / "documents").glob(f"{document_id}.*"))
 
 
-def test_admin_pdf_upload_keeps_original_outside_markdown_git(tmp_path, monkeypatch):
+def test_admin_pdf_upload_and_replace_keep_original_outside_markdown_git(tmp_path, monkeypatch):
     settings = mounted_settings(tmp_path, ingestion_mode="deterministic", admin_upload_max_bytes=1024)
     app = create_app(settings=settings, agent_answerer=lambda text, instructions=None: "ok")
 
@@ -135,7 +135,8 @@ def test_admin_pdf_upload_keeps_original_outside_markdown_git(tmp_path, monkeypa
         sha256 = "a" * 64
 
     monkeypatch.setattr("cv_agent.knowledge.ingest.extract_source", lambda path: Extracted())
-    response = TestClient(app).post(
+    client = TestClient(app)
+    response = client.post(
         "/admin/documents",
         headers={"Authorization": "Bearer admin-secret"},
         files={"file": ("candidate.pdf", b"synthetic pdf", "application/pdf")},
@@ -145,6 +146,15 @@ def test_admin_pdf_upload_keeps_original_outside_markdown_git(tmp_path, monkeypa
     document_id = response.json()["document"]["document_id"]
     original = next((tmp_path / "documents").glob(f"{document_id}.pdf"))
     assert original.is_file()
+
+    replaced = client.put(
+        f"/admin/documents/{document_id}",
+        headers={"Authorization": "Bearer admin-secret"},
+        files={"file": ("candidate.pdf", b"replacement pdf", "application/pdf")},
+    )
+
+    assert replaced.status_code == 200
+    assert original.read_bytes() == b"replacement pdf"
     tracked = app.state.git_store.tracked_paths()
     assert tracked
     assert all(path.startswith(("sources/", "knowledge/")) and path.endswith(".md") for path in tracked)
