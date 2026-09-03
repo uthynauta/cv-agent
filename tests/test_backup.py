@@ -12,10 +12,16 @@ def _service(tmp_path):
     paths = ensure_data_storage(tmp_path)
     git = LocalKnowledgeGit(paths.repository, "Test", "test@example.com")
     git.initialize()
-    (paths.sources / "doc-1.md").write_text("# Doc\n", encoding="utf-8")
+    (paths.sources / "doc-1.md").write_text(
+        "---\ndocument_id: doc-1\noriginal_filename: doc-1.pdf\nmedia_type: application/pdf\ncontent_sha256: 068f7e8f5e0a1c9f7f9f9d2d6f2f4f0c16e6e1f4f6f6f8c2c8e0e7d3a4e6b5b1\n---\n\n# Doc\n",
+        encoding="utf-8",
+    )
     (paths.knowledge / "index.md").write_text("# Index\n", encoding="utf-8")
     git.commit("seed")
     (paths.documents / "doc-1.pdf").write_bytes(b"original")
+    import hashlib
+    source = paths.sources / "doc-1.md"
+    source.write_text(source.read_text(encoding="utf-8").replace("068f7e8f5e0a1c9f7f9f9d2d6f2f4f0c16e6e1f4f6f6f8c2c8e0e7d3a4e6b5b1", hashlib.sha256(b"original").hexdigest()), encoding="utf-8")
     return BackupService(paths, git, Settings(_env_file=None, data_dir=tmp_path, agent_model_name="test-model"))
 
 

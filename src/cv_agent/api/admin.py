@@ -5,7 +5,7 @@ from typing import Annotated
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse
 
 from cv_agent.config import Settings
 from cv_agent.knowledge.ingest import IngestionService
@@ -321,6 +321,8 @@ def build_admin_router(
     def _create_backup(kind: str) -> dict[str, object]:
         try:
             record = (backup_service.create_knowledge_bundle() if kind == "knowledge" else backup_service.create_full_backup())
+        except MutationBusyError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="another knowledge mutation is running") from exc
         except BackupTooLargeError as exc:
             raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="backup exceeds configured size limit") from exc
         except BackupError as exc:
@@ -336,12 +338,23 @@ def build_admin_router(
         return _create_backup("full")
 
     @router.get("/admin/backups/{name}")
-    def download_backup(name: str) -> FileResponse:
+    def download_backup(name: str) -> StreamingResponse:
         try:
-            record = backup_service.resolve_download(name)
+            record, handle = backup_service.open_download(name)
         except BackupNotFoundError as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="backup was not found") from exc
-        return FileResponse(record.path, filename=record.name, media_type="application/octet-stream")
+        except BackupTooLargeError as exc:
+            raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="backup exceeds configured size limit") from exc
+        def chunks():
+            try:
+                while True:
+                    chunk = handle.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    yield chunk
+            finally:
+                handle.close()
+        return StreamingResponse(chunks(), media_type="application/octet-stream", headers={"Content-Disposition": f'attachment; filename="{record.name}"'})
 
     @router.delete("/admin/backups/{name}")
     def delete_backup(name: str, request: ConfirmationRequest | None = None) -> dict[str, object]:

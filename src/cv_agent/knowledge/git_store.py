@@ -354,9 +354,18 @@ class LocalKnowledgeGit:
 
     def bundle_create(self, destination: str | Path, ref: str = "main") -> None:
         """Create a bundle at a caller-controlled destination for export."""
-        target = Path(destination)
-        if not target.is_absolute() or target.exists() and not target.is_file():
+        target = Path(destination).expanduser()
+        if not target.is_absolute() or target.exists() or not target.name:
             raise GitStoreError("Git bundle destination is invalid")
+        try:
+            target.parent.resolve().relative_to(self.root.parent.resolve())
+            current = target.parent
+            while current != current.parent:
+                if current.is_symlink():
+                    raise ValueError
+                current = current.parent
+        except (ValueError, OSError):
+            raise GitStoreError("Git bundle destination is outside the local data store") from None
         self._run("bundle", "create", str(target), ref)
 
     def changed_paths(self, commit: str) -> tuple[str, ...]:

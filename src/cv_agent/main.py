@@ -1,4 +1,5 @@
 from collections.abc import Callable
+import inspect
 
 from fastapi import FastAPI
 
@@ -83,9 +84,11 @@ def create_app(
     app.include_router(
         build_responses_router(settings, agent_answerer, lambda: active_knowledge.initialized)
     )
-    # Keep the router factory's established positional contract; it creates
-    # the same lightweight service when no explicit instance is supplied.
-    app.include_router(build_admin_router(settings, paths, git_store, ingestion, document_service))
+    router_args = (settings, paths, git_store, ingestion, document_service)
+    if "backup_service" in inspect.signature(build_admin_router).parameters:
+        app.include_router(build_admin_router(*router_args, backup_service=backup_service))
+    else:  # Compatibility with narrow test/application adapters.
+        app.include_router(build_admin_router(*router_args))
     return app
 
 

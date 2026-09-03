@@ -6,13 +6,19 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import stat
 import tarfile
+import io
+import os
+from typing import BinaryIO
 from typing import Literal
 from uuid import uuid4
 
 from cv_agent.config import Settings
 from cv_agent.knowledge.git_store import GitStoreError, LocalKnowledgeGit
 from cv_agent.knowledge.storage import DataPaths
+from cv_agent.knowledge.frontmatter import load_frontmatter
+from cv_agent.knowledge.locking import MutationBusyError, MutationLock
 
 
 BackupKind = Literal["knowledge", "full"]
@@ -84,37 +90,86 @@ class BackupService:
             raise BackupTooLargeError("backup exceeds configured size limit")
 
     def create_knowledge_bundle(self) -> BackupRecord:
-        path = self._new_path("knowledge", "bundle")
+        with MutationLock(self.paths.locks / "mutation.lock"):
+            return self._create_knowledge_bundle_locked()
+
+    def _create_knowledge_bundle_locked(self) -> BackupRecord:
+        operation = self.paths.staging / f"backup-{uuid4().hex}"
+        operation.mkdir(mode=0o700)
+        path = operation / "knowledge.bundle"
         try:
             self.git.bundle_create(path)
             self._enforce_size(path)
-            return self._record(path, "knowledge")
+            published = self._new_path("knowledge", "bundle")
+            path.replace(published)
+            record = self._record(published, "knowledge")
+            self._prune_unlocked()
+            return record
         except BackupTooLargeError:
             raise
         except (GitStoreError, OSError) as exc:
-            path.unlink(missing_ok=True)
             raise BackupError("knowledge backup could not be created") from exc
+        finally:
+            import shutil
+            shutil.rmtree(operation, ignore_errors=True)
 
     def _current_originals(self) -> list[tuple[str, Path]]:
         result: list[tuple[str, Path]] = []
         if not self.paths.documents.is_dir() or self.paths.documents.is_symlink():
             return result
+        expected: dict[str, str] = {}
+        try:
+            for source in sorted(self.paths.sources.glob("*.md")):
+                if source.is_symlink() or not source.is_file():
+                    continue
+                metadata, _ = load_frontmatter(source.read_text(encoding="utf-8"))
+                document_id = metadata.get("document_id")
+                digest = metadata.get("content_sha256")
+                filename = metadata.get("original_filename")
+                media_type = metadata.get("media_type")
+                suffix = {"application/pdf": ".pdf", "application/x-tex": ".tex", "text/markdown": ".md"}.get(media_type)
+                if isinstance(document_id, str) and isinstance(digest, str) and isinstance(filename, str) and suffix:
+                    expected[f"{document_id}{suffix}"] = digest
+        except (OSError, UnicodeError, ValueError, TypeError):
+            return result
         for path in sorted(self.paths.documents.iterdir()):
             if path.name == "quarantine" or path.is_symlink() or not path.is_file():
+                continue
+            if path.name not in expected:
+                continue
+            try:
+                if self._digest(path)[1] != expected[path.name]:
+                    continue
+            except OSError:
                 continue
             result.append((f"documents/{path.name}", path))
         return result
 
     def create_full_backup(self) -> BackupRecord:
+        try:
+            with MutationLock(self.paths.locks / "mutation.lock"):
+                return self._create_full_backup_locked()
+        except MutationBusyError:
+            raise
+
+    def _create_full_backup_locked(self) -> BackupRecord:
         created_at = self._now()
-        bundle = self._new_path("full", "bundle")
-        archive_path = self._new_path("full", "tar.gz")
+        import shutil
+        operation = self.paths.staging / f"backup-{uuid4().hex}"
+        operation.mkdir(mode=0o700)
+        bundle = operation / "knowledge.bundle"
+        archive_path = operation / "backup.tar.gz"
         files: dict[str, dict[str, int | str]] = {}
         try:
             self.git.bundle_create(bundle)
             bundle_size, bundle_hash = self._digest(bundle)
             files["knowledge.bundle"] = {"sha256": bundle_hash, "size": bundle_size}
-            originals = self._current_originals()
+            originals = []
+            for member, source in self._current_originals():
+                copy = operation / Path(member)
+                copy.parent.mkdir(parents=True, exist_ok=True)
+                self._snapshot(source, copy)
+                originals.append((member, copy))
             for member, source in originals:
                 size, digest = self._digest(source)
                 files[member] = {"sha256": digest, "size": size}
@@ -133,17 +188,39 @@ class BackupService:
                 info = tarfile.TarInfo("manifest.json")
                 info.size = len(payload)
                 info.mode = 0o600
-                archive.addfile(info, __import__("io").BytesIO(payload))
-            bundle.unlink(missing_ok=True)
+                archive.addfile(info, io.BytesIO(payload))
             self._enforce_size(archive_path)
-            return self._record(archive_path, "full", created_at)
+            published = self._new_path("full", "tar.gz")
+            archive_path.replace(published)
+            record = self._record(published, "full", created_at)
+            self._prune_unlocked()
+            return record
         except BackupTooLargeError:
             bundle.unlink(missing_ok=True)
             raise
         except (GitStoreError, OSError, tarfile.TarError, ValueError) as exc:
-            bundle.unlink(missing_ok=True)
-            archive_path.unlink(missing_ok=True)
             raise BackupError("full backup could not be created") from exc
+        finally:
+            shutil.rmtree(operation, ignore_errors=True)
+
+    @staticmethod
+    def _snapshot(source: Path, destination: Path) -> None:
+        import os
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(source, flags)
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                raise OSError("original is not regular")
+            with os.fdopen(descriptor, "rb") as src:
+                descriptor = -1
+                with destination.open("xb") as dst:
+                    for chunk in iter(lambda: src.read(1024 * 1024), b""):
+                        dst.write(chunk)
+                    dst.flush()
+                    os.fsync(dst.fileno())
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
 
     @staticmethod
     def _add_file(archive: tarfile.TarFile, member: str, source: Path) -> None:
@@ -182,6 +259,23 @@ class BackupService:
         except OSError as exc:
             raise BackupNotFoundError("backup was not found") from exc
 
+    def open_download(self, name: str) -> tuple[BackupRecord, BinaryIO]:
+        record = self.resolve_download(name)
+        try:
+            descriptor = os.open(record.path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                os.close(descriptor)
+                raise BackupNotFoundError("backup was not found")
+            size = os.fstat(descriptor).st_size
+            if size > self.max_bytes:
+                os.close(descriptor)
+                raise BackupTooLargeError("backup exceeds configured size limit")
+            return record, os.fdopen(descriptor, "rb")
+        except BackupError:
+            raise
+        except (OSError, ValueError) as exc:
+            raise BackupNotFoundError("backup was not found") from exc
+
     def delete(self, name: str, confirmed: bool) -> None:
         if not confirmed:
             raise BackupError("confirmation required")
@@ -192,6 +286,10 @@ class BackupService:
             raise BackupError("backup could not be deleted") from exc
 
     def prune(self) -> list[str]:
+        with MutationLock(self.paths.locks / "mutation.lock"):
+            return self._prune_unlocked()
+
+    def _prune_unlocked(self) -> list[str]:
         records = self.list()
         removed: list[str] = []
         for record in records[self.retention_count :]:
