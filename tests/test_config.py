@@ -20,7 +20,7 @@ def test_settings_defaults():
     assert settings.data_dir == Path("data")
     assert settings.agent_owner_name is None
     assert settings.agent_display_name == "CV Agent"
-    assert settings.agent_description == "Ask questions about this candidate's CV."
+    assert settings.agent_description == "Ask questions about the configured knowledge base."
     assert settings.agent_language == "auto"
     assert settings.admin_backup_max_bytes == 100 * 1024 * 1024
     assert settings.backup_retention_count == 10

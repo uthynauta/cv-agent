@@ -104,10 +104,8 @@ def test_agent_instructions_prefer_conversational_answers_and_grounded_followups
     service.answer("¿Qué proyectos importantes de IA ha manejado Candidate?")
 
     assert "Prefer one short conversational paragraph" in fake.instructions
-    assert "Avoid bullet lists unless the user explicitly asks for a list" in fake.instructions
-    assert "Before the final Fuentes line, ask exactly one short useful follow-up question" in fake.instructions
-    assert "skip it only if the user explicitly asks for no questions or only the answer" in fake.instructions
-    assert "Only suggest follow-ups that can be answered from the supplied wiki context" in fake.instructions
+    assert "use bullets when explicitly requested" in fake.instructions
+    assert "ask one short follow-up only when useful and supported" in fake.instructions
 
 
 def test_agent_rejects_citations_not_present_in_retrieved_hits(tmp_path: Path):

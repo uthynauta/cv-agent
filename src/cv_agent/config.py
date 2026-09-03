@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     agent_owner_name: str | None = Field(default=None, alias="AGENT_OWNER_NAME")
     agent_display_name: str = Field(default="CV Agent", alias="AGENT_DISPLAY_NAME")
     agent_description: str = Field(
-        default="Ask questions about this candidate's CV.", alias="AGENT_DESCRIPTION"
+        default="Ask questions about the configured knowledge base.", alias="AGENT_DESCRIPTION"
     )
     agent_language: AgentLanguage = Field(default="auto", alias="AGENT_LANGUAGE")
     agent_public_url: str | None = Field(default=None, alias="AGENT_PUBLIC_URL")

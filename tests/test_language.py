@@ -62,3 +62,13 @@ def test_spanish_rejects_english_accented_loanword_sentence():
 
 def test_english_rejects_spanish_dominant_mixed_sentence():
     assert LanguagePolicy("en").validate("La persona has experiencia\nSources: [[Python]]", "en") is False
+
+
+def test_bullet_content_is_scored_after_stripping_list_markers():
+    policy = LanguagePolicy("es")
+    assert policy.validate("- Experiencia con Python\n- Desarrollo de APIs\nFuentes: [[Python]]", "es") is True
+
+
+def test_wrong_language_bullets_fail_even_with_valid_intro():
+    policy = LanguagePolicy("es")
+    assert policy.validate("Respuesta breve.\n- The candidate is strong\nFuentes: [[Python]]", "es") is False

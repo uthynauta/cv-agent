@@ -52,7 +52,7 @@ class LanguagePolicy:
         lines = [line.strip() for line in answer.strip().splitlines() if line.strip()]
         if not lines or not _is_sources_line(lines[-1], effective):
             return False
-        body = _CITATION_RE.sub("", " ".join(line for line in lines[:-1] if not line.startswith("- ")))
+        body = _CITATION_RE.sub("", " ".join(_strip_list_marker(line) for line in lines[:-1]))
         if not body.strip() or not _looks_like(body, effective):
             return False
         return bool(_CITATION_RE.findall(lines[-1]))
@@ -83,7 +83,13 @@ def _looks_like(value: str, language: Language) -> bool:
     other = _ENGLISH_WORDS if language == "es" else _SPANISH_WORDS
     marker_count = len(tokens & markers)
     opposing_count = len(tokens & other)
-    return marker_count >= 1 and marker_count > opposing_count
+    if language == "es" and re.search(r"[áéíóúüñ]", value.casefold()):
+        return marker_count >= 1
+    return marker_count >= 1 and marker_count >= opposing_count
+
+
+def _strip_list_marker(line: str) -> str:
+    return re.sub(r"^(?:[-*+] |\d+[.)] )", "", line.strip())
 
 
 def _is_sources_line(line: str, effective: Language) -> bool:
