@@ -171,8 +171,13 @@ class BackupService:
             return self._create_knowledge_bundle_locked()
 
     def _create_knowledge_bundle_locked(self) -> BackupRecord:
-        if not self.git.head():
-            raise BackupUnavailableError("knowledge backup is unavailable before the first commit")
+        try:
+            if not self.git.head():
+                raise BackupUnavailableError("knowledge backup is unavailable before the first commit")
+        except BackupUnavailableError:
+            raise
+        except GitStoreError as exc:
+            raise BackupError("knowledge backup could not inspect repository state") from exc
         operation = self.paths.staging / f"backup-{uuid4().hex}"
         operation.mkdir(mode=0o700)
         path = operation / "knowledge.bundle"
@@ -198,9 +203,10 @@ class BackupService:
             import shutil
             shutil.rmtree(operation, ignore_errors=True)
 
-    def _current_originals(self) -> list[tuple[str, bytes, str]]:
+    def _current_originals(self, budget: int = 0) -> list[tuple[str, bytes, str]]:
         result: list[tuple[str, bytes, str]] = []
         expected: dict[str, str] = {}
+        aggregate = budget
         root_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
         try:
             sources_fd = os.open(self.paths.sources, root_flags)
@@ -212,9 +218,13 @@ class BackupService:
                 try:
                     if not stat.S_ISREG(os.fstat(descriptor).st_mode):
                         continue
-                    with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
+                    with os.fdopen(descriptor, "rb") as handle:
                         descriptor = -1
-                        metadata, _ = load_frontmatter(handle.read())
+                        source_bytes = handle.read(self.max_bytes + 1)
+                        if len(source_bytes) > self.max_bytes:
+                            raise BackupTooLargeError("backup exceeds configured size limit")
+                        source = source_bytes.decode("utf-8")
+                        metadata, _ = load_frontmatter(source)
                 finally:
                     if descriptor >= 0:
                         os.close(descriptor)
@@ -234,9 +244,13 @@ class BackupService:
                         continue
                     with os.fdopen(descriptor, "rb") as handle:
                         descriptor = -1
-                        data = handle.read(self.max_bytes + 1)
-                    if len(data) > self.max_bytes:
+                        remaining = self.max_bytes - aggregate
+                        if remaining < 0:
+                            raise BackupTooLargeError("backup exceeds configured size limit")
+                        data = handle.read(remaining + 1)
+                    if len(data) > remaining:
                         raise BackupTooLargeError("backup exceeds configured size limit")
+                    aggregate += len(data)
                     digest = hashlib.sha256(data).hexdigest()
                     if digest == expected[name]:
                         result.append((f"documents/{name}", data, digest))
@@ -259,8 +273,13 @@ class BackupService:
             raise
 
     def _create_full_backup_locked(self) -> BackupRecord:
-        if not self.git.head():
-            raise BackupUnavailableError("full backup is unavailable before the first commit")
+        try:
+            if not self.git.head():
+                raise BackupUnavailableError("full backup is unavailable before the first commit")
+        except BackupUnavailableError:
+            raise
+        except GitStoreError as exc:
+            raise BackupError("full backup could not inspect repository state") from exc
         created_at = self._now()
         import shutil
         operation = self.paths.staging / f"backup-{uuid4().hex}"
@@ -273,7 +292,7 @@ class BackupService:
             bundle_size, bundle_hash = self._digest(bundle)
             files["knowledge.bundle"] = {"sha256": bundle_hash, "size": bundle_size}
             originals = []
-            for member, data, expected_digest in self._current_originals():
+            for member, data, expected_digest in self._current_originals(bundle_size):
                 copy = operation / Path(member)
                 copy.parent.mkdir(parents=True, exist_ok=True)
                 self._snapshot(

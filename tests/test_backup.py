@@ -6,7 +6,7 @@ import pytest
 
 from cv_agent.config import Settings
 from cv_agent.knowledge.backup import BackupService
-from cv_agent.knowledge.git_store import LocalKnowledgeGit
+from cv_agent.knowledge.git_store import GitStoreError, LocalKnowledgeGit
 from cv_agent.knowledge.storage import ensure_data_storage
 from cv_agent.knowledge.backup import BackupError, BackupNotFoundError, BackupTooLargeError
 
@@ -129,3 +129,18 @@ def test_full_backup_verifies_digest_of_staged_original(tmp_path, monkeypatch):
         service.create_full_backup()
     assert not list(service.paths.backups.iterdir())
     assert not list(service.paths.staging.iterdir())
+
+
+def test_oversized_source_metadata_fails_before_parsing(tmp_path):
+    service = _service(tmp_path)
+    service.max_bytes = 16
+    (service.paths.sources / "oversized.md").write_text("x" * 17, encoding="utf-8")
+    with pytest.raises(BackupTooLargeError):
+        service.create_full_backup()
+
+
+def test_git_head_failure_is_a_backup_error(tmp_path, monkeypatch):
+    service = _service(tmp_path)
+    monkeypatch.setattr(service.git, "head", lambda: (_ for _ in ()).throw(GitStoreError("bad")))
+    with pytest.raises(BackupError):
+        service.create_knowledge_bundle()
