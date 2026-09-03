@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import tarfile
 import pytest
@@ -91,3 +92,40 @@ def test_knowledge_create_rejects_oversize_during_bundle_stream(tmp_path):
     with pytest.raises(BackupTooLargeError):
         service.create_knowledge_bundle()
     assert not service.list()
+
+
+def test_open_download_does_not_leak_directory_descriptors(tmp_path):
+    service = _service(tmp_path)
+    result = service.create_knowledge_bundle()
+    before = len(os.listdir("/proc/self/fd"))
+    for _ in range(20):
+        record, handle = service.open_download(result.name)
+        handle.close()
+        assert record.name == result.name
+    after = len(os.listdir("/proc/self/fd"))
+    assert after <= before + 1
+
+
+def test_list_rejects_symlinked_backup_root(tmp_path):
+    service = _service(tmp_path)
+    real = service.paths.backups
+    moved = tmp_path / "real-backups"
+    real.rename(moved)
+    real.symlink_to(moved, target_is_directory=True)
+    with pytest.raises(BackupError):
+        service.list()
+
+
+def test_full_backup_verifies_digest_of_staged_original(tmp_path, monkeypatch):
+    service = _service(tmp_path)
+    original_snapshot = service._snapshot
+
+    def corrupt_after_snapshot(source, destination, **kwargs):
+        original_snapshot(source, destination, **kwargs)
+        destination.write_bytes(b"changed")
+
+    monkeypatch.setattr(service, "_snapshot", corrupt_after_snapshot)
+    with pytest.raises(BackupError, match="document changed"):
+        service.create_full_backup()
+    assert not list(service.paths.backups.iterdir())
+    assert not list(service.paths.staging.iterdir())

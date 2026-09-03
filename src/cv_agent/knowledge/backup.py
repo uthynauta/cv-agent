@@ -61,6 +61,11 @@ class BackupTooLargeError(BackupError):
     pass
 
 
+class BackupUnavailableError(BackupError):
+    """Raised when no committed knowledge snapshot exists to export."""
+    pass
+
+
 class _LimitedWriter:
     def __init__(self, handle: BinaryIO, limit: int) -> None:
         self.handle = handle
@@ -98,18 +103,32 @@ class BackupService:
         return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
     @staticmethod
-    def _digest(path: Path) -> tuple[int, str]:
+    def _digest(path: Path, limit: int | None = None) -> tuple[int, str]:
         digest = hashlib.sha256()
         size = 0
         with path.open("rb") as handle:
             for chunk in iter(lambda: handle.read(1024 * 1024), b""):
                 digest.update(chunk)
                 size += len(chunk)
+                if limit is not None and size > limit:
+                    raise BackupTooLargeError("backup exceeds configured size limit")
         return size, digest.hexdigest()
 
     def _new_path(self, kind: BackupKind, suffix: str) -> Path:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         return self.paths.backups / f"{kind}-{stamp}-{uuid4().hex[:16]}.{suffix}"
+
+    def _publish(self, source: Path, destination: Path) -> None:
+        backups_fd = -1
+        try:
+            backups_fd = os.open(
+                self.paths.backups,
+                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+            )
+            os.rename(source, destination.name, dst_dir_fd=backups_fd)
+        finally:
+            if backups_fd >= 0:
+                os.close(backups_fd)
 
     def _record(self, path: Path, kind: BackupKind, created_at: str | None = None) -> BackupRecord:
         size, digest = self._digest(path)
@@ -120,14 +139,27 @@ class BackupService:
         return BackupRecord(path.name, kind, path, created_at, size, digest)
 
     @staticmethod
-    def _digest_handle(handle: BinaryIO) -> tuple[int, str]:
+    def _digest_handle(handle: BinaryIO, limit: int | None = None) -> tuple[int, str]:
         digest = hashlib.sha256()
         size = 0
-        while chunk := handle.read(1024 * 1024):
+        while True:
+            read_size = 1024 * 1024
+            if limit is not None:
+                read_size = min(read_size, limit - size + 1)
+            chunk = handle.read(max(1, read_size))
+            if not chunk:
+                break
             digest.update(chunk)
             size += len(chunk)
+            if limit is not None and size > limit:
+                raise BackupTooLargeError("backup exceeds configured size limit")
         handle.seek(0)
         return size, digest.hexdigest()
+
+    def _digest_fd(self, descriptor: int) -> tuple[int, str]:
+        with os.fdopen(os.dup(descriptor), "rb") as handle:
+            size, digest = self._digest_handle(handle, self.max_bytes)
+        return size, digest
 
     def _enforce_size(self, path: Path) -> None:
         if path.stat().st_size > self.max_bytes:
@@ -139,6 +171,8 @@ class BackupService:
             return self._create_knowledge_bundle_locked()
 
     def _create_knowledge_bundle_locked(self) -> BackupRecord:
+        if not self.git.head():
+            raise BackupUnavailableError("knowledge backup is unavailable before the first commit")
         operation = self.paths.staging / f"backup-{uuid4().hex}"
         operation.mkdir(mode=0o700)
         path = operation / "knowledge.bundle"
@@ -148,7 +182,7 @@ class BackupService:
             published = self._new_path("knowledge", "bundle")
             size, digest = self._digest(path)
             record = self._record_values(published, "knowledge", size, digest, self._now())
-            path.replace(published)
+            self._publish(path, published)
             try:
                 self._prune_unlocked()
             except (BackupError, OSError):
@@ -164,21 +198,20 @@ class BackupService:
             import shutil
             shutil.rmtree(operation, ignore_errors=True)
 
-    def _current_originals(self) -> list[tuple[str, Path]]:
-        result: list[tuple[str, Path]] = []
-        if not self.paths.documents.is_dir() or self.paths.documents.is_symlink():
-            return result
-        if self.paths.sources.is_symlink() or not self.paths.sources.is_dir():
-            raise BackupError("backup sources are unavailable")
+    def _current_originals(self) -> list[tuple[str, bytes, str]]:
+        result: list[tuple[str, bytes, str]] = []
         expected: dict[str, str] = {}
+        root_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
         try:
-            for source in sorted(self.paths.sources.glob("*.md")):
-                if source.is_symlink() or not source.is_file():
+            sources_fd = os.open(self.paths.sources, root_flags)
+            documents_fd = os.open(self.paths.documents, root_flags)
+            for name in sorted(os.listdir(sources_fd)):
+                if not name.endswith(".md"):
                     continue
-                descriptor = os.open(source, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+                descriptor = os.open(name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=sources_fd)
                 try:
                     if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-                        raise OSError("source is not regular")
+                        continue
                     with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
                         descriptor = -1
                         metadata, _ = load_frontmatter(handle.read())
@@ -192,19 +225,30 @@ class BackupService:
                 suffix = {"application/pdf": ".pdf", "application/x-tex": ".tex", "text/markdown": ".md"}.get(media_type)
                 if isinstance(document_id, str) and isinstance(digest, str) and isinstance(filename, str) and suffix:
                     expected[f"{document_id}{suffix}"] = digest
+            for name in sorted(os.listdir(documents_fd)):
+                if name == "quarantine":
+                    continue
+                descriptor = os.open(name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=documents_fd)
+                try:
+                    if not stat.S_ISREG(os.fstat(descriptor).st_mode) or name not in expected:
+                        continue
+                    with os.fdopen(descriptor, "rb") as handle:
+                        descriptor = -1
+                        data = handle.read(self.max_bytes + 1)
+                    if len(data) > self.max_bytes:
+                        raise BackupTooLargeError("backup exceeds configured size limit")
+                    digest = hashlib.sha256(data).hexdigest()
+                    if digest == expected[name]:
+                        result.append((f"documents/{name}", data, digest))
+                finally:
+                    if descriptor >= 0:
+                        os.close(descriptor)
         except (OSError, UnicodeError, ValueError, TypeError, yaml.YAMLError) as exc:
             raise BackupError("backup source metadata is unavailable") from exc
-        for path in sorted(self.paths.documents.iterdir()):
-            if path.name == "quarantine" or path.is_symlink() or not path.is_file():
-                continue
-            if path.name not in expected:
-                continue
-            try:
-                if self._digest(path)[1] != expected[path.name]:
-                    continue
-            except OSError:
-                continue
-            result.append((f"documents/{path.name}", path))
+        finally:
+            for fd in (locals().get("sources_fd", -1), locals().get("documents_fd", -1)):
+                if fd >= 0:
+                    os.close(fd)
         return result
 
     def create_full_backup(self) -> BackupRecord:
@@ -215,6 +259,8 @@ class BackupService:
             raise
 
     def _create_full_backup_locked(self) -> BackupRecord:
+        if not self.git.head():
+            raise BackupUnavailableError("full backup is unavailable before the first commit")
         created_at = self._now()
         import shutil
         operation = self.paths.staging / f"backup-{uuid4().hex}"
@@ -227,18 +273,21 @@ class BackupService:
             bundle_size, bundle_hash = self._digest(bundle)
             files["knowledge.bundle"] = {"sha256": bundle_hash, "size": bundle_size}
             originals = []
-            for member, source in self._current_originals():
+            for member, data, expected_digest in self._current_originals():
                 copy = operation / Path(member)
                 copy.parent.mkdir(parents=True, exist_ok=True)
                 self._snapshot(
-                    source,
+                    data,
                     copy,
+                    expected_digest=expected_digest,
                     budget=bundle_size + sum(item[1].stat().st_size for item in originals),
                     max_bytes=self.max_bytes,
                 )
-                originals.append((member, copy))
-            for member, source in originals:
-                size, digest = self._digest(source)
+                originals.append((member, copy, expected_digest))
+            for member, source, expected_digest in originals:
+                size, digest = self._digest(source, self.max_bytes)
+                if digest != expected_digest:
+                    raise BackupError("document changed while backup was being created")
                 files[member] = {"sha256": digest, "size": size}
             manifest = {
                 "format_version": 1,
@@ -252,7 +301,7 @@ class BackupService:
                 archive = tarfile.open(fileobj=limited, mode="w:gz")
                 try:
                     self._add_file(archive, "knowledge.bundle", bundle)
-                    for member, source in originals:
+                    for member, source, _expected_digest in originals:
                         self._add_file(archive, member, source)
                     payload = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
                     info = tarfile.TarInfo("manifest.json")
@@ -265,7 +314,7 @@ class BackupService:
             published = self._new_path("full", "tar.gz")
             size, digest = self._digest(archive_path)
             record = self._record_values(published, "full", size, digest, created_at)
-            archive_path.replace(published)
+            self._publish(archive_path, published)
             try:
                 self._prune_unlocked()
             except (BackupError, OSError):
@@ -282,27 +331,16 @@ class BackupService:
             shutil.rmtree(operation, ignore_errors=True)
 
     @staticmethod
-    def _snapshot(source: Path, destination: Path, *, budget: int = 0, max_bytes: int | None = None) -> None:
-        import os
-        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-        descriptor = os.open(source, flags)
-        try:
-            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-                raise OSError("original is not regular")
-            with os.fdopen(descriptor, "rb") as src:
-                descriptor = -1
-                with destination.open("xb") as dst:
-                    copied = budget
-                    for chunk in iter(lambda: src.read(1024 * 1024), b""):
-                        copied += len(chunk)
-                        if max_bytes is not None and copied > max_bytes:
-                            raise BackupTooLargeError("backup exceeds configured size limit")
-                        dst.write(chunk)
-                    dst.flush()
-                    os.fsync(dst.fileno())
-        finally:
-            if descriptor >= 0:
-                os.close(descriptor)
+    def _snapshot(source: bytes, destination: Path, *, expected_digest: str, budget: int = 0, max_bytes: int | None = None) -> None:
+        digest = hashlib.sha256(source).hexdigest()
+        if digest != expected_digest:
+            raise BackupError("document changed while backup was being created")
+        if max_bytes is not None and budget + len(source) > max_bytes:
+            raise BackupTooLargeError("backup exceeds configured size limit")
+        with destination.open("xb") as dst:
+            dst.write(source)
+            dst.flush()
+            os.fsync(dst.fileno())
 
     @staticmethod
     def _add_file(archive: tarfile.TarFile, member: str, source: Path) -> None:
@@ -315,52 +353,71 @@ class BackupService:
 
     def list(self) -> list[BackupRecord]:
         records: list[BackupRecord] = []
+        backups_fd = -1
         try:
-            entries = self.paths.backups.iterdir()
-            for path in entries:
-                if path.is_symlink() or not path.is_file():
-                    continue
-                parsed = _managed_name(path.name)
+            backups_fd = os.open(self.paths.backups, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0))
+            for name in os.listdir(backups_fd):
+                parsed = _managed_name(name)
                 if parsed is None:
                     continue
+                descriptor = os.open(name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=backups_fd)
+                try:
+                    if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                        continue
+                    size, digest = self._digest_fd(descriptor)
+                finally:
+                    os.close(descriptor)
+                if size > self.max_bytes:
+                    raise BackupTooLargeError("backup exceeds configured size limit")
                 kind = parsed[0]
-                records.append(self._record(path, kind))
+                records.append(self._record_values(self.paths.backups / name, kind, size, digest, self._now()))
+        except BackupError:
+            raise
         except OSError as exc:
             raise BackupError("backup listing unavailable") from exc
+        finally:
+            if backups_fd >= 0:
+                os.close(backups_fd)
         return sorted(records, key=lambda record: record.name, reverse=True)
 
     def resolve_download(self, name: str) -> BackupRecord:
         parsed = _managed_name(name)
         if parsed is None:
             raise BackupNotFoundError("backup was not found")
-        path = self.paths.backups / name
+        backups_fd = -1
+        descriptor = -1
         try:
-            if path.parent != self.paths.backups or path.is_symlink() or not path.is_file():
+            backups_fd = os.open(self.paths.backups, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0))
+            descriptor = os.open(name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=backups_fd)
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
                 raise BackupNotFoundError("backup was not found")
-            kind = parsed[0]
-            return self._record(path, kind)
+            size, digest = self._digest_fd(descriptor)
+            return self._record_values(self.paths.backups / name, parsed[0], size, digest, self._now())
+        except BackupError:
+            raise
         except OSError as exc:
             raise BackupNotFoundError("backup was not found") from exc
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+            if backups_fd >= 0:
+                os.close(backups_fd)
 
     def open_download(self, name: str) -> tuple[BackupRecord, BinaryIO]:
         parsed = _managed_name(name)
         if parsed is None:
             raise BackupNotFoundError("backup was not found")
+        backups_fd = -1
         descriptor = -1
         try:
-            backups_fd = os.open(self.paths.backups, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            backups_fd = os.open(self.paths.backups, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0))
             descriptor = os.open(name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=backups_fd)
-            os.close(backups_fd)
             if not stat.S_ISREG(os.fstat(descriptor).st_mode):
                 raise BackupNotFoundError("backup was not found")
-            size = os.fstat(descriptor).st_size
-            if size > self.max_bytes:
-                raise BackupTooLargeError("backup exceeds configured size limit")
+            size, digest = self._digest_fd(descriptor)
             handle = os.fdopen(descriptor, "rb")
             descriptor = -1
-            size, digest = self._digest_handle(handle)
-            record = self._record_values(self.paths.backups / name, parsed[0], size, digest, self._now())
-            return record, handle
+            return self._record_values(self.paths.backups / name, parsed[0], size, digest, self._now()), handle
         except BackupError:
             raise
         except (OSError, ValueError) as exc:
@@ -368,15 +425,25 @@ class BackupService:
         finally:
             if descriptor >= 0:
                 os.close(descriptor)
+            if backups_fd >= 0:
+                os.close(backups_fd)
 
     def delete(self, name: str, confirmed: bool) -> None:
         if not confirmed:
             raise BackupError("confirmation required")
         record = self.resolve_download(name)
+        backups_fd = -1
         try:
-            record.path.unlink()
+            backups_fd = os.open(
+                self.paths.backups,
+                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+            )
+            os.unlink(record.name, dir_fd=backups_fd)
         except OSError as exc:
             raise BackupError("backup could not be deleted") from exc
+        finally:
+            if backups_fd >= 0:
+                os.close(backups_fd)
 
     def prune(self) -> list[str]:
         with MutationLock(self.paths.locks / "mutation.lock"):

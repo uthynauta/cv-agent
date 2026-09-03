@@ -4,8 +4,10 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 import re
+import selectors
 import stat
 import subprocess
+import time
 
 
 _SAFE_OPERATIONS = frozenset(
@@ -372,6 +374,8 @@ class LocalKnowledgeGit:
             raise GitStoreError("Git bundle destination is outside the local data store") from None
         descriptor = -1
         parent_descriptor = -1
+        succeeded = False
+        selector = None
         try:
             parent_descriptor = os.open(
                 target.parent,
@@ -392,39 +396,62 @@ class LocalKnowledgeGit:
             process = subprocess.Popen(
                 command,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
                 env=self._git_environment(),
             )
             total = 0
             assert process.stdout is not None
+            deadline = time.monotonic() + 30
+            selector = selectors.DefaultSelector()
+            selector.register(process.stdout, selectors.EVENT_READ)
             with os.fdopen(descriptor, "wb") as output:
                 descriptor = -1
-                for chunk in iter(lambda: process.stdout.read(1024 * 1024), b""):
+                while True:
+                    if time.monotonic() >= deadline:
+                        raise subprocess.TimeoutExpired(command, 30)
+                    ready = selector.select(max(0.0, deadline - time.monotonic()))
+                    if not ready:
+                        raise subprocess.TimeoutExpired(command, 30)
+                    chunk = os.read(process.stdout.fileno(), 1024 * 1024)
+                    if not chunk:
+                        break
                     total += len(chunk)
                     if max_bytes is not None and total > max_bytes:
-                        process.kill()
-                        process.wait(timeout=5)
                         raise GitStoreTooLargeError("Git bundle exceeds configured size limit")
                     output.write(chunk)
                 output.flush()
                 os.fsync(output.fileno())
-            stderr = process.stderr.read() if process.stderr is not None else b""
-            if process.wait(timeout=30) != 0:
+            selector.close()
+            selector = None
+            if process.wait(timeout=max(0.1, deadline - time.monotonic())) != 0:
                 raise GitStoreError("Git operation 'bundle' failed")
+            succeeded = True
         except GitStoreError:
             raise
         except (OSError, subprocess.SubprocessError):
             raise GitStoreError("Git operation 'bundle' failed") from None
         finally:
+            if selector is not None:
+                selector.close()
+            if not succeeded:
+                try:
+                    if 'process' in locals() and process.poll() is None:
+                        process.kill()
+                        try:
+                            process.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            process.wait()
+                except OSError:
+                    pass
+                finally:
+                    try:
+                        os.unlink(target.name, dir_fd=parent_descriptor) if parent_descriptor >= 0 else target.unlink(missing_ok=True)
+                    except OSError:
+                        pass
             if descriptor >= 0:
                 os.close(descriptor)
             if parent_descriptor >= 0:
                 os.close(parent_descriptor)
-            if 'process' in locals() and process.poll() is None:
-                process.kill()
-                process.wait()
-            if target.exists() and (max_bytes is not None and target.stat().st_size > max_bytes):
-                target.unlink(missing_ok=True)
 
     def changed_paths(self, commit: str) -> tuple[str, ...]:
         """Return only Markdown paths changed by one validated commit."""

@@ -29,6 +29,7 @@ from cv_agent.knowledge.backup import (
     BackupNotFoundError,
     BackupService,
     BackupTooLargeError,
+    BackupUnavailableError,
 )
 
 
@@ -325,6 +326,8 @@ def build_admin_router(
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="another knowledge mutation is running") from exc
         except BackupTooLargeError as exc:
             raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="backup exceeds configured size limit") from exc
+        except BackupUnavailableError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="backup is unavailable before the first commit") from exc
         except BackupError as exc:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="backup could not be created") from exc
         return {"status": "ok", "backup": _backup_payload(record)}
