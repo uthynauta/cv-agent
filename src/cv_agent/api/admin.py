@@ -4,12 +4,12 @@ from pathlib import Path
 from typing import Annotated
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
 
 from cv_agent.config import Settings
 from cv_agent.knowledge.ingest import IngestionService
-from cv_agent.knowledge.git_store import LocalKnowledgeGit
+from cv_agent.knowledge.git_store import GitStoreError, LocalKnowledgeGit
 from cv_agent.knowledge.repository import KnowledgeRepository, resolve_directory_path
 from cv_agent.knowledge.storage import DataPaths, ensure_data_storage, safe_upload_filename
 from cv_agent.knowledge.documents_service import (
@@ -31,6 +31,7 @@ from cv_agent.knowledge.backup import (
     BackupTooLargeError,
     BackupUnavailableError,
 )
+from cv_agent.knowledge.restore import BackupValidationError, RestoreError, RestoreService
 
 
 def _backup_payload(record: object) -> dict[str, object]:
@@ -220,8 +221,10 @@ def build_admin_router(
     ingestion: IngestionService,
     document_service: DocumentService,
     backup_service: BackupService | None = None,
+    restore_service: RestoreService | None = None,
 ) -> APIRouter:
     backup_service = backup_service or BackupService(paths, git_store, settings)
+    restore_service = restore_service or getattr(document_service, "restore_service", None) or RestoreService(paths, git_store, settings, document_service, backup_service)
     def require_admin_key(authorization: Annotated[str | None, Header()] = None) -> None:
         if not settings.admin_api_key:
             raise HTTPException(
@@ -370,5 +373,42 @@ def build_admin_router(
         except BackupError as exc:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="backup could not be deleted") from exc
         return {"status": "ok", "name": name}
+
+    @router.post("/admin/restore")
+    async def restore(file: UploadFile = File(...), confirm: bool = Form(False)) -> dict[str, object]:
+        if not confirm:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="confirmation required")
+        target = paths.staging / f"upload-{uuid4().hex}"
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            size = 0
+            with target.open("xb") as handle:
+                while True:
+                    chunk = await file.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    size += len(chunk)
+                    if size > settings.admin_backup_max_bytes:
+                        raise BackupTooLargeError("backup exceeds configured size limit")
+                    handle.write(chunk)
+            if (file.filename or "").lower().endswith(".bundle"):
+                result = restore_service.restore_knowledge(target, confirmed=True)
+            else:
+                result = restore_service.restore_full(target, confirmed=True)
+        except BackupTooLargeError as exc:
+            raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="backup exceeds configured size limit") from exc
+        except (BackupValidationError, ValueError) as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="backup is invalid") from exc
+        except MutationBusyError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="another knowledge mutation is running") from exc
+        except BackupUnavailableError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="restore is unavailable before the first commit") from exc
+        except RestoreError as exc:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="restore could not be completed") from exc
+        except (BackupError, GitStoreError, OSError) as exc:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="restore could not be completed") from exc
+        finally:
+            target.unlink(missing_ok=True)
+        return {"status": "ok", "active_commit": result.active_commit, "recovery_backup": result.recovery_backup, "quarantined": list(result.quarantined)}
 
     return router

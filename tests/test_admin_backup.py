@@ -21,3 +21,24 @@ def test_backup_list_and_delete_are_authenticated(tmp_path):
     name = listed.json()["backups"][0]["name"]
     assert client.delete(f"/admin/backups/{name}", headers=headers).status_code == 409
     assert client.request("DELETE", f"/admin/backups/{name}", headers=headers, json={"confirm": True}).status_code == 200
+
+
+def test_restore_requires_confirmation_and_rejects_invalid_archive(tmp_path):
+    settings = Settings(_env_file=None, data_dir=tmp_path, admin_api_key="secret")
+    client = TestClient(create_app(settings=settings, agent_answerer=lambda *_: "ok"))
+    headers = {"Authorization": "Bearer secret"}
+
+    unconfirmed = client.post(
+        "/admin/restore",
+        headers=headers,
+        files={"file": ("backup.tar.gz", b"invalid", "application/gzip")},
+    )
+    invalid = client.post(
+        "/admin/restore",
+        headers=headers,
+        files={"file": ("backup.tar.gz", b"invalid", "application/gzip")},
+        data={"confirm": "true"},
+    )
+
+    assert unconfirmed.status_code == 409
+    assert invalid.status_code == 422

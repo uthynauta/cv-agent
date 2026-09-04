@@ -22,6 +22,7 @@ from cv_agent.knowledge.git_store import LocalKnowledgeGit
 from cv_agent.knowledge.storage import ensure_data_storage
 from cv_agent.knowledge.documents_service import DocumentService
 from cv_agent.knowledge.backup import BackupService
+from cv_agent.knowledge.restore import RestoreService
 
 
 def create_app(
@@ -52,6 +53,9 @@ def create_app(
     ingestion = IngestionService(repository, settings)
     document_service = DocumentService(paths, git_store, ingestion, active_knowledge)
     backup_service = BackupService(paths, git_store, settings)
+    restore_service = RestoreService(paths, git_store, settings, document_service, backup_service)
+    restore_service.bind_app(app)
+    document_service.restore_service = restore_service
     app.state.data_paths = paths
     app.state.paths = paths
     app.state.knowledge_git = git_store
@@ -65,6 +69,7 @@ def create_app(
     app.state.document_service = document_service
     app.state.documents_service = document_service
     app.state.backup_service = backup_service
+    app.state.restore_service = restore_service
     app.include_router(
         build_health_router(settings, repository, lambda: active_knowledge.initialized)
     )
