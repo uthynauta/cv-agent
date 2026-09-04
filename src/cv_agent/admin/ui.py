@@ -1,442 +1,148 @@
-import base64
-import hashlib
-import hmac
-import json
-import time
-from typing import Any
-
-from fastapi import APIRouter, File, Request, UploadFile, status
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+import base64, hashlib, hmac, json, time
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from starlette.responses import Response
-
-from cv_agent.api.admin import build_admin_status_payload, upload_document_payload
+from cv_agent.admin.templates import dashboard_page, login_page
+from cv_agent.api.admin import _backup_payload, build_admin_status_payload, replace_document_payload, upload_document_payload
 from cv_agent.config import Settings
+from cv_agent.knowledge.backup import BackupService, BackupTooLargeError
 from cv_agent.knowledge.git_store import LocalKnowledgeGit
 from cv_agent.knowledge.ingest import IngestionService
+from cv_agent.knowledge.locking import MutationBusyError
+from cv_agent.knowledge.restore import RestoreService
 from cv_agent.knowledge.storage import DataPaths
-from cv_agent.knowledge.documents_service import DocumentService
-
+from cv_agent.knowledge.documents_service import DocumentIdentifierError, DocumentNotFoundError, DocumentService, DocumentValidationError, RevisionNotFoundError
 
 SESSION_COOKIE = "cv_agent_admin_session"
 
-
-def build_admin_ui_router(
-    settings: Settings,
-    paths: DataPaths,
-    git_store: LocalKnowledgeGit,
-    ingestion: IngestionService,
-    document_service: DocumentService,
-) -> APIRouter:
+def build_admin_ui_router(settings: Settings, paths: DataPaths, git_store: LocalKnowledgeGit, ingestion: IngestionService, document_service: DocumentService, backup_service: BackupService | None = None, restore_service: RestoreService | None = None) -> APIRouter:
     router = APIRouter()
-
-    def ui_enabled() -> bool:
-        return bool(settings.admin_ui_password and settings.admin_ui_session_secret)
-
-    def disabled_response() -> HTMLResponse:
-        return HTMLResponse("Admin UI is disabled", status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
-
-    def login_page(message: str | None = None, status_code: int = status.HTTP_200_OK) -> HTMLResponse:
-        error_html = f"<p>{message}</p>" if message else ""
-        return HTMLResponse(
-            f"""<!doctype html>
-<html lang="en">
-<head><title>Admin Dashboard</title></head>
-<body>
-<main>
-<h1>Admin Dashboard</h1>
-{error_html}
-<form method="post" action="/admin/login">
-<label>Password <input name="password" type="password" autocomplete="current-password"></label>
-<button type="submit">Log in</button>
-</form>
-</main>
-</body>
-</html>""",
-            status_code=status_code,
-        )
-
-    def dashboard_page() -> HTMLResponse:
-        return HTMLResponse(
-            """<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Admin Dashboard</title>
-<style>
-:root {
-  color-scheme: light;
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  background: #f6f7f9;
-  color: #17202a;
-}
-* { box-sizing: border-box; }
-body {
-  margin: 0;
-  min-height: 100vh;
-  background: #f6f7f9;
-}
-button, input {
-  font: inherit;
-}
-.shell {
-  width: min(1120px, calc(100% - 32px));
-  margin: 0 auto;
-  padding: 28px 0 40px;
-}
-.topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 24px;
-}
-.title h1 {
-  margin: 0 0 4px;
-  font-size: 28px;
-  line-height: 1.2;
-}
-.title p {
-  margin: 0;
-  color: #5c6875;
-}
-.actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.button {
-  border: 1px solid #cfd6df;
-  border-radius: 6px;
-  background: #ffffff;
-  color: #17202a;
-  cursor: pointer;
-  min-height: 40px;
-  padding: 0 14px;
-}
-.button.primary {
-  border-color: #1f6f5b;
-  background: #1f6f5b;
-  color: #ffffff;
-}
-.button:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
-}
-.panel {
-  background: #ffffff;
-  border: 1px solid #dde3ea;
-  border-radius: 8px;
-  padding: 18px;
-}
-.layout {
-  display: grid;
-  grid-template-columns: 1fr 340px;
-  gap: 18px;
-  align-items: start;
-}
-.status-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-}
-.tile {
-  border: 1px solid #e1e6ec;
-  border-radius: 8px;
-  min-height: 116px;
-  padding: 16px;
-  background: #fbfcfd;
-}
-.tile span {
-  display: block;
-  color: #697584;
-  font-size: 13px;
-  margin-bottom: 8px;
-}
-.tile strong {
-  display: block;
-  font-size: 22px;
-  line-height: 1.2;
-  overflow-wrap: anywhere;
-}
-.tile small {
-  display: block;
-  color: #697584;
-  margin-top: 8px;
-  overflow-wrap: anywhere;
-}
-.side {
-  display: grid;
-  gap: 14px;
-}
-.side h2 {
-  margin: 0 0 12px;
-  font-size: 17px;
-}
-.field {
-  display: grid;
-  gap: 8px;
-}
-.field input {
-  width: 100%;
-  border: 1px solid #cfd6df;
-  border-radius: 6px;
-  min-height: 42px;
-  padding: 8px 10px;
-  background: #ffffff;
-}
-.form-actions {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 14px;
-}
-.message {
-  min-height: 20px;
-  color: #5c6875;
-  font-size: 14px;
-  margin-top: 10px;
-  overflow-wrap: anywhere;
-}
-.error { color: #a33a2b; }
-.success { color: #1f6f5b; }
-.timestamp {
-  color: #5c6875;
-  font-size: 14px;
-}
-@media (max-width: 840px) {
-  .topbar, .actions {
-    align-items: stretch;
-    flex-direction: column;
-  }
-  .layout, .status-grid {
-    grid-template-columns: 1fr;
-  }
-}
-</style>
-</head>
-<body>
-<main class="shell" data-admin-dashboard>
-  <header class="topbar">
-    <div class="title">
-      <h1>Admin Dashboard</h1>
-      <p class="timestamp">Last updated <span data-last-updated>never</span></p>
-    </div>
-    <div class="actions">
-      <button class="button" type="button" data-refresh-button>Refresh</button>
-      <form method="post" action="/admin/logout">
-        <button class="button" type="submit">Log out</button>
-      </form>
-    </div>
-  </header>
-  <section class="layout">
-    <div class="panel">
-      <div class="status-grid" data-status-grid>
-        <article class="tile">
-          <span>Admin API</span>
-          <strong data-admin-status>Checking</strong>
-          <small>Protected admin routes</small>
-        </article>
-        <article class="tile">
-          <span>Document Storage</span>
-          <strong data-upload-status>Checking</strong>
-          <small data-upload-dir>Upload directory</small>
-        </article>
-        <article class="tile">
-          <span>Local Repository</span>
-          <strong data-repository-status>Checking</strong>
-          <small data-repository-detail>Mounted Git repository</small>
-        </article>
-        <article class="tile">
-          <span>Knowledge</span>
-          <strong data-knowledge-status>Checking</strong>
-          <small data-knowledge-detail>Knowledge index</small>
-        </article>
-      </div>
-      <p class="message" data-status-message></p>
-    </div>
-    <aside class="side">
-      <section class="panel">
-        <h2>Upload Document</h2>
-        <form data-upload-form>
-          <label class="field">
-            <span>Document file</span>
-            <input type="file" name="file" accept=".pdf,.md,.tex,application/pdf,text/markdown,text/x-tex,application/x-tex">
-          </label>
-          <div class="form-actions">
-            <button class="button primary" type="submit">Upload</button>
-          </div>
-        </form>
-        <p class="message" data-upload-message></p>
-      </section>
-    </aside>
-  </section>
-</main>
-<script>
-const text = (selector, value) => {
-  const element = document.querySelector(selector);
-  if (element) element.textContent = value;
-};
-
-const setMessage = (selector, value, className = "") => {
-  const element = document.querySelector(selector);
-  if (!element) return;
-  element.textContent = value;
-  element.className = `message ${className}`.trim();
-};
-
-async function refreshStatus() {
-  try {
-    const response = await fetch("/admin/ui/status", {headers: {"Accept": "application/json"}});
-    if (!response.ok) throw new Error(`Status request failed: ${response.status}`);
-    const payload = await response.json();
-    const storage = payload.storage || {};
-    const knowledge = payload.knowledge || {};
-    text("[data-admin-status]", payload.admin && payload.admin.enabled ? "Enabled" : "Disabled");
-    text("[data-upload-status]", storage.writable ? "Writable" : "Unavailable");
-    text("[data-upload-dir]", `${storage.document_count || 0} document(s)`);
-    text("[data-repository-status]", knowledge.active_commit ? "Ready" : "Initialized");
-    text("[data-repository-detail]", knowledge.active_commit ? `Revision: ${knowledge.active_commit}` : "No committed knowledge yet");
-    text("[data-knowledge-status]", knowledge.initialized ? "Ready" : "Empty");
-    text("[data-knowledge-detail]", knowledge.active_commit ? `Revision: ${knowledge.active_commit}` : "Upload a source to initialize");
-    text("[data-last-updated]", new Date().toLocaleString());
-    setMessage("[data-status-message]", "");
-  } catch (error) {
-    setMessage("[data-status-message]", error.message, "error");
-  }
-}
-
-document.querySelector("[data-refresh-button]")?.addEventListener("click", refreshStatus);
-document.querySelector("[data-upload-form]")?.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const form = event.currentTarget;
-  const data = new FormData(form);
-  setMessage("[data-upload-message]", "Uploading...");
-  try {
-    const response = await fetch("/admin/ui/documents", {method: "POST", body: data});
-    if (!response.ok) throw new Error(`Upload failed: ${response.status}`);
-    setMessage("[data-upload-message]", "Upload complete", "success");
-    form.reset();
-    refreshStatus();
-  } catch (error) {
-    setMessage("[data-upload-message]", error.message, "error");
-  }
-});
-refreshStatus();
-setInterval(refreshStatus, 10000);
-</script>
-</body>
-</html>"""
-        )
-
-    def sign_payload(payload: str) -> str:
-        assert settings.admin_ui_session_secret is not None
-        digest = hmac.new(
-            settings.admin_ui_session_secret.encode("utf-8"),
-            payload.encode("ascii"),
-            hashlib.sha256,
-        ).digest()
-        return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
-
-    def encode_payload(payload: dict[str, Any]) -> str:
-        data = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
-        return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
-
-    def decode_payload(payload: str) -> dict[str, Any] | None:
-        try:
-            padded = payload + "=" * (-len(payload) % 4)
-            decoded = base64.urlsafe_b64decode(padded.encode("ascii"))
-            parsed = json.loads(decoded)
-        except (ValueError, json.JSONDecodeError):
-            return None
-        return parsed if isinstance(parsed, dict) else None
-
-    def build_session_token() -> str:
-        now = int(time.time())
-        payload = encode_payload(
-            {
-                "iat": now,
-                "exp": now + settings.admin_ui_session_max_age_seconds,
-            }
-        )
-        return f"{payload}.{sign_payload(payload)}"
-
-    def verify_session_token(token: str | None) -> bool:
-        if not token or "." not in token:
-            return False
+    backup_service = backup_service or BackupService(paths, git_store, settings)
+    restore_service = restore_service or getattr(document_service, "restore_service", None) or RestoreService(paths, git_store, settings, document_service, backup_service)
+    def enabled(): return bool(settings.admin_ui_password and settings.admin_ui_session_secret)
+    def valid(request: Request):
+        token = request.cookies.get(SESSION_COOKIE)
+        if not token or "." not in token or not settings.admin_ui_session_secret: return False
         payload, signature = token.rsplit(".", 1)
         try:
-            payload.encode("ascii")
-            signature_bytes = signature.encode("ascii")
-        except UnicodeEncodeError:
-            return False
-        if not hmac.compare_digest(signature_bytes, sign_payload(payload).encode("ascii")):
-            return False
-        parsed = decode_payload(payload)
-        if parsed is None:
-            return False
-        exp = parsed.get("exp")
-        return isinstance(exp, int) and exp >= int(time.time())
-
-    def request_is_https(request: Request) -> bool:
-        forwarded_proto = request.headers.get("x-forwarded-proto", "")
-        return request.url.scheme == "https" or forwarded_proto.split(",", 1)[0].strip().lower() == "https"
-
+            expected = hmac.new(settings.admin_ui_session_secret.encode(), payload.encode("ascii"), hashlib.sha256).digest()
+            data = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+            return hmac.compare_digest(base64.urlsafe_b64encode(expected).decode().rstrip("="), signature) and isinstance(data, dict) and isinstance(data.get("exp"), int) and data["exp"] >= int(time.time())
+        except (ValueError, TypeError, UnicodeError, json.JSONDecodeError): return False
+    def auth(request):
+        if not enabled(): return JSONResponse({"detail":"admin UI is disabled"}, status_code=503)
+        if not valid(request): return JSONResponse({"detail":"invalid session"}, status_code=401)
+    async def confirm(request):
+        try: return bool((await request.json()).get("confirm"))
+        except (ValueError, TypeError): return False
+    def error(exc):
+        if isinstance(exc, HTTPException):
+            return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+        if isinstance(exc, MutationBusyError): return JSONResponse({"detail":"another mutation is running"}, status_code=409)
+        if isinstance(exc, (DocumentNotFoundError, RevisionNotFoundError)): return JSONResponse({"detail":"resource was not found"}, status_code=404)
+        if isinstance(exc, (DocumentIdentifierError, DocumentValidationError, ValueError)): return JSONResponse({"detail":"request is invalid"}, status_code=422)
+        if isinstance(exc, BackupTooLargeError): return JSONResponse({"detail":"backup exceeds configured size limit"}, status_code=413)
+        return JSONResponse({"detail":"operation could not be completed"}, status_code=503)
+    def make_token():
+        now = int(time.time()); raw = base64.urlsafe_b64encode(json.dumps({"iat":now,"exp":now + settings.admin_ui_session_max_age_seconds}, separators=(",", ":")).encode()).decode().rstrip("=")
+        sig = hmac.new(settings.admin_ui_session_secret.encode(), raw.encode(), hashlib.sha256).digest()
+        return raw + "." + base64.urlsafe_b64encode(sig).decode().rstrip("=")
     @router.get("/admin/login", response_class=HTMLResponse)
-    async def get_login() -> HTMLResponse:
-        if not ui_enabled():
-            return disabled_response()
-        return login_page()
-
+    async def get_login():
+        if not enabled(): return HTMLResponse("Admin UI is disabled", status_code=503)
+        html, code = login_page(); return HTMLResponse(html, status_code=code)
     @router.post("/admin/login")
-    async def post_login(request: Request) -> Response:
-        if not ui_enabled():
-            return disabled_response()
-        form = await request.form()
-        password = str(form.get("password", ""))
-        assert settings.admin_ui_password is not None
-        if not hmac.compare_digest(password.encode("utf-8"), settings.admin_ui_password.encode("utf-8")):
-            return login_page("Invalid password", status.HTTP_401_UNAUTHORIZED)
-
-        response = RedirectResponse("/admin/ui", status_code=status.HTTP_303_SEE_OTHER)
-        response.set_cookie(
-            SESSION_COOKIE,
-            build_session_token(),
-            httponly=True,
-            secure=request_is_https(request),
-            samesite="lax",
-            path="/admin",
-            max_age=settings.admin_ui_session_max_age_seconds,
-        )
-        return response
-
+    async def post_login(request: Request):
+        if not enabled(): return HTMLResponse("Admin UI is disabled", status_code=503)
+        form = await request.form(); password = str(form.get("password", ""))
+        if not hmac.compare_digest(password.encode(), settings.admin_ui_password.encode()):
+            html, code = login_page("Invalid password", 401); return HTMLResponse(html, status_code=code)
+        response = RedirectResponse("/admin/ui", status_code=303); response.set_cookie(SESSION_COOKIE, make_token(), httponly=True, secure=request.url.scheme == "https", samesite="lax", path="/admin", max_age=settings.admin_ui_session_max_age_seconds); return response
     @router.post("/admin/logout")
-    async def post_logout() -> RedirectResponse:
-        response = RedirectResponse("/admin/login", status_code=status.HTTP_303_SEE_OTHER)
-        response.delete_cookie(SESSION_COOKIE, path="/admin", samesite="lax")
-        return response
-
+    async def logout():
+        response = RedirectResponse("/admin/login", status_code=303); response.delete_cookie(SESSION_COOKIE, path="/admin", samesite="lax"); return response
     @router.get("/admin/ui", response_class=HTMLResponse)
-    async def get_dashboard(request: Request) -> Response:
-        if not ui_enabled():
-            return disabled_response()
-        if not verify_session_token(request.cookies.get(SESSION_COOKIE)):
-            return RedirectResponse("/admin/login", status_code=status.HTTP_303_SEE_OTHER)
-        return dashboard_page()
-
+    async def dashboard(request: Request):
+        if not enabled(): return HTMLResponse("Admin UI is disabled", status_code=503)
+        return HTMLResponse(dashboard_page()) if valid(request) else RedirectResponse("/admin/login", status_code=303)
     @router.get("/admin/ui/status")
-    async def get_ui_status(request: Request) -> Any:
-        if not ui_enabled():
-            return disabled_response()
-        if not verify_session_token(request.cookies.get(SESSION_COOKIE)):
-            return JSONResponse({"detail": "invalid session"}, status_code=status.HTTP_401_UNAUTHORIZED)
+    async def ui_status(request: Request):
+        if (r := auth(request)): return r
         return build_admin_status_payload(settings, paths, git_store, ingestion.repository, document_service)
-
+    @router.get("/admin/ui/documents")
+    async def ui_documents(request: Request):
+        if (r := auth(request)): return r
+        try: return {"status":"ok", "documents":[x.__dict__ for x in document_service.list_documents()]}
+        except Exception as exc: return error(exc)
     @router.post("/admin/ui/documents")
-    async def post_ui_document(request: Request, file: UploadFile = File(...)) -> Any:
-        if not ui_enabled():
-            return disabled_response()
-        if not verify_session_token(request.cookies.get(SESSION_COOKIE)):
-            return JSONResponse({"detail": "invalid session"}, status_code=status.HTTP_401_UNAUTHORIZED)
-        return await upload_document_payload(settings, paths, git_store, ingestion, file, document_service)
-
+    async def ui_add(request: Request, file: UploadFile = File(...)):
+        if (r := auth(request)): return r
+        try: return await upload_document_payload(settings, paths, git_store, ingestion, file, document_service)
+        except Exception as exc: return error(exc)
+    @router.put("/admin/ui/documents/{document_id}")
+    async def ui_replace(request: Request, document_id: str, file: UploadFile = File(...)):
+        if (r := auth(request)): return r
+        try: return await replace_document_payload(settings, paths, file, document_id, document_service)
+        except Exception as exc: return error(exc)
+    @router.delete("/admin/ui/documents/{document_id}")
+    async def ui_delete(request: Request, document_id: str):
+        if (r := auth(request)): return r
+        if not await confirm(request): return JSONResponse({"detail":"confirmation required"}, status_code=409)
+        try: return {"status":"ok", "revision":{"commit":document_service.delete(document_id).commit}}
+        except Exception as exc: return error(exc)
+    @router.post("/admin/ui/rebuild")
+    async def ui_rebuild(request: Request):
+        if (r := auth(request)): return r
+        try: return {"status":"ok", "revision":{"commit":document_service.rebuild().commit}}
+        except Exception as exc: return error(exc)
+    @router.get("/admin/ui/revisions")
+    async def ui_revisions(request: Request):
+        if (r := auth(request)): return r
+        try: return {"status":"ok", "revisions":[{"commit":x.commit,"authored_at":x.authored_at,"subject":x.subject,"changed_paths":list(x.changed_paths)} for x in document_service.history(20)]}
+        except Exception as exc: return error(exc)
+    @router.post("/admin/ui/revisions/{commit}/rollback")
+    async def ui_rollback(request: Request, commit: str):
+        if (r := auth(request)): return r
+        if not await confirm(request): return JSONResponse({"detail":"confirmation required"}, status_code=409)
+        try: return {"status":"ok", "revision":{"commit":document_service.rollback(commit, confirmed=True).commit}}
+        except Exception as exc: return error(exc)
+    @router.get("/admin/ui/backups")
+    async def ui_backups(request: Request):
+        if (r := auth(request)): return r
+        try: return {"status":"ok", "backups":[_backup_payload(x) for x in backup_service.list()]}
+        except Exception as exc: return error(exc)
+    async def create_backup(request: Request, kind: str):
+        if (r := auth(request)): return r
+        try: return {"status":"ok", "backup":_backup_payload(backup_service.create_knowledge_bundle() if kind == "knowledge" else backup_service.create_full_backup())}
+        except Exception as exc: return error(exc)
+    @router.post("/admin/ui/backups/knowledge")
+    async def create_knowledge_backup(request: Request):
+        return await create_backup(request, "knowledge")
+    @router.post("/admin/ui/backups/full")
+    async def create_full_backup(request: Request):
+        return await create_backup(request, "full")
+    @router.get("/admin/ui/backups/{name}")
+    async def ui_download(request: Request, name: str):
+        if (r := auth(request)): return r
+        try:
+            record, handle = backup_service.open_download(name); return StreamingResponse(handle, media_type="application/octet-stream", headers={"Content-Disposition":f'attachment; filename="{record.name}"'})
+        except Exception as exc: return error(exc)
+    @router.delete("/admin/ui/backups/{name}")
+    async def ui_backup_delete(request: Request, name: str):
+        if (r := auth(request)): return r
+        if not await confirm(request): return JSONResponse({"detail":"confirmation required"}, status_code=409)
+        try: backup_service.delete(name, confirmed=True); return {"status":"ok","name":name}
+        except Exception as exc: return error(exc)
+    @router.post("/admin/ui/restore")
+    async def ui_restore(request: Request, file: UploadFile = File(...), confirm: bool = Form(False)):
+        if (r := auth(request)): return r
+        if not confirm: return JSONResponse({"detail":"confirmation required"}, status_code=409)
+        target = paths.staging / f"ui-restore-{time.time_ns()}"
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True); target.write_bytes(await file.read(settings.admin_backup_max_bytes + 1))
+            if target.stat().st_size > settings.admin_backup_max_bytes: raise BackupTooLargeError()
+            result = restore_service.restore_knowledge(target, confirmed=True) if (file.filename or "").lower().endswith(".bundle") else restore_service.restore_full(target, confirmed=True)
+            return {"status":"ok","active_commit":result.active_commit,"quarantined":list(result.quarantined)}
+        except Exception as exc: return error(exc)
+        finally: target.unlink(missing_ok=True)
     return router

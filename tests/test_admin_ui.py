@@ -129,7 +129,39 @@ def test_dashboard_renders_status_tiles_and_actions(tmp_path):
     assert 'accept=".pdf,.md,.tex,application/pdf,text/markdown,text/x-tex,application/x-tex"' in response.text
     assert "Document file" in response.text
     assert 'data-repository-status' in response.text
+    assert 'data-document-table' in response.text
+    assert 'data-revision-table' in response.text
+    assert 'data-create-full-backup' in response.text
+    assert 'data-restore-form' in response.text
+    assert "Publish" not in response.text
+    assert "GitHub" not in response.text
     assert 'Last updated' in response.text
+
+
+def test_ui_lifecycle_proxies_require_session(tmp_path):
+    client = TestClient(create_app(settings=ui_settings(tmp_path), agent_answerer=lambda *_: "ok"))
+
+    for path in ("/admin/ui/documents", "/admin/ui/revisions", "/admin/ui/backups"):
+        assert client.get(path).status_code == 401
+
+
+def test_ui_destructive_actions_require_confirmation(tmp_path):
+    client = logged_in_client(tmp_path)
+
+    assert client.request("DELETE", "/admin/ui/documents/doc", json={"confirm": False}).status_code == 409
+    assert client.post("/admin/ui/revisions/" + "a" * 40 + "/rollback", json={"confirm": False}).status_code == 409
+    assert client.request("DELETE", "/admin/ui/backups/missing", json={"confirm": False}).status_code == 409
+
+
+def test_ui_restore_reads_multipart_confirmation(tmp_path):
+    client = logged_in_client(tmp_path)
+    response = client.post(
+        "/admin/ui/restore",
+        files={"file": ("backup.tar.gz", b"invalid", "application/gzip")},
+        data={"confirm": "true"},
+    )
+
+    assert response.status_code == 422
 
 
 def test_ui_status_requires_session(tmp_path):

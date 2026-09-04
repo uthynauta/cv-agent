@@ -73,7 +73,7 @@ def create_app(
     app.include_router(
         build_health_router(settings, repository, lambda: active_knowledge.initialized)
     )
-    app.include_router(build_admin_ui_router(settings, paths, git_store, ingestion, document_service))
+    app.include_router(build_admin_ui_router(settings, paths, git_store, ingestion, document_service, backup_service, restore_service))
     if agent_answerer is None:
         def agent_answerer(text: str, instructions: str | None = None) -> str:
             answer_client = OpenAITextClient(settings)
