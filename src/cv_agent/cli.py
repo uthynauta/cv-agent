@@ -4,6 +4,7 @@ import argparse
 from cv_agent.config import get_settings
 from cv_agent.knowledge.ingest import IngestionService, document_id_for_path
 from cv_agent.knowledge.git_store import LocalKnowledgeGit
+from cv_agent.knowledge.migrate import MigrationError, migrate_legacy_wiki
 from cv_agent.knowledge.repository import KnowledgeRepository
 from cv_agent.knowledge.storage import ensure_data_storage
 
@@ -34,7 +35,20 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command", required=True)
     ingest_parser = subparsers.add_parser("ingest")
     ingest_parser.add_argument("path")
+    migrate_parser = subparsers.add_parser("migrate-data")
+    migrate_parser.add_argument("--from-wiki", required=True)
+    migrate_parser.add_argument("--to-data-dir", required=True)
+    migrate_parser.add_argument("--replace-existing", action="store_true")
     args = parser.parse_args()
+
+    if args.command == "migrate-data":
+        try:
+            result = migrate_legacy_wiki(args.from_wiki, args.to_data_dir, args.replace_existing)
+        except MigrationError as exc:
+            parser.exit(2, f"error: {exc}\n")
+        print(f"source_pages={result.source_pages} knowledge_pages={result.knowledge_pages} originals={result.original_documents}")
+        print(f"commit={result.commit}")
+        return
 
     if args.command == "ingest":
         settings = get_settings()
@@ -58,3 +72,7 @@ def main() -> None:
             print(f"ingested {result.source_path} -> {result.source_page}")
         if commit:
             print(f"committed {commit}")
+
+
+if __name__ == "__main__":
+    main()
