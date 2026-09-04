@@ -25,4 +25,4 @@ curl -sS http://localhost:8000/v1/responses \
 
 Use `INGESTION_MODE=deterministic` for repeatable local demonstrations without model synthesis. Use a real OpenAI key only when demonstrating generated knowledge or live answers.
 
-The browser dashboard is available at `http://localhost:8000/admin/login` when UI settings are configured. It supports local uploads and storage status; there is no remote publishing action.
+The browser dashboard is available at `http://localhost:8000/admin/login` when UI settings are configured. It supports document lifecycle operations, local revision rollback, backup download, and confirmed restore; there is no remote publishing action.

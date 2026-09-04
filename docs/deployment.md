@@ -43,7 +43,15 @@ For an offline local build, place supported files in `DATA_DIR/documents/` and r
 DATA_DIR=./data INGESTION_MODE=deterministic uv run cv-agent ingest ./data/documents
 ```
 
-The browser dashboard at `/admin/login` offers the same upload and local status workflow when both UI settings are configured. It does not publish to or connect to a remote repository.
+To import an existing legacy wiki, run the migration explicitly before starting the service:
+
+```bash
+uv run cv-agent migrate-data --from-wiki /old/wiki --to-data-dir ./data
+```
+
+The command validates and commits the imported Markdown in one local Git revision. It refuses a non-empty destination unless `--replace-existing` is supplied; replacement moves the previous directory to a timestamped recovery sibling. Migration is never performed during application startup.
+
+The browser dashboard at `/admin/login` offers document CRUD, rebuild, revision rollback, backup export, and restore when both UI settings are configured. The bearer-authenticated `/admin/*` API exposes the same lifecycle operations. It does not publish to or connect to a remote repository.
 
 ## Open Responses Registration
 
@@ -58,7 +66,9 @@ The API is stateless and accepts transcript replay with bounded context. Configu
 
 ## Backups
 
-Local Git history is not an off-volume backup. Use volume snapshots or lifecycle backup features against the mounted `DATA_DIR`; retain archives outside the running container and test restore procedures separately.
+Create either a portable knowledge bundle containing local Git history or a full archive containing history, current originals, and a manifest. Backups are stored under `DATA_DIR/backups/` and can be downloaded from the admin API or dashboard. `ADMIN_BACKUP_MAX_BYTES` bounds uploads and generated archives; `BACKUP_RETENTION_COUNT` controls retained artifacts.
+
+Restore requires explicit confirmation, validates and stages the archive before activation, and creates a recovery backup of the current state. A knowledge bundle restores only the versioned repository; a full archive restores both repository and originals. Local Git history and in-volume archives are not off-volume backups, so retain downloaded archives or volume snapshots outside the running container and periodically test restore.
 
 ```bash
 docker compose down

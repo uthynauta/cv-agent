@@ -36,6 +36,10 @@ Supported source types are `.pdf`, `.md`, and `.tex`. Originals remain in `DATA_
 
 Each successful mutation creates a local Git commit using `DATA_GIT_AUTHOR_NAME` and `DATA_GIT_AUTHOR_EMAIL`. Git commands are bounded to the resolved mounted repository path. No remote is added or contacted.
 
+The authenticated admin API and browser UI expose document CRUD, deterministic rebuilds, revision history, and confirmed rollback. Original files are deliberately outside Git; normalized source Markdown provides the versionable identity record used to rebuild retrieval knowledge.
+
+Knowledge backup exports the local Git repository as a portable bundle. Full backup adds current originals and a manifest. Restore is size-bounded, validates staged content before activation, serializes mutations with the storage lock, and creates a recovery archive before replacing mounted state.
+
 ## Operations
 
 Request logs and metrics use bounded route labels and do not contain prompts, document content, retrieved text, or secrets. Optional OpenTelemetry export is configured through `OTEL_*` settings.

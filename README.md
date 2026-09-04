@@ -51,6 +51,13 @@ The CLI writes to the mounted local repository derived from `DATA_DIR`:
 DATA_DIR=./data INGESTION_MODE=deterministic uv run cv-agent ingest ./data/documents
 ```
 
+Legacy wiki data is imported only by an explicit, offline command. The destination must be empty unless replacement is requested; replacement keeps the prior data directory as a timestamped recovery sibling:
+
+```bash
+uv run cv-agent migrate-data --from-wiki /old/wiki --to-data-dir ./data
+uv run cv-agent migrate-data --from-wiki /old/wiki --to-data-dir ./data --replace-existing
+```
+
 ## Docker Compose
 
 Compose mounts a host data directory at `/data` and sets `DATA_DIR=/data`. No candidate corpus is copied into the image and no remote Git repository is configured.
@@ -88,10 +95,10 @@ curl -sS http://localhost:8000/admin/status \
   -H 'Authorization: Bearer YOUR_ADMIN_API_KEY'
 ```
 
-The browser dashboard is available at `/admin/login` when `ADMIN_UI_PASSWORD` and `ADMIN_UI_SESSION_SECRET` are configured. It supports authenticated uploads and local storage status. There is no remote publishing action.
+The browser dashboard is available at `/admin/login` when `ADMIN_UI_PASSWORD` and `ADMIN_UI_SESSION_SECRET` are configured. It supports document upload, replacement, deletion, rebuilds, revision history and rollback, plus backup download and restore. Destructive actions require confirmation. There is no remote publishing action.
 
 ## Persistence
 
-Mount the entire `DATA_DIR` volume. It contains original documents, generated Markdown, local Git history, staging files, locks, and backup artifacts. Local Git is version history, not an off-volume backup. Protect the mounted volume with normal snapshot or archive procedures.
+Mount the entire `DATA_DIR` volume. It contains original documents, generated Markdown, local Git history, staging files, locks, and backup artifacts. Knowledge backups export Git history; full backups also include current originals and metadata. Restore validates an uploaded archive before replacing mounted state and creates a recovery backup first. Local Git and in-volume archives are not off-volume backups, so download archives or snapshot the volume independently.
 
 See [architecture](docs/architecture.md), [deployment](docs/deployment.md), [demo guide](docs/demo.md), and [sample transcript](docs/sample-transcript.md).
