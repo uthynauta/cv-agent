@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import hashlib
 from pathlib import Path
 
 import pytest
 
 from cv_agent.knowledge.git_store import LocalKnowledgeGit
+from cv_agent.knowledge.frontmatter import load_frontmatter
 from cv_agent.knowledge.migrate import MigrationError, migrate_legacy_wiki
-from cv_agent.knowledge.validation import validate_knowledge
 
 
 def make_legacy_wiki(root: Path) -> Path:
@@ -38,6 +39,116 @@ def test_migration_imports_legacy_wiki_into_initial_local_commit(tmp_path: Path)
     assert list((destination / "repository" / "sources").glob("*.md"))
     assert (destination / "repository" / "knowledge" / "index.md").exists()
     assert LocalKnowledgeGit(destination / "repository", "CV Agent", "cv-agent@localhost").remotes() == []
+
+
+def test_migration_resolves_legacy_source_aliases_without_changing_originals(tmp_path: Path):
+    legacy = make_legacy_wiki(tmp_path / "legacy")
+    (legacy / "sources" / "20260812-certificateofcompletion-building-tools-with-python.md").write_text(
+        "---\ntitle: 'Certificate: Building Tools with Python'\n---\n\n"
+        "## Extracted Text\n\nCompleted Building Tools with Python.\n", encoding="utf-8"
+    )
+    (legacy / "sources" / "cv-ogc-ai.md").write_text(
+        "---\ntitle: CV AI\n---\n\n## Extracted Text\n\nAI experience.\n", encoding="utf-8"
+    )
+    page = legacy / "knowledge" / "topics" / "rust.md"
+    original = (
+        "---\ntitle: Rust\n---\n\n"
+        "[[sources/certificate-building-tools-with-python|Course certificate]] and "
+        "[[sources/cv-ogh-ai|AI CV]] describe this skill.\n"
+    )
+    page.write_text(original, encoding="utf-8")
+
+    destination = tmp_path / "data"
+    result = migrate_legacy_wiki(legacy, destination)
+
+    migrated = (destination / "repository" / "knowledge" / "topics" / "rust.md").read_text(encoding="utf-8")
+    assert result.source_pages == 3
+    assert "[[sources/20260812-certificateofcompletion-building-tools-with-python|Course certificate]]" in migrated
+    assert "[[sources/cv-ogc-ai|AI CV]]" in migrated
+    assert page.read_text(encoding="utf-8") == original
+
+
+def test_migration_preserves_existing_legacy_index_and_log(tmp_path: Path):
+    legacy = make_legacy_wiki(tmp_path / "legacy")
+    (legacy / "index.md").write_text("# Original index\n\nSource: [[sources/candidate]]\n", encoding="utf-8")
+    (legacy / "log.md").write_text("# Original log\n\nFirst ingestion.\n", encoding="utf-8")
+
+    destination = tmp_path / "data"
+    migrate_legacy_wiki(legacy, destination)
+
+    assert "# Original index" in (destination / "repository" / "knowledge" / "index.md").read_text(encoding="utf-8")
+    assert "First ingestion." in (destination / "repository" / "knowledge" / "log.md").read_text(encoding="utf-8")
+    assert "# Original index" in (legacy / "index.md").read_text(encoding="utf-8")
+
+
+def test_migration_associates_legacy_source_file_with_original(tmp_path: Path):
+    legacy = make_legacy_wiki(tmp_path / "legacy")
+    original = legacy / "raw" / "cv" / "Candidate CV.tex"
+    original.parent.mkdir(parents=True)
+    original.write_bytes(b"original tex bytes")
+    (legacy / "sources" / "candidate.md").write_text(
+        "---\ntitle: Candidate\nsource_file: raw/cv/Candidate CV.tex\n---\n\n"
+        "## Extracted Text\n\nPython and Rust experience.\n", encoding="utf-8"
+    )
+
+    destination = tmp_path / "data"
+    result = migrate_legacy_wiki(legacy, destination)
+
+    metadata, _ = load_frontmatter((destination / "repository" / "sources" / "candidate.md").read_text(encoding="utf-8"))
+    assert result.original_documents == 1
+    assert metadata["original_filename"] == "Candidate CV.tex"
+    assert metadata["content_sha256"] == hashlib.sha256(original.read_bytes()).hexdigest()
+    assert (destination / "documents" / "candidate.tex").read_bytes() == original.read_bytes()
+
+
+@pytest.mark.parametrize("source_file", ["../outside.pdf", "/tmp/outside.pdf", "raw/missing.pdf"])
+def test_migration_rejects_unsafe_or_missing_legacy_source_file(tmp_path: Path, source_file: str):
+    legacy = make_legacy_wiki(tmp_path / "legacy")
+    (legacy / "sources" / "candidate.md").write_text(
+        f"---\ntitle: Candidate\nsource_file: {source_file}\n---\n\n"
+        "## Extracted Text\n\nPython and Rust experience.\n", encoding="utf-8"
+    )
+
+    with pytest.raises(MigrationError, match="source_file"):
+        migrate_legacy_wiki(legacy, tmp_path / "data")
+
+    assert not (tmp_path / "data").exists()
+
+
+def test_migration_rejects_symlink_in_legacy_source_file_path(tmp_path: Path):
+    legacy = make_legacy_wiki(tmp_path / "legacy")
+    outside = tmp_path / "outside.pdf"
+    outside.write_bytes(b"outside")
+    (legacy / "raw").mkdir()
+    (legacy / "raw" / "linked.pdf").symlink_to(outside)
+    (legacy / "sources" / "candidate.md").write_text(
+        "---\ntitle: Candidate\nsource_file: raw/linked.pdf\n---\n\n"
+        "## Extracted Text\n\nPython and Rust experience.\n", encoding="utf-8"
+    )
+
+    with pytest.raises(MigrationError, match="symlink"):
+        migrate_legacy_wiki(legacy, tmp_path / "data")
+
+    assert outside.read_bytes() == b"outside"
+
+
+def test_migration_rejects_ambiguous_legacy_source_alias_and_preserves_destination(tmp_path: Path):
+    legacy = make_legacy_wiki(tmp_path / "legacy")
+    for document_id in ("cv-ogc-ai", "cv-ogh-ai"):
+        (legacy / "sources" / f"{document_id}.md").write_text(
+            f"---\ntitle: {document_id}\n---\n\n## Extracted Text\n\nReal source.\n", encoding="utf-8"
+        )
+    page = legacy / "knowledge" / "topics" / "rust.md"
+    page.write_text("[[sources/cv-ogx-ai]]", encoding="utf-8")
+    destination = tmp_path / "data"
+    destination.mkdir()
+    (destination / "keep.txt").write_text("keep", encoding="utf-8")
+
+    with pytest.raises(MigrationError, match="unknown source reference"):
+        migrate_legacy_wiki(legacy, destination, True)
+
+    assert (destination / "keep.txt").read_text(encoding="utf-8") == "keep"
+    assert page.read_text(encoding="utf-8") == "[[sources/cv-ogx-ai]]"
 
 
 def test_migration_refuses_nonempty_destination(tmp_path: Path):
