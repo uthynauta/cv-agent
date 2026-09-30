@@ -27,11 +27,45 @@ class MigrationResult:
 
 
 _SAFE_ID = re.compile(r"[^A-Za-z0-9._-]+")
+_TITLE_SLUG = re.compile(r"[^a-z0-9]+")
+_SOURCE_LINK = re.compile(r"\[\[(sources/([^|#\]]+))([^\]]*)\]\]")
 
 
 def _safe_id(value: str, fallback: str = "document") -> str:
     result = _SAFE_ID.sub("-", value).strip("-_.") or fallback
     return result[:120]
+
+
+def _source_aliases(title: str) -> set[str]:
+    slug = _TITLE_SLUG.sub("-", title.lower()).strip("-")
+    return {slug, slug.removesuffix("-source")}
+
+
+def _canonical_source_id(reference: str, source_ids: list[str], aliases: dict[str, set[str]]) -> str:
+    if reference in source_ids:
+        return reference
+    exact = aliases.get(reference, set())
+    if len(exact) == 1:
+        return next(iter(exact))
+    if not exact and reference.count("-") >= 2:
+        # Old wiki pages occasionally have a one-character typo in a source filename.
+        exact = {
+            source_id for source_id in source_ids
+            if len(reference) == len(source_id)
+            and sum(left != right for left, right in zip(reference, source_id)) == 1
+        }
+    if len(exact) == 1:
+        return next(iter(exact))
+    raise MigrationError(f"unknown source reference: sources/{reference}")
+
+
+def _resolve_source_links(body: str, source_ids: list[str], aliases: dict[str, set[str]]) -> str:
+    def replace(match: re.Match[str]) -> str:
+        reference = match.group(2)
+        canonical = _canonical_source_id(reference, source_ids, aliases)
+        return f"[[sources/{canonical}{match.group(3)}]]"
+
+    return _SOURCE_LINK.sub(replace, body)
 
 
 def _check_tree(root: Path, label: str) -> Path:
@@ -96,6 +130,7 @@ def migrate_legacy_wiki(source: str | Path, destination: str | Path, replace_exi
         markdown = [p for p in _files(source_root) if p.suffix.lower() == ".md"]
         source_pages = [p for p in markdown if "sources" in p.relative_to(source_root).parts]
         source_ids: list[str] = []
+        source_aliases: dict[str, set[str]] = {}
         originals: dict[str, Path] = {}
         for page in source_pages:
             metadata, body = load_frontmatter(page.read_text(encoding="utf-8"))
@@ -104,6 +139,8 @@ def migrate_legacy_wiki(source: str | Path, destination: str | Path, replace_exi
             if document_id in source_ids:
                 document_id = f"{base}-{hashlib.sha256(str(page).encode()).hexdigest()[:8]}"
             source_ids.append(document_id)
+            for alias in _source_aliases(str(metadata.get("title") or page.stem)):
+                source_aliases.setdefault(alias, set()).add(document_id)
             original = _matching_original(source_root, metadata, page)
             if original is not None:
                 destination_name = f"{document_id}{original.suffix.lower()}"
@@ -151,12 +188,15 @@ def migrate_legacy_wiki(source: str | Path, destination: str | Path, replace_exi
             target = knowledge_dir / target_relative
             target.parent.mkdir(parents=True, exist_ok=True)
             metadata, body = load_frontmatter(path.read_text(encoding="utf-8"))
+            body = _resolve_source_links(body, source_ids, source_aliases)
             if not any(f"sources/{source_id}" in body for source_id in source_ids) and source_ids:
                 body = body.rstrip() + f"\n\nSource: [[sources/{source_ids[0]}]]\n"
             target.write_text(dump_frontmatter(metadata, body), encoding="utf-8")
 
-        (knowledge_dir / "index.md").write_text("# Wiki Index\n", encoding="utf-8")
-        (knowledge_dir / "log.md").write_text("# Wiki Log\n", encoding="utf-8")
+        if not (knowledge_dir / "index.md").exists():
+            (knowledge_dir / "index.md").write_text("# Wiki Index\n", encoding="utf-8")
+        if not (knowledge_dir / "log.md").exists():
+            (knowledge_dir / "log.md").write_text("# Wiki Log\n", encoding="utf-8")
         validate_knowledge(repository)
         git = LocalKnowledgeGit(repository, "CV Agent", "cv-agent@localhost")
         git.initialize()
