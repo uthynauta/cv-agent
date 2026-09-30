@@ -94,6 +94,22 @@ def _files(root: Path):
 
 
 def _matching_original(source: Path, metadata: dict, page: Path) -> Path | None:
+    legacy_source_file = metadata.get("source_file")
+    if legacy_source_file is not None:
+        if not isinstance(legacy_source_file, str) or not legacy_source_file:
+            raise MigrationError("source_file must be a relative path to a supported original")
+        relative = Path(legacy_source_file)
+        if relative.is_absolute() or ".." in relative.parts or relative == Path("."):
+            raise MigrationError("source_file must stay within the source wiki")
+        candidate = source
+        for component in relative.parts:
+            candidate /= component
+            if candidate.is_symlink():
+                raise MigrationError("source_file path contains a symlink")
+        if candidate.suffix.lower() not in SUPPORTED_UPLOAD_EXTENSIONS or not candidate.is_file():
+            raise MigrationError("source_file must point to a supported original")
+        return candidate
+
     requested = metadata.get("original_filename")
     names = [str(requested)] if isinstance(requested, str) and requested else [page.stem + suffix for suffix in SUPPORTED_UPLOAD_EXTENSIONS]
     candidates = [source / "documents" / name for name in names]

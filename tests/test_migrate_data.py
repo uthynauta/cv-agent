@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import hashlib
 from pathlib import Path
 
 import pytest
 
 from cv_agent.knowledge.git_store import LocalKnowledgeGit
+from cv_agent.knowledge.frontmatter import load_frontmatter
 from cv_agent.knowledge.migrate import MigrationError, migrate_legacy_wiki
 
 
@@ -77,6 +79,57 @@ def test_migration_preserves_existing_legacy_index_and_log(tmp_path: Path):
     assert "# Original index" in (destination / "repository" / "knowledge" / "index.md").read_text(encoding="utf-8")
     assert "First ingestion." in (destination / "repository" / "knowledge" / "log.md").read_text(encoding="utf-8")
     assert "# Original index" in (legacy / "index.md").read_text(encoding="utf-8")
+
+
+def test_migration_associates_legacy_source_file_with_original(tmp_path: Path):
+    legacy = make_legacy_wiki(tmp_path / "legacy")
+    original = legacy / "raw" / "cv" / "Candidate CV.tex"
+    original.parent.mkdir(parents=True)
+    original.write_bytes(b"original tex bytes")
+    (legacy / "sources" / "candidate.md").write_text(
+        "---\ntitle: Candidate\nsource_file: raw/cv/Candidate CV.tex\n---\n\n"
+        "## Extracted Text\n\nPython and Rust experience.\n", encoding="utf-8"
+    )
+
+    destination = tmp_path / "data"
+    result = migrate_legacy_wiki(legacy, destination)
+
+    metadata, _ = load_frontmatter((destination / "repository" / "sources" / "candidate.md").read_text(encoding="utf-8"))
+    assert result.original_documents == 1
+    assert metadata["original_filename"] == "Candidate CV.tex"
+    assert metadata["content_sha256"] == hashlib.sha256(original.read_bytes()).hexdigest()
+    assert (destination / "documents" / "candidate.tex").read_bytes() == original.read_bytes()
+
+
+@pytest.mark.parametrize("source_file", ["../outside.pdf", "/tmp/outside.pdf", "raw/missing.pdf"])
+def test_migration_rejects_unsafe_or_missing_legacy_source_file(tmp_path: Path, source_file: str):
+    legacy = make_legacy_wiki(tmp_path / "legacy")
+    (legacy / "sources" / "candidate.md").write_text(
+        f"---\ntitle: Candidate\nsource_file: {source_file}\n---\n\n"
+        "## Extracted Text\n\nPython and Rust experience.\n", encoding="utf-8"
+    )
+
+    with pytest.raises(MigrationError, match="source_file"):
+        migrate_legacy_wiki(legacy, tmp_path / "data")
+
+    assert not (tmp_path / "data").exists()
+
+
+def test_migration_rejects_symlink_in_legacy_source_file_path(tmp_path: Path):
+    legacy = make_legacy_wiki(tmp_path / "legacy")
+    outside = tmp_path / "outside.pdf"
+    outside.write_bytes(b"outside")
+    (legacy / "raw").mkdir()
+    (legacy / "raw" / "linked.pdf").symlink_to(outside)
+    (legacy / "sources" / "candidate.md").write_text(
+        "---\ntitle: Candidate\nsource_file: raw/linked.pdf\n---\n\n"
+        "## Extracted Text\n\nPython and Rust experience.\n", encoding="utf-8"
+    )
+
+    with pytest.raises(MigrationError, match="symlink"):
+        migrate_legacy_wiki(legacy, tmp_path / "data")
+
+    assert outside.read_bytes() == b"outside"
 
 
 def test_migration_rejects_ambiguous_legacy_source_alias_and_preserves_destination(tmp_path: Path):
