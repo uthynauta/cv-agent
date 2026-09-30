@@ -5,16 +5,20 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN pip install --no-cache-dir uv
 
 COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
-COPY wiki ./wiki
 
 RUN uv sync --frozen --no-dev
 
 ENV PATH="/app/.venv/bin:$PATH"
+ENV DATA_DIR=/data
 
 EXPOSE 8000
 
-CMD ["uvicorn", "banorte_agent.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "cv_agent.main:app", "--host", "0.0.0.0", "--port", "8000"]

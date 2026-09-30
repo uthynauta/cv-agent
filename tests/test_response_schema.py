@@ -1,28 +1,30 @@
 from fastapi.testclient import TestClient
 
-from banorte_agent.main import create_app
+from cv_agent.config import Settings
+from cv_agent.main import create_app
 
 
 def test_responses_endpoint_returns_openai_like_shape(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    app = create_app(agent_answerer=lambda text, instructions=None: "Respuesta en español. Fuentes: [[Othon CV]]")
+    app = create_app(
+        settings=Settings(_env_file=None, openai_api_key="test-key"),
+        agent_answerer=lambda text, instructions=None: "Respuesta en español. Fuentes: [[Candidate CV]]",
+    )
     client = TestClient(app)
-    response = client.post("/v1/responses", json={"model": "banorte-cv-agent", "input": "¿Quién es Othon?"})
+    response = client.post("/v1/responses", json={"model": "cv-agent", "input": "¿Quién es Candidate?"})
     assert response.status_code == 200
     payload = response.json()
     assert payload["object"] == "response"
     assert payload["status"] == "completed"
-    assert payload["model"] == "banorte-cv-agent"
-    assert payload["output_text"].endswith("Fuentes: [[Othon CV]]")
+    assert payload["model"] == "cv-agent"
+    assert payload["output_text"].endswith("Fuentes: [[Candidate CV]]")
     assert payload["output"][0]["id"].startswith("msg_")
     assert payload["output"][0]["status"] == "completed"
     assert payload["output"][0]["content"][0]["type"] == "output_text"
 
 
 def test_responses_endpoint_returns_canonical_model_name():
-    settings = __import__("banorte_agent.config", fromlist=["Settings"]).Settings(
-        openai_api_key="test-key", agent_model_name="banorte-cv-agent"
-    )
+    settings = Settings(_env_file=None, openai_api_key="test-key", agent_model_name="cv-agent")
     app = create_app(settings=settings, agent_answerer=lambda text, instructions=None: "Respuesta")
 
     response = TestClient(app).post(
@@ -30,7 +32,7 @@ def test_responses_endpoint_returns_canonical_model_name():
     )
 
     assert response.status_code == 200
-    assert response.json()["model"] == "banorte-cv-agent"
+    assert response.json()["model"] == "cv-agent"
 
 
 def test_responses_endpoint_accepts_open_responses_message_array_input():
@@ -39,26 +41,24 @@ def test_responses_endpoint_accepts_open_responses_message_array_input():
     def answerer(text: str, instructions: str | None = None) -> str:
         seen["text"] = text
         seen["instructions"] = instructions
-        return "Respuesta en español. Fuentes: [[Othon CV]]"
+        return "Respuesta en español. Fuentes: [[Candidate CV]]"
 
     app = create_app(
-        settings=__import__("banorte_agent.config", fromlist=["Settings"]).Settings(
-            openai_api_key="test-key"
-        ),
+        settings=Settings(_env_file=None, openai_api_key="test-key"),
         agent_answerer=answerer,
     )
 
     response = TestClient(app).post(
         "/v1/responses",
         json={
-            "model": "banorte-cv-agent",
+            "model": "cv-agent",
             "input": [
                 {
                     "role": "user",
                     "content": [
                         {
                             "type": "input_text",
-                            "text": "¿Qué experiencia tiene Othon con agentes de IA?",
+                            "text": "¿Qué experiencia tiene Candidate con agentes de IA?",
                         }
                     ],
                 }
@@ -67,7 +67,7 @@ def test_responses_endpoint_accepts_open_responses_message_array_input():
     )
 
     assert response.status_code == 200
-    assert seen["text"] == "¿Qué experiencia tiene Othon con agentes de IA?"
+    assert seen["text"] == "¿Qué experiencia tiene Candidate con agentes de IA?"
 
 
 def test_responses_endpoint_uses_latest_user_message_with_light_transcript_context():
@@ -75,10 +75,10 @@ def test_responses_endpoint_uses_latest_user_message_with_light_transcript_conte
 
     def answerer(text: str, instructions: str | None = None) -> str:
         seen["text"] = text
-        return "Respuesta en español. Fuentes: [[Othon CV]]"
+        return "Respuesta en español. Fuentes: [[Candidate CV]]"
 
     app = create_app(
-        settings=__import__("banorte_agent.config", fromlist=["Settings"]).Settings(
+        settings=__import__("cv_agent.config", fromlist=["Settings"]).Settings(
             openai_api_key="test-key"
         ),
         agent_answerer=answerer,
@@ -128,18 +128,18 @@ def test_responses_endpoint_resolves_short_confirmation_to_previous_followup():
 
     def answerer(text: str, instructions: str | None = None) -> str:
         seen["text"] = text
-        return "Respuesta en español. Fuentes: [[Othon CV]]"
+        return "Respuesta en español. Fuentes: [[Candidate CV]]"
 
     app = create_app(
-        settings=__import__("banorte_agent.config", fromlist=["Settings"]).Settings(
+        settings=__import__("cv_agent.config", fromlist=["Settings"]).Settings(
             openai_api_key="test-key"
         ),
         agent_answerer=answerer,
     )
 
     previous_answer = (
-        "Othón ha laborado en Teradata, Continental Autonomous Mobility, CentroGEO "
-        "y Aeroméxico. ¿Quieres que las ordene cronológicamente?"
+        "Candidate ha laborado en Example Systems, Example Mobility, Example Research "
+        "y Example Airlines. ¿Quieres que las ordene cronológicamente?"
     )
     response = TestClient(app).post(
         "/v1/responses",
@@ -163,7 +163,7 @@ def test_responses_endpoint_resolves_short_confirmation_to_previous_followup():
 
     assert response.status_code == 200
     assert "Previous assistant answer for this follow-up:" in (seen["text"] or "")
-    assert "Teradata, Continental Autonomous Mobility, CentroGEO" in (seen["text"] or "")
+    assert "Example Systems, Example Mobility, Example Research" in (seen["text"] or "")
     assert "Previous assistant follow-up question:\n¿Quieres que las ordene cronológicamente?" in (
         seen["text"] or ""
     )
@@ -175,10 +175,10 @@ def test_responses_endpoint_accepts_open_responses_content_array_input():
 
     def answerer(text: str, instructions: str | None = None) -> str:
         seen["text"] = text
-        return "Respuesta en español. Fuentes: [[Othon CV]]"
+        return "Respuesta en español. Fuentes: [[Candidate CV]]"
 
     app = create_app(
-        settings=__import__("banorte_agent.config", fromlist=["Settings"]).Settings(
+        settings=__import__("cv_agent.config", fromlist=["Settings"]).Settings(
             openai_api_key="test-key"
         ),
         agent_answerer=answerer,
@@ -190,21 +190,19 @@ def test_responses_endpoint_accepts_open_responses_content_array_input():
             "input": [
                 {
                     "type": "input_text",
-                    "text": "Resume el perfil profesional de Othon.",
+                    "text": "Resume el perfil profesional de Candidate.",
                 }
             ],
         },
     )
 
     assert response.status_code == 200
-    assert seen["text"] == "Resume el perfil profesional de Othon."
+    assert seen["text"] == "Resume el perfil profesional de Candidate."
 
 
 def test_responses_endpoint_ignores_overlong_client_model_without_validation_leak():
     app = create_app(
-        settings=__import__("banorte_agent.config", fromlist=["Settings"]).Settings(
-            openai_api_key="test-key"
-        ),
+        settings=Settings(_env_file=None, openai_api_key="test-key"),
         agent_answerer=lambda text, instructions=None: "Respuesta",
     )
 
@@ -215,13 +213,13 @@ def test_responses_endpoint_ignores_overlong_client_model_without_validation_lea
     assert response.status_code == 200
     payload = response.json()
     assert payload["status"] == "completed"
-    assert payload["model"] == "banorte-cv-agent"
+    assert payload["model"] == "cv-agent"
     assert "detail" not in payload
 
 
 def test_responses_endpoint_rejects_oversized_request_body():
     app = create_app(
-        settings=__import__("banorte_agent.config", fromlist=["Settings"]).Settings(
+        settings=__import__("cv_agent.config", fromlist=["Settings"]).Settings(
             openai_api_key="test-key"
         ),
         agent_answerer=lambda text, instructions=None: "Respuesta",
@@ -242,7 +240,7 @@ def test_responses_endpoint_truncates_public_input_without_validation_leak():
         return "Respuesta"
 
     app = create_app(
-        settings=__import__("banorte_agent.config", fromlist=["Settings"]).Settings(
+        settings=__import__("cv_agent.config", fromlist=["Settings"]).Settings(
             openai_api_key="test-key"
         ),
         agent_answerer=answerer,
@@ -263,7 +261,7 @@ def test_responses_endpoint_truncates_public_instructions_without_validation_lea
         return "Respuesta"
 
     app = create_app(
-        settings=__import__("banorte_agent.config", fromlist=["Settings"]).Settings(
+        settings=__import__("cv_agent.config", fromlist=["Settings"]).Settings(
             openai_api_key="test-key"
         ),
         agent_answerer=answerer,
@@ -280,7 +278,7 @@ def test_responses_endpoint_truncates_public_instructions_without_validation_lea
 
 def test_responses_endpoint_enforces_agent_key():
     app = create_app(
-        settings=__import__("banorte_agent.config", fromlist=["Settings"]).Settings(
+        settings=__import__("cv_agent.config", fromlist=["Settings"]).Settings(
             openai_api_key="test-key",
             agent_api_key="agent-secret",
         ),

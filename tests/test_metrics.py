@@ -4,13 +4,13 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from banorte_agent.agent.openai_client import OpenAITextClient
-from banorte_agent.config import Settings
-from banorte_agent.main import create_app
-from banorte_agent.logging import request_observability_middleware
-from banorte_agent.metrics import render_metrics
-from banorte_agent.wiki.repository import WikiRepository
-from banorte_agent.wiki.search import WikiSearch
+from cv_agent.agent.openai_client import OpenAITextClient
+from cv_agent.config import Settings
+from cv_agent.main import create_app
+from cv_agent.logging import request_observability_middleware
+from cv_agent.metrics import render_metrics
+from cv_agent.knowledge.repository import KnowledgeRepository
+from cv_agent.knowledge.search import KnowledgeSearch
 
 
 def test_metrics_endpoint_exposes_prometheus_text(monkeypatch):
@@ -21,7 +21,7 @@ def test_metrics_endpoint_exposes_prometheus_text(monkeypatch):
     response = client.get("/metrics")
     assert response.status_code == 200
     assert "text/plain" in response.headers["content-type"]
-    assert "banorte_http_requests_total" in response.text
+    assert "cv_agent_http_requests_total" in response.text
 
 
 def test_request_id_header_is_returned(monkeypatch):
@@ -58,7 +58,7 @@ def test_exception_returns_request_id_log_and_bounded_metrics(caplog):
     def fail(failure_id: str):
         raise RuntimeError(failure_id)
 
-    with caplog.at_level("INFO", logger="banorte_agent"):
+    with caplog.at_level("INFO", logger="cv_agent"):
         response = TestClient(app, raise_server_exceptions=False).get(
             "/fail/private-value", headers={"x-request-id": "req-failure"}
         )
@@ -78,13 +78,13 @@ def test_exception_returns_request_id_log_and_bounded_metrics(caplog):
 
 
 def test_search_hit_metric_is_recorded(tmp_path: Path):
-    repo = WikiRepository(tmp_path)
+    repo = KnowledgeRepository(tmp_path)
     repo.write_page("skills/python.md", "Python", {"kind": "skill"}, "Python and FastAPI")
 
-    WikiSearch(repo).search("Python")
+    KnowledgeSearch(repo).search("Python")
 
     metrics = render_metrics().decode("utf-8")
-    assert "banorte_wiki_search_hits_count" in metrics
+    assert "cv_agent_wiki_search_hits_count" in metrics
 
 
 def test_openai_latency_metric_is_recorded():
@@ -102,5 +102,5 @@ def test_openai_latency_metric_is_recorded():
     client.create_response("instructions", "input")
 
     metrics = render_metrics().decode("utf-8")
-    assert "banorte_openai_call_duration_seconds_count" in metrics
+    assert "cv_agent_openai_call_duration_seconds_count" in metrics
     assert responses.kwargs["max_output_tokens"] == 1200

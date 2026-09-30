@@ -7,8 +7,6 @@ __pycache__/
 htmlcov/
 dist/
 *.egg-info/
-
-wiki/raw/**
-!wiki/raw/
-!wiki/raw/**/
-!wiki/raw/**/*.tex
+data/
+*.cv-agent-backup.tar.gz
+*.cv-agent.bundle

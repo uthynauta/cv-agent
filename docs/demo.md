@@ -1,48 +1,28 @@
 # Demo
 
-## What To Show
+## Walkthrough
 
-1. `wiki/` contains cleaned, generated Obsidian-style Markdown from committed LaTeX CV sources.
-2. The Continental/radar query retrieves a matching experience passage rather than the generic profile header.
-3. `POST /v1/responses` returns terminal Open Responses-compatible JSON with Spanish answers and retrieved `Fuentes:` citations.
-4. Answers are concise by default and include one grounded follow-up question when useful.
-5. Transcript replay supports follow-ups such as `si por favor` without server-side conversation storage.
-6. `/healthz`, `/readyz`, and `/metrics` show liveness, strict readiness, bounded route metrics, search hits, and OpenAI latency.
-7. Docker Compose runs the service locally without Kubernetes.
-8. `evals/run_eval.py` checks Spanish output, citations, and missing-information behavior; do not run it without a real key.
-
-## Local Walkthrough
+A fresh `DATA_DIR` starts with empty mounted storage and reports not ready. After an authenticated upload, the service stores the original document and commits normalized Markdown to the local repository.
 
 ```bash
-uv run uvicorn banorte_agent.main:app --host 127.0.0.1 --port 8000
+cp .env.example .env
+docker compose up -d --build
 curl http://localhost:8000/healthz
 curl http://localhost:8000/readyz
 ```
 
-Call examples with and without `AGENT_API_KEY` are in the [README](../README.md) and [deployment guide](deployment.md). `POST /admin/ingest` remains disabled until `ADMIN_API_KEY` is set.
+Set `ADMIN_API_KEY`, upload a synthetic CV document, then retry readiness:
 
-Use `http://localhost:8000/v1/responses` during local development. The public Render deployment is:
-
-```text
-https://banorte-cv-agent.onrender.com/v1/responses
+```bash
+curl -sS http://localhost:8000/admin/documents \
+  -H 'Authorization: Bearer YOUR_ADMIN_API_KEY' \
+  -F 'file=@/path/to/example-cv.md'
+curl http://localhost:8000/readyz
+curl -sS http://localhost:8000/v1/responses \
+  -H 'Content-Type: application/json' \
+  -d '{"input":"Resume el perfil profesional del candidato."}'
 ```
 
-The agent card is:
+Use `INGESTION_MODE=deterministic` for repeatable local demonstrations without model synthesis. Use a real OpenAI key only when demonstrating generated knowledge or live answers.
 
-```text
-https://banorte-cv-agent.onrender.com/.well-known/agent-card.json
-```
-
-## Example Questions
-
-- "Resume el perfil profesional de Othon."
-- "¿Qué experiencia tiene Othon construyendo agentes de IA?"
-- "¿Qué hizo Othon en Continental con radares?"
-- "¿Qué proyectos demuestran criterio técnico?"
-- "¿Qué información no está disponible en las fuentes?"
-- "¿En qué empresas ha laborado?"
-- "Sí, por favor."
-
-## Banorte Platform Notes
-
-Use transcript replay/stateless mode. The API extracts the latest reviewer message and keeps bounded prior context only for follow-up references. If the platform offers capability content as inline Base64, prefer it so the agent is not required to fetch Parley during execution.
+The browser dashboard is available at `http://localhost:8000/admin/login` when UI settings are configured. It supports document lifecycle operations, local revision rollback, backup download, and confirmed restore; there is no remote publishing action.

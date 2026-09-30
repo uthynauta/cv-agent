@@ -1,107 +1,187 @@
+from datetime import datetime
+import inspect
+import os
 from pathlib import Path
 
 import pytest
 
-from banorte_agent.config import Settings
-import banorte_agent.wiki.ingest as ingest_module
-from banorte_agent.wiki.extractors import ExtractedSource
-from banorte_agent.wiki.ingest import IngestionService
-from banorte_agent.wiki.openai_ingest import OpenAIWikiIngestionClient
-from banorte_agent.wiki.repository import WikiRepository
+import cv_agent.knowledge.ingest as ingest_module
+from cv_agent.config import Settings
+from cv_agent.knowledge.extractors import ExtractedSource
+from cv_agent.knowledge.frontmatter import load_frontmatter
+from cv_agent.knowledge.ingest import MAX_DOCUMENT_ID_BYTES, IngestionService, document_id_for_path
+from cv_agent.knowledge.openai_ingest import OpenAIWikiIngestionClient
+from cv_agent.knowledge.repository import KnowledgeRepository
 
 
-def test_ingest_file_creates_source_page_and_log(tmp_path: Path):
-    raw = tmp_path / "raw" / "cv"
-    raw.mkdir(parents=True)
-    source = raw / "othon.tex"
-    source.write_text(r"\section{Skills} Python, FastAPI, AI agents", encoding="utf-8")
-    repo = WikiRepository(tmp_path)
-    result = IngestionService(repo).ingest_file(source)
-    assert result.source_page == tmp_path / "sources" / "othon.md"
-    text = result.source_page.read_text(encoding="utf-8")
-    assert "Python, FastAPI, AI agents" in text
-    assert "sha256:" in text
-    assert "needs_ocr: false" in text
-    assert "## Extracted Text" in text
-    assert "ingest | othon.tex" in (tmp_path / "log.md").read_text(encoding="utf-8")
-
-
-@pytest.mark.parametrize(("suffix", "kind"), [(".md", "markdown"), (".pdf", "pdf")])
-def test_non_latex_ingest_does_not_copy_full_source_text(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, suffix: str, kind: str
+@pytest.mark.parametrize(
+    ("suffix", "kind", "media_type"),
+    [
+        (".pdf", "pdf", "application/pdf"),
+        (".md", "markdown", "text/markdown"),
+        (".tex", "latex", "application/x-tex"),
+    ],
+)
+def test_ingest_file_writes_complete_versioned_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    suffix: str,
+    kind: str,
+    media_type: str,
 ):
-    raw = tmp_path / "raw" / "documents"
-    raw.mkdir(parents=True)
-    source = raw / f"private{suffix}"
-    source.write_bytes(b"placeholder")
-    private_text = "private-start " + ("confidential material " * 200) + " private-end"
-    extracted = ExtractedSource(source, private_text, kind, False, "a" * 64)
+    source = tmp_path / f"approved{suffix}"
+    source.write_bytes(b"approved source bytes")
+    private_text = "private-start\nconfidential material\nprivate-end"
+    extracted = ExtractedSource(source, private_text, kind, suffix == ".pdf", "a" * 64)
     monkeypatch.setattr(ingest_module, "extract_source", lambda path: extracted)
 
-    result = IngestionService(WikiRepository(tmp_path)).ingest_file(source)
+    result = IngestionService(KnowledgeRepository(tmp_path)).ingest_file(source, "doc-123")
+
+    assert result.document_id == "doc-123"
+    assert result.source_path == source
+    assert result.source_page == tmp_path / "sources" / "doc-123.md"
+    assert result.generated_pages == ()
+    assert result.needs_ocr is (suffix == ".pdf")
     generated = result.source_page.read_text(encoding="utf-8")
+    metadata, body = load_frontmatter(generated)
+    assert metadata["title"] == "approved"
+    assert metadata["kind"] == "source"
+    assert metadata["document_id"] == "doc-123"
+    assert metadata["original_filename"] == f"approved{suffix}"
+    assert metadata["media_type"] == media_type
+    assert metadata["content_sha256"] == "a" * 64
+    assert metadata["extractor_version"] == "1"
+    assert metadata["needs_ocr"] is (suffix == ".pdf")
+    assert metadata["tags"] == ["source", kind]
+    datetime.fromisoformat(metadata["uploaded_at"])
+    assert "## Extracted Text" in body
+    assert private_text in body
+    assert not (tmp_path / "index.md").exists()
+    assert not (tmp_path / "log.md").exists()
+    assert (tmp_path / "knowledge" / "index.md").exists()
+    assert (tmp_path / "knowledge" / "log.md").exists()
 
-    assert "content_policy: snippet_only" in generated
-    assert "## Extracted Text" not in generated
-    assert private_text not in generated
-    assert "private-end" not in generated
 
+def test_ingest_log_uses_original_filename_when_source_path_is_staged(tmp_path: Path):
+    source = tmp_path / "staging" / "operation" / "document.md"
+    source.parent.mkdir(parents=True)
+    source.write_text("source", encoding="utf-8")
 
-def test_openai_ingest_writes_structured_wiki_pages(tmp_path: Path):
-    raw = tmp_path / "raw" / "cv"
-    raw.mkdir(parents=True)
-    source = raw / "othon.tex"
-    source.write_text(
-        r"\section{Experience} Teradata Agentic AI platform \section{Teaching} Developed and taught undergraduate and graduate courses",
-        encoding="utf-8",
+    settings = Settings(_env_file=None, ingestion_mode="deterministic")
+    IngestionService(KnowledgeRepository(tmp_path), settings).ingest_file(
+        source, "doc-123", "candidate.md"
     )
+
+    log = (tmp_path / "knowledge" / "log.md").read_text(encoding="utf-8")
+    assert "Source: `candidate.md`" in log
+    assert str(source) not in log
+
+
+@pytest.mark.parametrize(
+    "document_id",
+    ["", ".", "..", "../escape", "/absolute", "nested/id", r"nested\\id", "has space", "ends.md", "bad\nvalue", "é"],
+)
+def test_ingest_file_rejects_unsafe_document_id(tmp_path: Path, document_id: str):
+    source = tmp_path / "source.md"
+    source.write_text("source", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="document_id"):
+        IngestionService(KnowledgeRepository(tmp_path)).ingest_file(source, document_id)
+
+
+def test_ingest_file_requires_explicit_document_id():
+    parameter = inspect.signature(IngestionService.ingest_file).parameters["document_id"]
+    assert parameter.default is inspect.Parameter.empty
+
+
+def test_document_id_for_path_is_stable_from_declared_relative_root(tmp_path: Path):
+    first_root = tmp_path / "first"
+    second_root = tmp_path / "second"
+    first = first_root / "raw" / "nested" / "cv.md"
+    second = second_root / "raw" / "nested" / "cv.md"
+    first.parent.mkdir(parents=True)
+    second.parent.mkdir(parents=True)
+    first.write_text("same", encoding="utf-8")
+    second.write_text("same", encoding="utf-8")
+
+    assert document_id_for_path(first, first_root) == document_id_for_path(second, second_root)
+    assert len(document_id_for_path(first, first_root)) <= 128
+
+
+def test_document_id_for_path_caps_long_stems(tmp_path: Path):
+    source = tmp_path / ("x" * 200 + ".md")
+    source.write_text("source", encoding="utf-8")
+
+    document_id = document_id_for_path(source)
+
+    assert len(document_id) <= 128
+    assert not document_id.lower().endswith(".md")
+
+
+def test_document_id_length_is_rejected_before_extraction_or_writes(tmp_path: Path, monkeypatch):
+    source = tmp_path / "source.md"
+    source.write_text("source", encoding="utf-8")
+    monkeypatch.setattr(ingest_module, "extract_source", lambda _: pytest.fail("extraction should not run"))
+
+    with pytest.raises(ValueError, match="length"):
+        IngestionService(KnowledgeRepository(tmp_path)).ingest_file(source, "a" * (MAX_DOCUMENT_ID_BYTES + 1))
+
+    assert not (tmp_path / "sources").exists()
+    assert not (tmp_path / "knowledge").exists()
+
+
+def test_max_document_id_writes_source_page(tmp_path: Path):
+    source = tmp_path / "source.md"
+    source.write_text("source", encoding="utf-8")
+    document_id = "a" * MAX_DOCUMENT_ID_BYTES
+
+    result = IngestionService(KnowledgeRepository(tmp_path)).ingest_file(source, document_id)
+
+    assert result.source_page == tmp_path / "sources" / f"{document_id}.md"
+    assert result.source_page.exists()
+
+
+def test_document_id_for_path_hashes_content_as_stream(tmp_path: Path, monkeypatch):
+    source = tmp_path / "source.md"
+    source.write_bytes(b"source")
+    monkeypatch.setattr(Path, "read_bytes", lambda _: pytest.fail("content must be streamed"))
+
+    document_id = document_id_for_path(source)
+
+    assert len(document_id.encode("utf-8")) <= MAX_DOCUMENT_ID_BYTES
+
+
+def test_openai_ingest_writes_generated_pages_under_knowledge_and_source_is_model_immutable(
+    tmp_path: Path,
+):
+    source = tmp_path / "original-name.tex"
+    source.write_text("source", encoding="utf-8")
 
     class FakeTextClient:
         def create_response(self, instructions: str, input_text: str) -> str:
-            assert "Return strict JSON" in instructions
-            assert "Teradata Agentic AI platform" in input_text
-            assert "Developed and taught undergraduate and graduate courses" in input_text
+            assert "knowledge/projects/" in instructions
+            assert "optional summary suggestion" in instructions
+            assert "at most one optional sources/" in instructions
+            assert "Every non-source generated page must contain [[sources/doc-123]]" in instructions
+            assert "it is not required" in instructions
+            assert "at least one source page" not in instructions
+            assert "original-name.tex" in input_text
             return """
             {
               "pages": [
                 {
-                  "path": "sources/model-picked-wrong-slug.md",
-                  "title": "Othon CV",
-                  "metadata": {"kind": "source", "tags": ["source", "cv"]},
-                  "body_lines": [
-                    "## Summary",
-                    "Othon worked on [[../projects/teradata-agentic-ai-platform|Teradata Agentic AI Platform]]."
-                  ]
+                  "path": "sources/doc-123.md",
+                  "title": "Model Override",
+                  "kind": "evil",
+                  "tags": ["wrong"],
+                  "body_lines": ["Model replaced source"]
                 },
                 {
-                  "path": "projects/teradata-agentic-ai-platform.md",
-                  "title": "Teradata Agentic AI Platform",
-                  "metadata": {"kind": "project", "tags": ["project", "agentic-ai"]},
-                  "body_lines": ["## Summary", "Enterprise agentic AI platform."]
-                },
-                {
-                  "path": "education/advanced-technology-degree.md",
-                  "title": "Advanced Technology Degree",
-                  "metadata": {"kind": "education", "tags": ["education"]},
-                  "body_lines": ["## Summary", "PhD in Advanced Technology."]
-                },
-                {
-                  "path": "experience/teaching.md",
-                  "title": "Teaching Experience",
-                  "metadata": {"kind": "experience", "tags": ["experience", "teaching"]},
-                  "body_lines": ["## Summary", "Developed and taught undergraduate and graduate courses."]
-                },
-                {
-                  "path": "credentials/llm-course.md",
-                  "title": "LLM Course",
-                  "metadata": {"kind": "credential", "tags": ["credential", "llm"]},
-                  "body_lines": ["## Summary", "Completed LLM coursework."]
-                },
-                {
-                  "path": "publications/image-captioning-metrics.md",
-                  "title": "Image Captioning Metrics Paper",
-                  "metadata": {"kind": "publication", "tags": ["publication"]},
-                  "body_lines": ["## Summary", "Peer-reviewed publication."]
+                  "path": "knowledge/projects/example-systems.md",
+                  "title": "Example Systems",
+                  "kind": "project",
+                  "tags": ["project"],
+                  "body_lines": ["## Summary", "Project page cites [[sources/doc-123]]."]
                 }
               ]
             }
@@ -113,24 +193,170 @@ def test_openai_ingest_writes_structured_wiki_pages(tmp_path: Path):
         ingestion_mode="openai",
         openai_model="gpt-5.6-luna",
     )
-    result = IngestionService(WikiRepository(tmp_path), settings, FakeTextClient()).ingest_file(source)
+    result = IngestionService(KnowledgeRepository(tmp_path), settings, FakeTextClient()).ingest_file(
+        source, "doc-123"
+    )
 
-    assert result.source_page == tmp_path / "sources" / "othon.md"
-    assert not (tmp_path / "sources" / "model-picked-wrong-slug.md").exists()
+    assert result.source_page == tmp_path / "sources" / "doc-123.md"
+    assert result.generated_pages == (tmp_path / "knowledge" / "projects" / "example-systems.md",)
     source_text = result.source_page.read_text(encoding="utf-8")
-    assert "Teradata Agentic AI Platform" in source_text
-    assert "## Extracted Text" in source_text
-    assert "Developed and taught undergraduate and graduate courses" in source_text
-    assert (tmp_path / "projects" / "teradata-agentic-ai-platform.md").exists()
-    assert (tmp_path / "education" / "advanced-technology-degree.md").exists()
-    assert (tmp_path / "experience" / "teaching.md").exists()
-    assert (tmp_path / "credentials" / "llm-course.md").exists()
-    assert (tmp_path / "publications" / "image-captioning-metrics.md").exists()
-    index_text = (tmp_path / "index.md").read_text(encoding="utf-8")
-    assert "[[sources/othon|Othon CV]]" in index_text
-    assert "kind: source" in index_text
-    assert "tags: source, cv" in index_text
-    assert "mode: openai" in (tmp_path / "log.md").read_text(encoding="utf-8")
+    metadata, body = load_frontmatter(source_text)
+    assert metadata["title"] == "original-name"
+    assert metadata["kind"] == "source"
+    assert metadata["document_id"] == "doc-123"
+    assert metadata["tags"] == ["source", "latex"]
+    assert "Model replaced source" in body
+    assert "source" in body
+    assert (tmp_path / "knowledge" / "projects" / "example-systems.md").exists()
+    assert not (tmp_path / "projects" / "example-systems.md").exists()
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        """{"pages": [
+          {"path": "knowledge/projects/a.md", "title": "A", "kind": "project", "tags": ["project"], "body_lines": ["A"]},
+          {"path": "knowledge/projects/a.md", "title": "A2", "kind": "project", "tags": ["project"], "body_lines": ["A2"]}
+        ]}""",
+        """{"pages": [
+          {"path": "knowledge/projects/a.md", "title": "A", "kind": "project", "tags": ["project"], "body_lines": ["See [[sources/other-doc]]"]}
+        ]}""",
+        """{"pages": [
+          {"path": "sources/other-doc.md", "title": "Wrong", "kind": "source", "tags": ["source"], "body_lines": ["Wrong"]}
+        ]}""",
+        """{"pages": [
+          {"path": "sources/doc-123.md", "title": "One", "kind": "source", "tags": ["source"], "body_lines": ["One"]},
+          {"path": "sources/doc-123.md", "title": "Two", "kind": "source", "tags": ["source"], "body_lines": ["Two"]}
+        ]}""",
+        """{"pages": [
+          {"path": "knowledge/projects/a.md", "title": "A", "kind": "project", "tags": ["project"], "body_lines": ["No source citation"]}
+        ]}""",
+        """{"pages": [
+          {"path": "knowledge/projects/a.md", "title": "A", "kind": "project", "tags": ["project"], "body_lines": ["See [[sources/doc-123]]"]},
+          {"path": "knowledge/projects/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md", "title": "Long", "kind": "project", "tags": ["project"], "body_lines": ["See [[sources/doc-123]]"]}
+        ]}""",
+    ],
+)
+def test_openai_rejects_invalid_pages_before_any_write(tmp_path: Path, response: str):
+    source = tmp_path / "source.md"
+    source.write_text("source", encoding="utf-8")
+
+    class FakeTextClient:
+        def create_response(self, instructions: str, input_text: str) -> str:
+            assert "sources/doc-123.md" in instructions
+            assert "sources/doc-123.md" in input_text
+            return response
+
+    settings = Settings(_env_file=None, openai_api_key="test-key", ingestion_mode="openai")
+    with pytest.raises(ValueError):
+        IngestionService(KnowledgeRepository(tmp_path), settings, FakeTextClient()).ingest_file(
+            source, "doc-123"
+        )
+
+    assert not (tmp_path / "sources").exists()
+    assert not (tmp_path / "knowledge" / "projects" / "a.md").exists()
+
+
+def test_openai_allows_generated_pages_without_source_suggestion(tmp_path: Path):
+    source = tmp_path / "source.md"
+    source.write_text("source", encoding="utf-8")
+
+    class FakeTextClient:
+        def create_response(self, instructions: str, input_text: str) -> str:
+            return """{"pages": [
+              {"path": "knowledge/projects/a.md", "title": "A", "kind": "project", "tags": ["project"], "body_lines": ["See [[sources/doc-123]]"]}
+            ]}"""
+
+    settings = Settings(_env_file=None, openai_api_key="test-key", ingestion_mode="openai")
+    result = IngestionService(KnowledgeRepository(tmp_path), settings, FakeTextClient()).ingest_file(
+        source, "doc-123"
+    )
+
+    assert result.source_page == tmp_path / "sources" / "doc-123.md"
+    assert result.generated_pages == (tmp_path / "knowledge" / "projects" / "a.md",)
+
+
+def test_openai_preflights_source_path_before_generated_writes(tmp_path: Path):
+    source = tmp_path / "source.md"
+    source.write_text("source", encoding="utf-8")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (tmp_path / "sources").symlink_to(outside, target_is_directory=True)
+
+    class FakeTextClient:
+        def create_response(self, instructions: str, input_text: str) -> str:
+            return """{"pages": [
+              {"path": "knowledge/projects/a.md", "title": "A", "kind": "project", "tags": ["project"], "body_lines": ["See [[sources/doc-123]]"]}
+            ]}"""
+
+    settings = Settings(_env_file=None, openai_api_key="test-key", ingestion_mode="openai")
+    with pytest.raises(ValueError, match="symlink"):
+        IngestionService(KnowledgeRepository(tmp_path), settings, FakeTextClient()).ingest_file(
+            source, "doc-123"
+        )
+
+    assert not (tmp_path / "knowledge" / "projects" / "a.md").exists()
+
+
+def test_openai_rejects_repeated_file_component_before_any_write(tmp_path: Path):
+    source = tmp_path / "source.md"
+    source.write_text("source", encoding="utf-8")
+    parent = tmp_path / "knowledge" / "projects" / "a.md"
+    parent.parent.mkdir(parents=True)
+    parent.write_text("sentinel", encoding="utf-8")
+
+    class FakeTextClient:
+        def create_response(self, instructions: str, input_text: str) -> str:
+            return """{"pages": [
+              {"path": "knowledge/projects/a.md/a.md", "title": "A", "kind": "project", "tags": ["project"], "body_lines": ["See [[sources/doc-123]]"]}
+            ]}"""
+
+    settings = Settings(_env_file=None, openai_api_key="test-key", ingestion_mode="openai")
+    with pytest.raises(ValueError, match="directory"):
+        IngestionService(KnowledgeRepository(tmp_path), settings, FakeTextClient()).ingest_file(
+            source, "doc-123"
+        )
+
+    assert not (tmp_path / "sources").exists()
+    assert parent.read_text(encoding="utf-8") == "sentinel"
+
+
+def test_ingest_directory_rejects_external_symlink_before_extraction_or_writes(tmp_path: Path, monkeypatch):
+    root = tmp_path / "raw"
+    root.mkdir()
+    (root / "valid.md").write_text("valid", encoding="utf-8")
+    secret = tmp_path / "secret.md"
+    secret.write_text("secret", encoding="utf-8")
+    (root / "linked.md").symlink_to(secret)
+    monkeypatch.setattr(ingest_module, "extract_source", lambda _: pytest.fail("extraction should not run"))
+
+    with pytest.raises(ValueError, match="symlink"):
+        IngestionService(KnowledgeRepository(tmp_path)).ingest_directory(root)
+
+    assert not (tmp_path / "sources").exists()
+    assert not (tmp_path / "knowledge").exists()
+
+
+def test_ingest_directory_rejects_special_file_before_extraction_or_writes(tmp_path: Path, monkeypatch):
+    root = tmp_path / "raw"
+    root.mkdir()
+    os.mkfifo(root / "input.fifo")
+    monkeypatch.setattr(ingest_module, "extract_source", lambda _: pytest.fail("extraction should not run"))
+
+    with pytest.raises(ValueError, match="special"):
+        IngestionService(KnowledgeRepository(tmp_path)).ingest_directory(root)
+
+    assert not (tmp_path / "sources").exists()
+    assert not (tmp_path / "knowledge").exists()
+
+
+def test_document_id_for_path_is_stable_when_content_changes(tmp_path: Path):
+    source = tmp_path / "source.md"
+    source.write_text("first", encoding="utf-8")
+    first_id = document_id_for_path(source, source.parent)
+    source.write_text("second", encoding="utf-8")
+
+    assert document_id_for_path(source, source.parent) == first_id
 
 
 def test_openai_ingestion_client_requests_json_schema_output():
