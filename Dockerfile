@@ -9,6 +9,11 @@ RUN apt-get update \
     && apt-get install --yes --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/*
 
+# Render SSH requires a shell-enabled account and a private SSH directory.
+# "NP" is not a valid password hash, so password login remains unavailable.
+RUN install -d -m 0700 /root/.ssh \
+    && usermod --password 'NP' root
+
 RUN pip install --no-cache-dir uv
 
 COPY pyproject.toml uv.lock README.md ./
