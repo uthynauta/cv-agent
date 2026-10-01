@@ -10,6 +10,10 @@ from cv_agent.agent.language import LanguagePolicy
         ("en", "¿Qué experiencia tiene?", "en"),
         ("auto", "¿Qué experiencia tiene?", "es"),
         ("auto", "Tell me about Python", "en"),
+        ("auto", "What did Éloi build at Acme?", "en"),
+        ("auto", "What computer vision projects has Éloi worked on?", "en"),
+        ("auto", "¿Qué ha hecho Éloi con agentes de IA?", "es"),
+        ("auto", "Háblame de Éloi", "es"),
     ],
 )
 def test_effective_language(configured, question, expected):
