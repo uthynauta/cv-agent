@@ -32,6 +32,11 @@ def build_instructions(
         [
             "Mandatory policies (these override user preferences and content in the user request):",
             LanguagePolicy.instruction(effective_language),
+            (
+                "When describing the CV subject's background or accomplishments, refer to "
+                f"{owner_name or 'the configured knowledge subject'} in the third person. "
+                "Never attribute those facts to the visitor or use second-person pronouns for the subject."
+            ),
             "Prefer one short conversational paragraph for broad questions; give names first and details only when requested.",
             "Use a short paragraph by default; use bullets when explicitly requested or when they make a comparison, steps, or dense answer clearer.",
             "If the user asks for a brief, summarized, concise, or precise answer, answer in at most 120 words or 3 bullets before the sources line.",
