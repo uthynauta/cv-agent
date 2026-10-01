@@ -21,6 +21,66 @@ def test_responses_endpoint_returns_openai_like_shape(monkeypatch):
     assert payload["output"][0]["id"].startswith("msg_")
     assert payload["output"][0]["status"] == "completed"
     assert payload["output"][0]["content"][0]["type"] == "output_text"
+    assert payload["source_documents"] == []
+
+
+def test_responses_endpoint_serializes_agent_answer_metadata(tmp_path):
+    from cv_agent.agent.service import AgentAnswer
+
+    sources = [{"title": "Candidate CV", "documents": [
+        {"filename": "Candidate.pdf", "path": "/v1/documents/candidate/original"}
+    ]}]
+    text_output = "Candidate tiene experiencia.\nFuentes: [[Candidate CV]]"
+    app = create_app(
+        settings=Settings(_env_file=None, data_dir=tmp_path / "data"),
+        agent_answerer=lambda text, instructions=None: AgentAnswer(text=text_output, source_documents=sources),
+    )
+    # Injected answerers still respect the existing initialized-knowledge gate.
+    app.state.repository.write_page("knowledge/candidate.md", "Candidate CV", {"kind": "entity"}, "Candidate tiene experiencia.")
+    app.state.active_knowledge.reload(app.state.repository)
+
+    response = TestClient(app).post("/v1/responses", json={"input": "¿Quién es Candidate?"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["output_text"] == text_output
+    assert payload["output"][0]["content"][0]["text"] == text_output
+    assert payload["source_documents"] == sources
+
+
+def test_default_app_answerer_returns_grounded_pdf_metadata(tmp_path, monkeypatch):
+    from hashlib import sha256
+    from cv_agent.knowledge.repository import KnowledgeRepository
+    from cv_agent.knowledge.storage import ensure_data_storage
+
+    paths = ensure_data_storage(tmp_path / "data")
+    repository = KnowledgeRepository(paths.repository)
+    payload = b"%PDF-1.4\nProcessed candidate profile\n%%EOF\n"
+    repository.write_page(
+        "sources/candidate.md", "Candidate CV",
+        {"kind": "source", "document_id": "candidate", "original_filename": "Candidate.pdf",
+         "content_sha256": sha256(payload).hexdigest()},
+        "## Extracted Text\n\nCandidate has Python experience.",
+    )
+    (paths.documents / "candidate.pdf").write_bytes(payload)
+    text = "Candidate tiene experiencia con Python.\nFuentes: [[Candidate CV]]"
+
+    class TextClient:
+        def __init__(self, settings):
+            pass
+
+        def create_response(self, instructions, input_text):
+            return text
+
+    monkeypatch.setattr("cv_agent.main.OpenAITextClient", TextClient)
+    app = create_app(Settings(_env_file=None, data_dir=paths.root, openai_api_key="test-key"))
+    response = TestClient(app).post("/v1/responses", json={"input": "¿Qué experiencia tiene con Python?"})
+
+    assert response.status_code == 200
+    assert response.json()["output_text"] == text
+    assert response.json()["source_documents"] == [{"title": "Candidate CV", "documents": [
+        {"filename": "Candidate.pdf", "path": "/v1/documents/candidate/original"}
+    ]}]
 
 
 def test_responses_endpoint_returns_canonical_model_name():

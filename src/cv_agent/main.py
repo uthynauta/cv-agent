@@ -4,7 +4,7 @@ from fastapi import FastAPI
 
 from cv_agent.agent.openai_client import OpenAITextClient
 from cv_agent.agent.rerank import LLMReranker
-from cv_agent.agent.service import AgentService
+from cv_agent.agent.service import AgentAnswer, AgentService
 from cv_agent.admin.ui import build_admin_ui_router
 from cv_agent.api.admin import build_admin_router
 from cv_agent.api.agent_card import build_agent_card_router
@@ -29,7 +29,7 @@ from cv_agent.knowledge.restore import RestoreService
 
 def create_app(
     settings: Settings | None = None,
-    agent_answerer: Callable[[str, str | None], str] | None = None,
+    agent_answerer: Callable[[str, str | None], str | AgentAnswer] | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
     app = FastAPI(title="CV Agent", version="0.3.0")
@@ -79,7 +79,7 @@ def create_app(
     )
     app.include_router(build_admin_ui_router(settings, paths, git_store, ingestion, document_service, backup_service, restore_service))
     if agent_answerer is None:
-        def agent_answerer(text: str, instructions: str | None = None) -> str:
+        def agent_answerer(text: str, instructions: str | None = None) -> AgentAnswer:
             answer_client = OpenAITextClient(settings)
             reranker = None
             if settings.retrieval_mode == "llm_rerank":
@@ -87,8 +87,11 @@ def create_app(
                     update={"openai_model": settings.rerank_model or settings.openai_model}
                 )
                 reranker = LLMReranker(OpenAITextClient(rerank_settings), settings.answer_top_k)
-            agent = AgentService(settings, knowledge_search, answer_client, reranker)
-            return agent.answer(text, instructions)
+            agent = AgentService(
+                settings, knowledge_search, answer_client, reranker,
+                pdf_catalog=public_pdf_catalog,
+            )
+            return agent.answer_with_sources(text, instructions)
     app.include_router(
         build_responses_router(settings, agent_answerer, lambda: active_knowledge.initialized)
     )

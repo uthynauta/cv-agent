@@ -471,3 +471,57 @@ def test_spanish_source_title_does_not_make_english_answer_valid(tmp_path: Path)
     answer = service.answer("¿Candidate usó FastAPI?")
 
     assert "No pude generar una respuesta respaldada" in answer
+
+
+def test_answer_metadata_uses_snapshot_pinned_before_model_reload(tmp_path: Path):
+    from hashlib import sha256
+    from cv_agent.knowledge.public_pdfs import ProcessedPdfCatalog
+    from cv_agent.knowledge.storage import ensure_data_storage
+
+    paths = ensure_data_storage(tmp_path / "data")
+    repository = KnowledgeRepository(paths.repository)
+    payload = b"%PDF-1.4\nProcessed candidate profile\n%%EOF\n"
+    repository.write_page(
+        "sources/profile.md", "Profile PDF",
+        {"kind": "source", "document_id": "profile", "original_filename": "Profile.pdf",
+         "content_sha256": sha256(payload).hexdigest()},
+        "## Extracted Text\n\nCandidate has Python experience.",
+    )
+    (paths.documents / "profile.pdf").write_bytes(payload)
+    page_path = repository.write_page(
+        "knowledge/experience.md", "Python experience", {"kind": "entity"},
+        "Candidate has Python experience. [[sources/profile]]",
+    )
+    active = ActiveKnowledge.load(repository)
+    expected = "Candidate tiene experiencia con Python.\nFuentes: [[Python experience]]"
+
+    class ReloadingTextClient(FakeTextClient):
+        def create_response(self, instructions, input_text):
+            # Change both the title mapping and source eligibility while generating.
+            page_path.unlink()
+            repository.write_page("sources/profile.md", "Changed", {"kind": "source"}, "Changed")
+            active.reload(repository)
+            return super().create_response(instructions, input_text)
+
+    service = AgentService(
+        Settings(openai_api_key="test-key"), KnowledgeSearch(active),
+        ReloadingTextClient(expected), pdf_catalog=ProcessedPdfCatalog(paths, active),
+    )
+    result = service.answer_with_sources("¿Qué experiencia tiene con Python?")
+    assert result.text == expected
+    assert result.source_documents == [{"title": "Python experience", "documents": [
+        {"filename": "Profile.pdf", "path": "/v1/documents/profile/original"}
+    ]}]
+    assert all(page.title != "Python experience" for page in active.list_pages())
+
+
+def test_answer_with_sources_without_catalog_preserves_compatibility(tmp_path: Path):
+    repository = KnowledgeRepository(tmp_path)
+    repository.write_page("knowledge/python.md", "Python", {"kind": "skill"}, "Candidate usa Python.")
+    expected = "Candidate tiene experiencia con Python.\nFuentes: [[Python]]"
+    service = AgentService(Settings(openai_api_key="test-key"), KnowledgeSearch(repository), FakeTextClient(expected))
+
+    result = service.answer_with_sources("¿Qué experiencia tiene con Python?")
+    assert result.text == expected
+    assert result.source_documents == []
+    assert service.answer("¿Qué experiencia tiene con Python?") == expected
