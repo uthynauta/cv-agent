@@ -1,11 +1,20 @@
 import re
+from dataclasses import dataclass
 from typing import Protocol
 
 from cv_agent.agent.language import LanguagePolicy
 from cv_agent.agent.prompts import build_instructions, encode_untrusted_text
+from cv_agent.agent.source_documents import resolve_source_documents
 from cv_agent.config import Settings
 from cv_agent.tracing import get_tracer, safe_count_attribute
 from cv_agent.knowledge.search import SearchHit, KnowledgeSearch
+from cv_agent.knowledge.public_pdfs import ProcessedPdfCatalog
+
+
+@dataclass(frozen=True)
+class AgentAnswer:
+    text: str
+    source_documents: list[dict[str, object]]
 
 
 class TextClient(Protocol):
@@ -25,14 +34,21 @@ class AgentService:
         search: KnowledgeSearch,
         text_client: TextClient,
         reranker: HitReranker | None = None,
+        pdf_catalog: ProcessedPdfCatalog | None = None,
     ) -> None:
         self.settings = settings
         self.search = search
         self.text_client = text_client
         self.reranker = reranker
+        self.pdf_catalog = pdf_catalog
         self.language = LanguagePolicy(settings.agent_language)
 
     def answer(self, input_text: str, extra_instructions: str | None = None) -> str:
+        return self.answer_with_sources(input_text, extra_instructions).text
+
+    def answer_with_sources(
+        self, input_text: str, extra_instructions: str | None = None
+    ) -> AgentAnswer:
         with get_tracer().start_as_current_span("agent.answer") as span:
             span.set_attribute("grounding_mode", self.settings.grounding_mode)
             span.set_attribute("retrieval_mode", self.settings.retrieval_mode)
@@ -71,7 +87,15 @@ class AgentService:
             )
             output = self.text_client.create_response(instructions, model_input)
             titles = [hit.title for hit in hits]
-            return output if _valid_output(output, titles, effective_language) else self.language.fallback(effective_language, titles)
+            text = (
+                output if _valid_output(output, titles, effective_language)
+                else self.language.fallback(effective_language, titles)
+            )
+            sources = (
+                resolve_source_documents(text, search.repository.list_pages(), self.pdf_catalog)
+                if self.pdf_catalog is not None else []
+            )
+            return AgentAnswer(text=text, source_documents=sources)
 
 
 def _build_context(hits: list[SearchHit], search: KnowledgeSearch, settings: Settings) -> str:

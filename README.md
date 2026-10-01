@@ -88,7 +88,11 @@ curl -sS http://localhost:8000/admin/documents \
   -F 'file=@/path/to/document.pdf'
 ```
 
-The endpoint accepts `.pdf`, `.md`, and `.tex` files, stores originals below `DATA_DIR/documents/`, and commits normalized Markdown below the local Git repository at `DATA_DIR/repository/`. Original binaries are never added to that repository. The admin status endpoint reports storage, knowledge, and local revision state:
+The endpoint accepts `.pdf`, `.md`, and `.tex` files, stores originals below `DATA_DIR/documents/`, and commits normalized Markdown below the local Git repository at `DATA_DIR/repository/`. Original binaries are never added to that repository.
+
+Processed PDF originals are publicly available at `/v1/documents/<document_id>/original` only when their bytes match the active source record. Each download streams a private sealed snapshot, capped at 16 MiB per PDF to bound request memory, including for migrated originals. Oversized or otherwise ineligible originals return 404 from this public route.
+
+The admin status endpoint reports storage, knowledge, and local revision state:
 
 ```bash
 curl -sS http://localhost:8000/admin/status \

@@ -6,12 +6,13 @@ from fastapi import APIRouter, HTTPException, status
 
 from cv_agent.api.auth import require_bearer
 from cv_agent.api.models import ResponseRequest
+from cv_agent.agent.service import AgentAnswer
 from cv_agent.config import Settings
 
 
 def build_responses_router(
     settings: Settings,
-    answerer: Callable[[str, str | None], str],
+    answerer: Callable[[str, str | None], str | AgentAnswer],
     knowledge_ready: Callable[[], bool] | None = None,
 ) -> APIRouter:
     router = APIRouter(dependencies=[require_bearer(settings.agent_api_key)])
@@ -23,7 +24,9 @@ def build_responses_router(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="candidate knowledge is not initialized",
             )
-        text = answerer(request.input, request.instructions)
+        answer = answerer(request.input, request.instructions)
+        text = answer.text if isinstance(answer, AgentAnswer) else answer
+        source_documents = answer.source_documents if isinstance(answer, AgentAnswer) else []
         message_id = f"msg_{uuid4().hex}"
         return {
             "id": f"resp_{uuid4().hex}",
@@ -41,6 +44,7 @@ def build_responses_router(
                 }
             ],
             "output_text": text,
+            "source_documents": source_documents,
         }
 
     return router

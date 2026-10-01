@@ -4,11 +4,12 @@ from fastapi import FastAPI
 
 from cv_agent.agent.openai_client import OpenAITextClient
 from cv_agent.agent.rerank import LLMReranker
-from cv_agent.agent.service import AgentService
+from cv_agent.agent.service import AgentAnswer, AgentService
 from cv_agent.admin.ui import build_admin_ui_router
 from cv_agent.api.admin import build_admin_router
 from cv_agent.api.agent_card import build_agent_card_router
 from cv_agent.api.health import build_health_router
+from cv_agent.api.public_documents import build_public_documents_router
 from cv_agent.api.responses import build_responses_router
 from cv_agent.api.request_limits import public_request_size_middleware
 from cv_agent.config import Settings, get_settings
@@ -18,6 +19,7 @@ from cv_agent.knowledge.ingest import IngestionService
 from cv_agent.knowledge.repository import KnowledgeRepository
 from cv_agent.knowledge.search import KnowledgeSearch
 from cv_agent.knowledge.index import ActiveKnowledge
+from cv_agent.knowledge.public_pdfs import ProcessedPdfCatalog
 from cv_agent.knowledge.git_store import LocalKnowledgeGit
 from cv_agent.knowledge.storage import ensure_data_storage
 from cv_agent.knowledge.documents_service import DocumentService
@@ -27,7 +29,7 @@ from cv_agent.knowledge.restore import RestoreService
 
 def create_app(
     settings: Settings | None = None,
-    agent_answerer: Callable[[str, str | None], str] | None = None,
+    agent_answerer: Callable[[str, str | None], str | AgentAnswer] | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
     app = FastAPI(title="CV Agent", version="0.3.0")
@@ -49,6 +51,8 @@ def create_app(
     git_store.initialize()
     repository = KnowledgeRepository(paths.repository)
     active_knowledge = ActiveKnowledge.load(repository)
+    public_pdf_catalog = ProcessedPdfCatalog(paths, active_knowledge)
+    app.include_router(build_public_documents_router(public_pdf_catalog))
     knowledge_search = KnowledgeSearch(active_knowledge)
     ingestion = IngestionService(repository, settings)
     document_service = DocumentService(paths, git_store, ingestion, active_knowledge)
@@ -75,7 +79,7 @@ def create_app(
     )
     app.include_router(build_admin_ui_router(settings, paths, git_store, ingestion, document_service, backup_service, restore_service))
     if agent_answerer is None:
-        def agent_answerer(text: str, instructions: str | None = None) -> str:
+        def agent_answerer(text: str, instructions: str | None = None) -> AgentAnswer:
             answer_client = OpenAITextClient(settings)
             reranker = None
             if settings.retrieval_mode == "llm_rerank":
@@ -83,8 +87,11 @@ def create_app(
                     update={"openai_model": settings.rerank_model or settings.openai_model}
                 )
                 reranker = LLMReranker(OpenAITextClient(rerank_settings), settings.answer_top_k)
-            agent = AgentService(settings, knowledge_search, answer_client, reranker)
-            return agent.answer(text, instructions)
+            agent = AgentService(
+                settings, knowledge_search, answer_client, reranker,
+                pdf_catalog=public_pdf_catalog,
+            )
+            return agent.answer_with_sources(text, instructions)
     app.include_router(
         build_responses_router(settings, agent_answerer, lambda: active_knowledge.initialized)
     )
