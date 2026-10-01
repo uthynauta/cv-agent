@@ -66,6 +66,20 @@ def test_agent_builds_spanish_grounded_prompt(tmp_path: Path):
     assert "[[Python]]" in fake.input_text
 
 
+def test_agent_prompt_keeps_cv_owner_in_third_person(tmp_path: Path):
+    repo = KnowledgeRepository(tmp_path)
+    repo.write_page("work/company-a.md", "Company A", {"kind": "experience"}, "Alex built AI agent workflows.")
+    fake = FakeTextClient("Alex creó flujos de agentes de IA.\nFuentes: [[Company A]]")
+    settings = Settings(openai_api_key="test-key", agent_owner_name="Alex Rivera")
+    service = AgentService(settings, KnowledgeSearch(repo), fake)
+
+    service.answer("¿Qué hizo Alex en Company A?")
+
+    assert "Alex Rivera" in fake.instructions
+    assert "third person" in fake.instructions
+    assert "visitor" in fake.instructions
+
+
 def test_untrusted_instructions_cannot_override_mandatory_policy(tmp_path: Path):
     repo = KnowledgeRepository(tmp_path)
     repo.write_page("skills/python.md", "Python", {"kind": "skill"}, "Candidate usó FastAPI.")
