@@ -39,7 +39,10 @@ def resolve(answer, sources):
     return resolve_source_documents(answer, repository.list_pages(), catalog)
 
 
-@pytest.mark.parametrize("label", ["Fuentes:", "Sources:", "**Fuentes:**", "**Sources**:"])
+@pytest.mark.parametrize("label", [
+    "Fuentes:", "Sources:", "**Fuentes:**", "**Sources**:",
+    "* Sources:", "** Sources:**", "Sources **:",
+])
 def test_direct_source_has_server_verified_original(sources, label):
     assert resolve(f"Candidate tiene experiencia.\n{label} [[First source]]\n", sources) == [
         {"title": "First source", "documents": [
@@ -57,6 +60,33 @@ def test_generated_page_resolves_two_pdfs_in_reference_order(sources):
             {"filename": "Second.pdf", "path": "/v1/documents/second/original"},
             {"filename": "First.pdf", "path": "/v1/documents/first/original"},
         ]}
+    ]
+
+
+@pytest.mark.parametrize("reference", [
+    "[[sources/first|CV]]", "[[sources/first#Experience]]",
+    "[[ sources/first#Experience|CV ]]", "[[sources/first | CV]]",
+])
+def test_generated_reference_aliases_and_headings_resolve_original(sources, reference):
+    repository, _, _ = sources
+    repository.write_page("knowledge/profile.md", "Profile", {"kind": "entity"}, reference)
+    assert resolve("Answer.\nSources: [[Profile]]", sources) == [
+        {"title": "Profile", "documents": [
+            {"filename": "First.pdf", "path": "/v1/documents/first/original"}
+        ]}
+    ]
+
+
+def test_generated_references_are_normalized_before_ordered_deduplication(sources):
+    repository, _, _ = sources
+    repository.write_page(
+        "knowledge/profile.md", "Profile", {"kind": "entity"},
+        "[[sources/second|CV]] [[sources/first#Experience]] "
+        "[[sources/second]] [[sources/first|CV]]",
+    )
+    assert resolve("Answer.\nSources: [[Profile]]", sources)[0]["documents"] == [
+        {"filename": "Second.pdf", "path": "/v1/documents/second/original"},
+        {"filename": "First.pdf", "path": "/v1/documents/first/original"},
     ]
 
 

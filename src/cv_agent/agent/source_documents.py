@@ -7,8 +7,10 @@ from cv_agent.knowledge.public_pdfs import ProcessedPdfCatalog
 
 
 _CITATION_RE = re.compile(r"\[\[([^\[\]]+)\]\]")
-_SOURCES_LABEL_RE = re.compile(r"^(?:\*{1,2})?(?:Fuentes|Sources)(?:\*{1,2})?:(?:\*{1,2})?")
-_SOURCE_REFERENCE_RE = re.compile(r"\[\[sources/([^\[\]]+)\]\]")
+_SOURCES_LABEL_RE = re.compile(
+    r"^(?:\*{1,2}\s*)?(?:Fuentes|Sources)(?:\s*\*{1,2}\s*)?:(?:\*{1,2})?"
+)
+_SOURCE_REFERENCE_RE = re.compile(r"\[\[([^\]\r\n]+)\]\]")
 
 
 def resolve_source_documents(
@@ -41,7 +43,11 @@ def resolve_source_documents(
                     else []
                 )
             else:
-                document_ids = _SOURCE_REFERENCE_RE.findall(page.body)
+                document_ids = []
+                for reference in _SOURCE_REFERENCE_RE.findall(page.body):
+                    target = reference.split("|", 1)[0].split("#", 1)[0].strip()
+                    if re.fullmatch(r"sources/[A-Za-z0-9][A-Za-z0-9._-]*", target):
+                        document_ids.append(target.removeprefix("sources/"))
             for document_id in dict.fromkeys(document_ids):
                 if document_id not in descriptions:
                     descriptions[document_id] = catalog.describe_pdf(document_id, pages)
