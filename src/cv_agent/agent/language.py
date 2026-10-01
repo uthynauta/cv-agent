@@ -34,7 +34,10 @@ class LanguagePolicy:
         tokens = set(re.findall(r"[a-z]+", normalized))
         spanish_score = len(tokens & _SPANISH_WORDS)
         english_score = len(tokens & _ENGLISH_WORDS)
-        if re.search(r"[¿¡áéíóúüñ]", question.casefold()):
+        if re.search(r"[¿¡]", question) or (
+            re.search(r"[áéíóúüñ]", question.casefold())
+            and spanish_score >= english_score
+        ):
             spanish_score += 2
         return "es" if spanish_score > english_score else "en"
 
