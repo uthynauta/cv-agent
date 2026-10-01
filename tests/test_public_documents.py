@@ -215,6 +215,63 @@ def test_route_streams_verified_descriptor_after_original_path_is_swapped(tmp_pa
     assert opened[0].handle.closed
 
 
+def test_route_preserves_verified_bytes_after_in_place_original_overwrite(tmp_path, monkeypatch):
+    from cv_agent.knowledge.public_pdfs import ProcessedPdfCatalog
+
+    app, _ = seeded_app(tmp_path)
+    original = app.state.data_paths.documents / f"{DOCUMENT_ID}.pdf"
+    original_inode = original.stat().st_ino
+    open_pdf = ProcessedPdfCatalog.open_pdf
+    opened = []
+
+    def open_then_overwrite(self, document_id):
+        verified = open_pdf(self, document_id)
+        assert verified is not None
+        opened.append(verified)
+        original.write_bytes(b"%PDF-1.4\nUnprocessed in-place replacement\n%%EOF\n")
+        assert original.stat().st_ino == original_inode
+        return verified
+
+    monkeypatch.setattr(ProcessedPdfCatalog, "open_pdf", open_then_overwrite)
+    response = TestClient(app).get(ROUTE)
+
+    assert response.status_code == 200
+    assert response.content == PDF_BYTES
+    assert opened[0].handle.closed
+
+
+def test_verified_snapshot_descriptor_rejects_in_place_writes(tmp_path):
+    import os
+    from cv_agent.knowledge.public_pdfs import ProcessedPdfCatalog
+
+    app, _ = seeded_app(tmp_path)
+    catalog = ProcessedPdfCatalog(app.state.data_paths, app.state.active_knowledge)
+    verified = catalog.open_pdf(DOCUMENT_ID)
+    assert verified is not None
+    writable = os.open(f"/proc/self/fd/{verified.handle.fileno()}", os.O_RDWR)
+    try:
+        with pytest.raises(PermissionError):
+            os.pwrite(writable, b"Unprocessed replacement", 0)
+        assert b"".join(verified.iter_bytes()) == PDF_BYTES
+    finally:
+        os.close(writable)
+        verified.close()
+
+
+@pytest.mark.parametrize(("extra_bytes", "status"), [(0, 200), (1, 404)])
+def test_public_pdf_snapshot_size_boundary(tmp_path, extra_bytes, status):
+    payload = PDF_BYTES + b"\0" * (16 * 1024 * 1024 + extra_bytes - len(PDF_BYTES))
+    app, _ = seeded_app(tmp_path, payload=payload)
+
+    response = TestClient(app).get(ROUTE)
+
+    assert response.status_code == status
+    if status == 200:
+        assert response.content == payload
+    else:
+        assert response.json() == {"detail": "document not found"}
+
+
 def test_describe_pdf_uses_pinned_pages_and_only_returns_public_metadata(tmp_path):
     from cv_agent.knowledge.public_pdfs import ProcessedPdfCatalog
 
